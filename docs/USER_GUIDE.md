@@ -62,9 +62,10 @@ Behavior:
 3. Invokes `xdiagno` (from `TIAGO_XDIAGNO` or `PATH`).
 4. Converts `diagno_flux.*` and `diagno_seg.*` into CSVs.
 5. Writes diff reports + PNG overlays:
-   - `flux_diff.csv`
-   - `segrog_diff.csv`
-   - `diagnostics.png` (absolute traces + relative-error subplot + runtime info)
+- `flux_diff.csv`
+- `segrog_diff.csv`
+- `diagnostics.png` (absolute traces + relative-error subplot + runtime info)
+- `geometry.png` (3D plot of coils and diagnostic curves)
 
 The PNGs stay under `build/tests/output/` for artifact-safe CI collection. They
 plot Tiago (teal) vs. DIAGNO (orange) traces so discrepancies are visible at a
@@ -92,6 +93,7 @@ After `ctest` (or `make test`) the following files live in `build/tests/output/`
 - `diagno_flux.csv`, `diagno_segrog.csv`
 - `flux_diff.csv`, `segrog_diff.csv`
 - `diagnostics.png`
+- `geometry.png`
 - Harness control files (`diagno.control`, `input.`, `coils.tiago`, `segrog.diagno`, `fluxloop.diagno`).
 
 These artifacts provide both numerical and visual evidence that Tiago and

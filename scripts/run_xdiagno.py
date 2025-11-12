@@ -235,6 +235,12 @@ def main() -> int:
         tiago_time,
         xdiagno_time,
     )
+    plot_geometry(
+        Path(args.coil),
+        Path(args.flux),
+        Path(args.segrog),
+        out_dir / "geometry.png",
+    )
     if failures > 0:
         print(
             f"Detected {failures} mismatched diagnostics; see {out_dir}",
@@ -468,6 +474,112 @@ def generate_plot(
     fig.tight_layout()
     fig.savefig(path)
     plt.close(fig)
+
+
+def plot_geometry(coil_path: Path, flux_path: Path, seg_path: Path, out_path: Path) -> None:
+    try:
+        coil_points = read_simple_coils(coil_path)
+        flux_loops = read_diag_flux(flux_path)
+        seg_loops = read_diag_segrog(seg_path)
+    except Exception as exc:  # pragma: no cover
+        print(f"geometry plot skipped: {exc}", file=sys.stderr)
+        return
+
+    fig = plt.figure(figsize=(7, 6))
+    ax = fig.add_subplot(111, projection="3d")
+
+    if coil_points:
+        xs, ys, zs = zip(*coil_points)
+        ax.plot(xs, ys, zs, color="#7f8c8d", label="Coil", linewidth=2)
+
+    for label, pts in flux_loops:
+        xs, ys, zs = zip(*pts)
+        ax.plot(xs, ys, zs, label=f"Flux:{label}")
+
+    for label, pts in seg_loops:
+        xs, ys, zs = zip(*pts)
+        ax.plot(xs, ys, zs, linestyle="--", label=f"Seg:{label}")
+
+    ax.set_xlabel("X [m]")
+    ax.set_ylabel("Y [m]")
+    ax.set_zlabel("Z [m]")
+    set_equal_3d(ax)
+    ax.view_init(elev=20, azim=35)
+    ax.legend(loc="upper right", fontsize=8, ncol=2)
+    fig.tight_layout()
+    fig.savefig(out_path)
+    plt.close(fig)
+
+
+def read_simple_coils(path: Path) -> List[Tuple[float, float, float]]:
+    with path.open() as handle:
+        header = handle.readline().strip()
+        count = int(header.split()[0])
+        points = []
+        for _ in range(count):
+            line = handle.readline()
+            if not line:
+                break
+            vals = line.split()
+            if len(vals) < 3:
+                continue
+            x, y, z = map(float, vals[:3])
+            points.append((x, y, z))
+    return points
+
+
+def read_diag_flux(path: Path) -> List[Tuple[str, List[Tuple[float, float, float]]]]:
+    loops = []
+    with path.open() as handle:
+        total = int(handle.readline().split()[0])
+        for _ in range(total):
+            header = handle.readline()
+            if not header:
+                break
+            parts = header.split(maxsplit=3)
+            nseg = int(parts[0])
+            label = parts[3].strip()
+            pts = []
+            for _ in range(nseg):
+                vals = handle.readline().split()
+                if len(vals) < 3:
+                    continue
+                pts.append(tuple(map(float, vals[:3])))
+            loops.append((label, pts))
+    return loops
+
+
+def read_diag_segrog(path: Path) -> List[Tuple[str, List[Tuple[float, float, float]]]]:
+    loops = []
+    with path.open() as handle:
+        total = int(handle.readline().split()[0])
+        for _ in range(total):
+            header = handle.readline()
+            if not header:
+                break
+            parts = header.split(maxsplit=3)
+            nseg = int(parts[0])
+            label = parts[3].strip()
+            pts = []
+            for _ in range(nseg):
+                vals = handle.readline().split()
+                if len(vals) < 3:
+                    continue
+                pts.append(tuple(map(float, vals[:3])))
+            loops.append((label, pts))
+    return loops
+
+
+def set_equal_3d(ax):
+    xs = ax.get_xlim3d()
+    ys = ax.get_ylim3d()
+    zs = ax.get_zlim3d()
+    ranges = [xs, ys, zs]
+    centers = [0.5 * (r[0] + r[1]) for r in ranges]
+    radius = 0.5 * max(r[1] - r[0] for r in ranges)
+    ax.set_xlim3d(centers[0] - radius, centers[0] + radius)
+    ax.set_ylim3d(centers[1] - radius, centers[1] + radius)
+    ax.set_zlim3d(centers[2] - radius, centers[2] + radius)
 
 
 if __name__ == "__main__":
