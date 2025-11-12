@@ -155,7 +155,7 @@ contains
             fluxes(i) = evaluate_loop_flux(self%field, loops(i), rule, &
                 self%nfp)
         end do
-!$omp end do nowait
+!$omp end do
 !$omp do
         do i = 1, size(diagnostics)
             rule = select_rule(diagnostics(i)%label, default_rule, overrides)
