@@ -1,60 +1,81 @@
-# Tiago — Trimmed Input for Agile Geometric Observables
+# Toolkit for Inference and Analysis of Generalized Observables (Tiago)
 
-Tiago is a green-field forward-modeling tool for stellarator magnetic diagnostics.  It
-reuses the modern Fortran infrastructure in [`libneo`](https://github.com/itpplasma/libneo)
-while reproducing the feature set of STELLOPT's `xdiagno` utility.
+Tiago is a modern Fortran toolkit for vacuum magnetic diagnostic studies. It
+parses legacy DIAGNO coil descriptions, evaluates flux loops and segmented
+Rogowski probes via libneo's Biot–Savart solver, and cross-validates every run
+against STELLOPT's `xdiagno` binary.
 
-The two short-term priorities are:
+## Highlights
+- **Drop-in DIAGNO ingestion** – Stage 1 modules load STELLOPT-compatible flux
+  loops, segmented Rogowski files, and registry metadata without altering the
+  on-disk format.
+- **Vacuum solver + CLI** – Stage 2 adds `tiago_vacuum_cli` for batch
+  evaluation and `tiago_vacuum_smoke` for deterministic regression coverage.
+- **Cross-code proof** – Stage 3 provides `scripts/run_xdiagno.py`, which now
+  prepares control/input files automatically, runs both Tiago and `xdiagno`,
+  writes CSV summaries, and emits comparison PNGs in `build/tests/output/` for
+  visual inspection.
 
-1. **Vacuum-mode drop-in for DIAGNO** – parse coil/diagnostic geometry, call
-   libneo's Biot–Savart kernels, and emit flux-loop / segmented-Rogowski
-   predictions fast enough for daily workflows.
-2. **Cross-code validation harness** – compare Tiago outputs against
-   `xdiagno -vac` on tiny, published coil files so we can track regressions.
-
-> ⚠️ 12 Nov 2025 – Implementation deliberately stops at design documents.
-> The Fortran sources, drivers, and tests will be added in staged PRs once the
-> plan in [`docs/PLAN.md`](docs/PLAN.md) is approved.
-
-## Repository layout
-
-```
-tiago/
-├── CMakeLists.txt         # FetchContent bridge into libneo (no sources yet)
-├── cmake/                 # Reserved for toolchain helpers
-├── docs/                  # Project plan, testing strategy, references
-├── scripts/               # Future helper scripts (empty for now)
-├── tests/                 # ctest scaffolding & data download recipes
-└── README.md              # This file
-```
-
-## Building (scaffolding only)
-
-Tiago already bootstraps `libneo` via `FetchContent`.  The following commands
-only verify that the dependency graph resolves:
-
+## Quick start
 ```bash
+# Configure + build
 cmake -S . -B build \
       -DTIAGO_LIBNEO_TAG=main \
       -DTIAGO_LIBNEO_GIT=git@github.com:itpplasma/libneo.git
 cmake --build build
+
+# or the convenience wrappers
+make              # configures + builds
+make test         # rebuilds and runs ctest --output-on-failure
+```
+Pass extra cache entries through `CMAKE_ARGS`, e.g.
+`make CMAKE_ARGS="-DTIAGO_LIBNEO_TAG=dev-feature"`.
+
+## Vacuum CLI usage
+```
+./build/tiago_vacuum_cli \
+    tests/data/coil_sample.neo \
+    tests/data/fluxloop_sample.diagno \
+    tests/data/segrog_sample.diagno \
+    --output-dir build/tests/output --seg-area 3.40e-4 --samples 8
+```
+This command emits `tiago_flux.csv` and `tiago_segrog.csv` in the output
+directory. Override sample metadata via
+`--flux-out`, `--segrog-out`, `--kind`, or the registry file referenced by
+`docs/diagnostics/registry.json`.
+
+## Cross-code validation & visual artifacts
+```
+python3 scripts/run_xdiagno.py \
+    --coil tests/data/coil_sample.neo \
+    --flux tests/data/fluxloop_sample.diagno \
+    --segrog tests/data/segrog_sample.diagno \
+    --output build/tests/output \
+    --tiago-bin ./build/tiago_vacuum_cli \
+    --seg-area 3.40e-4
+```
+When `TIAGO_XDIAGNO` is unset, the harness looks for `xdiagno` on `PATH`. The
+script writes:
+- `tiago_flux.csv`, `tiago_segrog.csv`
+- `diagno_flux.csv`, `diagno_segrog.csv`
+- `flux_diff.csv`, `segrog_diff.csv`
+- `flux_plot.png`, `segrog_plot.png` (rendered line overlays that stay inside
+  `build/tests/output/`)
+
+`ctest` target `tiago_vs_xdiagno` wraps this flow so every test run produces the
+PNG evidence automatically.
+
+## Directory layout
+```
+cmake/                     # Toolchain helpers
+CMakeLists.txt             # FetchContent bridge + targets
+scripts/run_xdiagno.py     # Cross-code harness + PNG generator
+src/                       # Fortran diagnostics, solver, CLI
+tests/                     # Sample inputs + regression drivers
+docs/diagnostics/          # Diagnostic registry metadata
+docs/USER_GUIDE.md         # In-depth user documentation
 ```
 
-No Fortran target is compiled yet; `cmake --build` simply ensures libneo is
-fetchable.  The placeholder `tiago_tests` target will be replaced with explicit
-`ctest` entries in Stage 2 (see [`docs/PLAN.md`](docs/PLAN.md)).
-
-## Documentation
-
-- [`docs/PLAN.md`](docs/PLAN.md) — staged implementation roadmap with file- and
-  line-level references into STELLOPT and libneo.
-- [`docs/TESTING.md`](docs/TESTING.md) — describes the cross-code validation
-  strategy, planned data sources, and how `xdiagno` will be invoked.
-
-## Contributing
-
-1. Discuss intended feature branches on the plasma/dev channel (to avoid
-   duplicated work with the SURROBIER + STELLOPT teams).
-2. Keep commits small and reference plan stages.
-3. Add/update the system tests described in `docs/TESTING.md` before landing
-   functionality.
+## Further reading
+See `docs/USER_GUIDE.md` for detailed CLI options, sample data notes, test
+artifacts, and troubleshooting tips.

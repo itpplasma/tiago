@@ -1,7 +1,8 @@
 cmake_minimum_required(VERSION 3.24)
-project(tiago LANGUAGES Fortran)
+project(TIAGO LANGUAGES Fortran)
 
 include(FetchContent)
+find_package(Python3 COMPONENTS Interpreter REQUIRED)
 
 set(TIAGO_LIBNEO_GIT "git@github.com:itpplasma/libneo.git" CACHE STRING "libneo upstream to fetch")
 set(TIAGO_LIBNEO_TAG "main" CACHE STRING "libneo branch/tag used by Tiago")
@@ -18,6 +19,66 @@ FetchContent_MakeAvailable(libneo)
 add_library(tiago_core INTERFACE)
 target_link_libraries(tiago_core INTERFACE LIBNEO::neo)
 
+add_library(tiago_diagnostics STATIC
+    src/diagnostics/diagnostic_types.f90
+    src/diagnostics/flux_loops.f90
+    src/diagnostics/segmented_rogowski.f90
+    src/diagnostics/metadata_registry.f90)
+set_target_properties(tiago_diagnostics PROPERTIES
+    Fortran_STANDARD 2018
+    Fortran_STANDARD_REQUIRED YES)
+target_link_libraries(tiago_diagnostics PUBLIC tiago_core)
+
+add_library(tiago_solver STATIC
+    src/solver/vacuum_forward.f90)
+set_target_properties(tiago_solver PROPERTIES
+    Fortran_STANDARD 2018
+    Fortran_STANDARD_REQUIRED YES)
+target_link_libraries(tiago_solver PUBLIC tiago_diagnostics)
+
+add_executable(tiago_cli src/cli/tiago_cli.f90)
+target_link_libraries(tiago_cli PRIVATE tiago_diagnostics)
+
+add_executable(tiago_vacuum_cli src/cli/tiago_vacuum_cli.f90)
+target_link_libraries(tiago_vacuum_cli PRIVATE tiago_solver)
+
 enable_testing()
-add_custom_target(tiago_tests ALL
-    COMMENT "Tests will be added in Stage 2 once the vacuum solver lands")
+
+add_executable(tiago_vacuum_smoke tests/tiago_vacuum_smoke.f90)
+target_link_libraries(tiago_vacuum_smoke PRIVATE tiago_solver)
+
+add_test(NAME tiago_diag_lint_flux
+    COMMAND $<TARGET_FILE:tiago_cli> diag lint
+            ${CMAKE_SOURCE_DIR}/tests/data/fluxloop_sample.diagno
+            --kind flux)
+
+add_test(NAME tiago_diag_lint_segrog
+    COMMAND $<TARGET_FILE:tiago_cli> diag lint
+            ${CMAKE_SOURCE_DIR}/tests/data/segrog_sample.diagno
+            --metadata ${CMAKE_SOURCE_DIR}/docs/diagnostics/registry.json
+            --family w7x_segrog_core)
+
+add_test(NAME tiago_diag_lint_invalid
+    COMMAND $<TARGET_FILE:tiago_cli> diag lint
+            ${CMAKE_SOURCE_DIR}/tests/data/fluxloop_invalid.diagno
+            --kind flux)
+set_tests_properties(tiago_diag_lint_invalid PROPERTIES WILL_FAIL TRUE)
+
+add_test(NAME tiago_vacuum_smoke
+    COMMAND $<TARGET_FILE:tiago_vacuum_smoke>
+            ${CMAKE_SOURCE_DIR}/tests/data/coil_sample.neo
+            ${CMAKE_SOURCE_DIR}/tests/data/fluxloop_sample.diagno
+            ${CMAKE_SOURCE_DIR}/tests/data/segrog_sample.diagno)
+
+set(TIAGO_OUTPUT_DIR ${CMAKE_BINARY_DIR}/tests/output)
+
+add_test(NAME tiago_vs_xdiagno
+    COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_SOURCE_DIR}/scripts/run_xdiagno.py
+            --coil ${CMAKE_SOURCE_DIR}/tests/data/coil_sample.neo
+            --flux ${CMAKE_SOURCE_DIR}/tests/data/fluxloop_sample.diagno
+            --segrog ${CMAKE_SOURCE_DIR}/tests/data/segrog_sample.diagno
+            --output ${TIAGO_OUTPUT_DIR}
+            --tiago-bin $<TARGET_FILE:tiago_vacuum_cli>
+            --seg-area 3.40e-4)
+set_tests_properties(tiago_vs_xdiagno PROPERTIES SKIP_RETURN_CODE 125)
