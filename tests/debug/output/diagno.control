@@ -1,0 +1,12 @@
+&diagno_in
+  flux_diag_file = '/home/ert/code/tiago/tests/debug/output/fluxloop.diagno',
+  seg_rog_file = '/home/ert/code/tiago/tests/debug/output/segrog.diagno',
+  nu = 64,
+  nv = 64,
+  int_type = 'midpoint',
+  int_step = 12,
+  lrphiz = .false.,
+  lvc_field = .false.,
+  luse_extcur = .true.,
+  units = 1.0,
+/
