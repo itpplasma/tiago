@@ -236,17 +236,19 @@ contains
 
         integer :: s
         real(dp) :: a_field(3)
-        real(dp) :: sample_point(3)
         real(dp) :: step
         real(dp) :: sample_point_cm(3)
         real(dp) :: dl_cm(3)
+        real(dp) :: start_point_cm(3)
 
         integrate_segment = 0.0_dp
+        start_point_cm = start_point * meters_to_cm
         dl_cm = dl * meters_to_cm
+        ! Avoid recomputing conversion: sample_point_cm = (start_point + step*dl) * meters_to_cm
+        !                             = start_point_cm + step * dl_cm
         do s = 1, samples
             step = (real(s, dp) - 0.5_dp) / real(samples, dp)
-            sample_point = start_point + step * dl
-            sample_point_cm = sample_point * meters_to_cm
+            sample_point_cm = start_point_cm + step * dl_cm
             call field%compute_afield(sample_point_cm, a_field)
             integrate_segment = integrate_segment + &
                 weight * dot_product(a_field, dl_cm)
