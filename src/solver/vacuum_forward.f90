@@ -148,22 +148,22 @@ contains
         allocate(fluxes(size(loops)))
         allocate(voltages(size(diagnostics)))
 
-!$omp parallel default(shared) private(i, rule)
-!$omp do nowait
-        do i = 1, size(loops)
-            rule = select_rule(loops(i)%label, default_rule, overrides)
-            fluxes(i) = evaluate_loop_flux(self%field, loops(i), rule, &
-                self%nfp)
+        ! Single flattened loop: compute all flux loops, then all segrog diagnostics
+        ! This distributes work evenly across threads without intermediate barriers
+!$omp parallel do default(shared) private(i, rule)
+        do i = 1, size(loops) + size(diagnostics)
+            if (i <= size(loops)) then
+                rule = select_rule(loops(i)%label, default_rule, overrides)
+                fluxes(i) = evaluate_loop_flux(self%field, loops(i), rule, &
+                    self%nfp)
+            else
+                rule = select_rule(diagnostics(i - size(loops))%label, default_rule, &
+                    overrides)
+                voltages(i - size(loops)) = evaluate_segrog_signal(self%field, &
+                    diagnostics(i - size(loops)), rule)
+            end if
         end do
-!$omp end do
-!$omp do
-        do i = 1, size(diagnostics)
-            rule = select_rule(diagnostics(i)%label, default_rule, overrides)
-            voltages(i) = evaluate_segrog_signal(self%field, diagnostics(i), &
-                rule)
-        end do
-!$omp end do
-!$omp end parallel
+!$omp end parallel do
     end subroutine vacuum_solver_flux_and_segrog
 
     subroutine assert_ready(self)
