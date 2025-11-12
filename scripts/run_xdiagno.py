@@ -58,6 +58,12 @@ def parse_args() -> argparse.Namespace:
         help="Effective area (m^2) used for segmented Rogowski diagnostics",
     )
     parser.add_argument(
+        "--samples",
+        type=int,
+        default=6,
+        help="Samples per segment for both Tiago and xdiagno integration",
+    )
+    parser.add_argument(
         "--tolerance",
         type=float,
         default=1e-3,
@@ -101,6 +107,8 @@ def run_tiago(args: argparse.Namespace, out_dir: Path) -> Tuple[Path, Path, floa
         str(segrog_out),
         "--seg-area",
         args.seg_area,
+        "--samples",
+        str(args.samples),
     ]
     start = perf_counter()
     subprocess.run(cmd, check=True)
@@ -119,7 +127,7 @@ def run_xdiagno(args: argparse.Namespace, out_dir: Path) -> Tuple[Path, Path, fl
         sys.exit(SKIP_EXIT_CODE)
     flux_path = write_diagno_flux(out_dir, args.flux)
     seg_path = write_diagno_segrog(out_dir, args.segrog, float(args.seg_area))
-    write_diagno_control(out_dir, flux_path, seg_path)
+    write_diagno_control(out_dir, flux_path, seg_path, args.samples)
     write_vmec_input(out_dir)
     coil_path = str(write_diagno_coils(out_dir, args.coil))
     cmd = [binary, "-vac", "-coil", coil_path, "-noverb"]
@@ -251,7 +259,9 @@ def main() -> int:
     return 0
 
 
-def write_diagno_control(out_dir: Path, flux_path: Path, seg_path: Path) -> Path:
+def write_diagno_control(
+    out_dir: Path, flux_path: Path, seg_path: Path, samples: int
+) -> Path:
     control_path = out_dir / "diagno.control"
     payload = (
         "&diagno_in\n"
@@ -260,7 +270,7 @@ def write_diagno_control(out_dir: Path, flux_path: Path, seg_path: Path) -> Path
         "  nu = 64,\n"
         "  nv = 64,\n"
         "  int_type = 'midpoint',\n"
-        "  int_step = 1,\n"
+        f"  int_step = {max(1, samples)},\n"
         "  lrphiz = .false.,\n"
         "  lvc_field = .false.,\n"
         "  luse_extcur = .true.,\n"
