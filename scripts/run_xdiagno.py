@@ -18,12 +18,11 @@ import csv
 import math
 import os
 import shutil
-import struct
 import subprocess
 import sys
-import zlib
 from collections import OrderedDict
 from pathlib import Path
+from time import perf_counter
 from typing import List, Tuple
 
 import matplotlib
@@ -86,7 +85,7 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def run_tiago(args: argparse.Namespace, out_dir: Path) -> Tuple[Path, Path]:
+def run_tiago(args: argparse.Namespace, out_dir: Path) -> Tuple[Path, Path, float]:
     flux_out = out_dir / "tiago_flux.csv"
     segrog_out = out_dir / "tiago_segrog.csv"
     cmd = [
@@ -103,11 +102,13 @@ def run_tiago(args: argparse.Namespace, out_dir: Path) -> Tuple[Path, Path]:
         "--seg-area",
         args.seg_area,
     ]
+    start = perf_counter()
     subprocess.run(cmd, check=True)
-    return flux_out, segrog_out
+    duration = perf_counter() - start
+    return flux_out, segrog_out, duration
 
 
-def run_xdiagno(args: argparse.Namespace, out_dir: Path) -> Tuple[Path, Path]:
+def run_xdiagno(args: argparse.Namespace, out_dir: Path) -> Tuple[Path, Path, float]:
     binary = resolve_xdiagno()
     if not binary:
         print(
@@ -124,6 +125,7 @@ def run_xdiagno(args: argparse.Namespace, out_dir: Path) -> Tuple[Path, Path]:
     cmd = [binary, "-vac", "-coil", coil_path, "-noverb"]
     if args.extra_xdiagno_args:
         cmd.extend(args.extra_xdiagno_args)
+    start = perf_counter()
     try:
         subprocess.run(cmd, check=True, cwd=str(out_dir))
     except FileNotFoundError as err:
@@ -132,13 +134,14 @@ def run_xdiagno(args: argparse.Namespace, out_dir: Path) -> Tuple[Path, Path]:
     except subprocess.CalledProcessError as err:
         print(f"xdiagno exited with {err.returncode}", file=sys.stderr)
         raise
+    duration = perf_counter() - start
     flux_raw = out_dir / "diagno_flux."
     seg_raw = out_dir / "diagno_seg."
     flux_csv = Path(args.legacy_flux) if args.legacy_flux else out_dir / "diagno_flux.csv"
     seg_csv = Path(args.legacy_segrog) if args.legacy_segrog else out_dir / "diagno_segrog.csv"
     convert_diagno_output(flux_raw, flux_csv, expect_index=True)
     convert_diagno_output(seg_raw, seg_csv, expect_index=False)
-    return flux_csv, seg_csv
+    return flux_csv, seg_csv, duration
 
 
 def resolve_xdiagno() -> str | None:
@@ -205,8 +208,8 @@ def main() -> int:
     args = parse_args()
     out_dir = Path(args.output)
     out_dir.mkdir(parents=True, exist_ok=True)
-    tiago_flux, tiago_seg = run_tiago(args, out_dir)
-    legacy_flux, legacy_seg = run_xdiagno(args, out_dir)
+    tiago_flux, tiago_seg, tiago_time = run_tiago(args, out_dir)
+    legacy_flux, legacy_seg, xdiagno_time = run_xdiagno(args, out_dir)
     flux_report = out_dir / "flux_diff.csv"
     seg_report = out_dir / "segrog_diff.csv"
     failures = 0
@@ -217,8 +220,21 @@ def main() -> int:
         tiago_seg, legacy_seg, args.tolerance, seg_report
     )
     failures += flux_failures + seg_failures
-    generate_plot(flux_pairs, out_dir / "flux_plot.png")
-    generate_plot(seg_pairs, out_dir / "segrog_plot.png")
+    combined_pairs = [(
+        f"flux:{label}", tiago_val, legacy_val
+    ) for label, tiago_val, legacy_val in flux_pairs]
+    combined_pairs.extend(
+        (
+            f"seg:{label}", tiago_val, legacy_val
+        )
+        for label, tiago_val, legacy_val in seg_pairs
+    )
+    generate_plot(
+        combined_pairs,
+        out_dir / "diagnostics.png",
+        tiago_time,
+        xdiagno_time,
+    )
     if failures > 0:
         print(
             f"Detected {failures} mismatched diagnostics; see {out_dir}",
@@ -405,22 +421,53 @@ def parse_diagno_file(raw_path: Path, expect_index: bool) -> List[Tuple[str, flo
     return list(zip(labels[:count], values))
 
 
-def generate_plot(pairs: List[Tuple[str, float, float]], path: Path) -> None:
+def generate_plot(
+    pairs: List[Tuple[str, float, float]],
+    path: Path,
+    tiago_time: float,
+    xdiagno_time: float,
+) -> None:
     if not pairs:
         return
-    labels = [label for label, _, _ in pairs]
-    tiago_vals = [val for _, val, _ in pairs]
-    legacy_vals = [val for _, _, val in pairs]
 
-    plt.figure(figsize=(max(6, len(pairs) * 0.6), 3))
-    plt.plot(labels, legacy_vals, color="#f68d40", marker="o", label="xdiagno")
-    plt.plot(labels, tiago_vals, color="#18b5aa", marker="x", label="tiago")
-    plt.xticks(rotation=45, ha="right")
-    plt.tight_layout()
-    plt.grid(True, linestyle="--", alpha=0.3)
-    plt.legend()
-    plt.savefig(path)
-    plt.close()
+    labels = [label for label, _, _ in pairs]
+    tiago_vals = [abs(val) if val is not None and not math.isnan(val) else math.nan for _, val, _ in pairs]
+    legacy_vals = [abs(val) if val is not None and not math.isnan(val) else math.nan for _, _, val in pairs]
+
+    rel_errors = []
+    for _, tiago_val, legacy_val in pairs:
+        if legacy_val is None or math.isnan(legacy_val) or tiago_val is None or math.isnan(tiago_val):
+            rel_errors.append(math.nan)
+        else:
+            denom = max(abs(legacy_val), 1.0e-30)
+            rel_errors.append(abs(tiago_val - legacy_val) / denom)
+
+    fig, (ax_abs, ax_rel) = plt.subplots(
+        2, 1, figsize=(max(6, len(pairs) * 0.7), 6), sharex=True
+    )
+
+    ax_abs.plot(labels, legacy_vals, color="#f68d40", marker="o", label="xdiagno")
+    ax_abs.plot(labels, tiago_vals, color="#18b5aa", marker="x", label="tiago")
+    ax_abs.set_ylabel("|Signal| [SI]")
+    ax_abs.set_ylim(bottom=0.0)
+    ax_abs.grid(True, linestyle="--", alpha=0.3)
+    ax_abs.legend()
+
+    ax_rel.bar(range(len(labels)), rel_errors, color="#7f8c8d", alpha=0.8)
+    ax_rel.set_xticks(range(len(labels)))
+    ax_rel.set_xticklabels(labels, rotation=45, ha="right")
+    ax_rel.set_ylabel("Relative error")
+    ax_rel.set_ylim(bottom=0.0)
+    ax_rel.grid(True, linestyle="--", alpha=0.3)
+    runtime_text = (
+        f"tiago: {tiago_time*1e3:.1f} ms\n"
+        f"xdiagno: {xdiagno_time*1e3:.1f} ms"
+    )
+    ax_rel.text(0.02, 0.95, runtime_text, transform=ax_rel.transAxes, va="top")
+
+    fig.tight_layout()
+    fig.savefig(path)
+    plt.close(fig)
 
 
 if __name__ == "__main__":

@@ -59,8 +59,9 @@ script writes:
 - `tiago_flux.csv`, `tiago_segrog.csv`
 - `diagno_flux.csv`, `diagno_segrog.csv`
 - `flux_diff.csv`, `segrog_diff.csv`
-- `flux_plot.png`, `segrog_plot.png` (rendered line overlays that stay inside
-  `build/tests/output/`)
+- `diagnostics.png` – a single figure with absolute traces (y-axis pinned to
+  zero), relative-error subplot, and Tiago vs. `xdiagno` runtimes. Everything
+  stays inside `build/tests/output/`.
 
 `ctest` target `tiago_vs_xdiagno` wraps this flow so every test run produces the
 PNG evidence automatically.
