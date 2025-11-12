@@ -1,0 +1,1 @@
+These analysis documents contain INCORRECT conclusions based on the initial hypothesis that unit systems or NFP handling were the issue. Subsequent testing proved the issue is NOT in Tiago's core solvers. See TEST_STATUS.md for current understanding.
