@@ -1,6 +1,7 @@
 module tiago_vacuum_forward
     use, intrinsic :: iso_fortran_env, only: dp => real64, i32 => int32
     use neo_biotsavart_field, only: biotsavart_field_t
+    use tiago_coil_loader, only: load_coils_into_field
     use tiago_diagnostic_types, only: flux_loop_t, segmented_rogowski_t, &
         loop_point_t
     implicit none
@@ -40,11 +41,21 @@ module tiago_vacuum_forward
     public :: quadrature_override_t
 
 contains
-    subroutine vacuum_solver_init(self, coil_file)
+    subroutine vacuum_solver_init(self, coil_file, coil_extcur)
         class(vacuum_solver_t), intent(inout) :: self
         character(len=*), intent(in) :: coil_file
+        character(len=*), intent(in), optional :: coil_extcur
 
-        call self%field%biotsavart_field_init(trim(coil_file))
+        if (present(coil_extcur)) then
+            if (len_trim(coil_extcur) > 0) then
+                call load_coils_into_field(self%field, trim(coil_file), trim(coil_extcur))
+            else
+                call load_coils_into_field(self%field, trim(coil_file))
+            end if
+        else
+            call load_coils_into_field(self%field, trim(coil_file))
+        end if
+
         call scale_coils_to_cgs(self%field)
         self%is_ready = .true.
     end subroutine vacuum_solver_init
@@ -77,11 +88,13 @@ contains
         if (allocated(fluxes)) deallocate(fluxes)
         allocate(fluxes(size(loops)))
 
+!$omp parallel do default(shared) private(i, rule)
         do i = 1, size(loops)
             rule = select_rule(loops(i)%label, default_rule, overrides)
             fluxes(i) = evaluate_loop_flux(self%field, loops(i), rule, &
                 self%nfp)
         end do
+!$omp end parallel do
     end subroutine vacuum_solver_flux_loops
 
     subroutine vacuum_solver_segrog(self, diagnostics, voltages, default_rule, &
@@ -102,11 +115,13 @@ contains
         if (allocated(voltages)) deallocate(voltages)
         allocate(voltages(size(diagnostics)))
 
+!$omp parallel do default(shared) private(i, rule)
         do i = 1, size(diagnostics)
             rule = select_rule(diagnostics(i)%label, default_rule, overrides)
             voltages(i) = evaluate_segrog_signal(self%field, diagnostics(i), &
                 rule)
         end do
+!$omp end parallel do
     end subroutine vacuum_solver_segrog
 
     subroutine assert_ready(self)
@@ -132,6 +147,7 @@ contains
         real(dp) :: rotated_start(3)
         real(dp) :: rotated_end(3)
         real(dp) :: rotated_dl(3)
+        real(dp) :: seg_flux
 
         flux = 0.0_dp
         samples = max(1_i32, rule%samples_per_segment)
@@ -140,8 +156,8 @@ contains
             call segment_endpoints(loop, seg, start_point, end_point)
             dl = end_point - start_point
             weight = 1.0_dp / real(samples, dp)
-            flux = flux + integrate_segment(field, start_point, dl, samples, &
-                weight)
+            seg_flux = integrate_segment(field, start_point, dl, samples, weight)
+            flux = flux + seg_flux
             if (loop%repeat_count > 0 .and. nfp > 1) then
                 do period = 1, nfp - 1
                     angle = real(period, dp) * two_pi / real(nfp, dp)

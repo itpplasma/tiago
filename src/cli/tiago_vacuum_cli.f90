@@ -21,6 +21,7 @@ program tiago_vacuum_cli
     logical :: have_flux
     logical :: have_seg
     integer :: argc
+    character(len=512) :: coil_extcur_path
 
     argc = command_argument_count()
     if (argc < 3) call usage_and_stop()
@@ -37,22 +38,23 @@ program tiago_vacuum_cli
     samples_per_segment = 6_i32
     nfp_value = 1_i32
     seg_area = -1.0_dp
+    coil_extcur_path = ''
     have_flux = len_trim(flux_path) > 0
     have_seg = len_trim(segrog_path) > 0
 
     call parse_options(argc, output_dir, flux_out_path, segrog_out_path, &
         flux_turn_path, segrog_turn_path, samples_per_segment, seg_area, &
-        nfp_value)
+        nfp_value, coil_extcur_path)
     call ensure_paths(output_dir, flux_out_path, segrog_out_path)
     call run_solver(trim(coil_path), trim(flux_path), trim(segrog_path), &
         trim(output_dir), trim(flux_out_path), trim(segrog_out_path), &
         trim(flux_turn_path), trim(segrog_turn_path), samples_per_segment, &
-        seg_area, have_flux, have_seg, nfp_value)
+        seg_area, have_flux, have_seg, nfp_value, trim(coil_extcur_path))
 contains
 
 subroutine parse_options(argc, output_dir, flux_out_path, segrog_out_path, &
         flux_turn_path, segrog_turn_path, samples_per_segment, seg_area, &
-        nfp_value)
+        nfp_value, coil_extcur_path)
     use, intrinsic :: iso_fortran_env, only: i32 => int32, dp => real64
     implicit none
     integer, intent(in) :: argc
@@ -64,6 +66,7 @@ subroutine parse_options(argc, output_dir, flux_out_path, segrog_out_path, &
     integer(i32), intent(inout) :: samples_per_segment
     real(dp), intent(inout) :: seg_area
     integer(i32), intent(inout) :: nfp_value
+    character(len=*), intent(inout) :: coil_extcur_path
 
     integer :: i
     character(len=512) :: arg
@@ -107,6 +110,10 @@ subroutine parse_options(argc, output_dir, flux_out_path, segrog_out_path, &
             call ensure_arg(argc, i, '--seg-area')
             call get_command_argument(i, arg)
             read(arg, *) seg_area
+        case ('--coil-extcur')
+            i = i + 1
+            call ensure_arg(argc, i, '--coil-extcur')
+            call get_command_argument(i, coil_extcur_path)
         case ('--help', '-h')
             call usage_and_stop()
         case default
@@ -144,7 +151,8 @@ end subroutine ensure_paths
 
 subroutine run_solver(coil_path, flux_path, segrog_path, output_dir, &
         flux_out_path, segrog_out_path, flux_turn_path, segrog_turn_path, &
-        samples_per_segment, seg_area, have_flux, have_seg, nfp_value)
+        samples_per_segment, seg_area, have_flux, have_seg, nfp_value, &
+        coil_extcur_path)
     use, intrinsic :: iso_fortran_env, only: dp => real64, i32 => int32, &
         error_unit
     use tiago_diagnostic_types, only: flux_loop_t, segmented_rogowski_t
@@ -164,6 +172,7 @@ subroutine run_solver(coil_path, flux_path, segrog_path, output_dir, &
     logical, intent(in) :: have_flux
     logical, intent(in) :: have_seg
     integer(i32), intent(in) :: nfp_value
+    character(len=*), intent(in) :: coil_extcur_path
 
     type(vacuum_solver_t) :: solver
     type(quadrature_rule_t) :: rule
@@ -177,7 +186,11 @@ subroutine run_solver(coil_path, flux_path, segrog_path, output_dir, &
     call ensure_directory(output_dir)
 
     rule%samples_per_segment = samples_per_segment
-    call solver%init(coil_path)
+    if (len_trim(coil_extcur_path) > 0) then
+        call solver%init(coil_path, coil_extcur_path)
+    else
+        call solver%init(coil_path)
+    end if
     call solver%set_nfp(nfp_value)
 
     if (have_flux) then
@@ -259,6 +272,7 @@ subroutine usage_and_stop()
     write(error_unit, '(A)') '       [--output-dir dir] [--flux-out file]'
     write(error_unit, '(A)') '       [--segrog-out file] [--samples N]'
     write(error_unit, '(A)') '       [--seg-area value] [--nfp value]'
+    write(error_unit, '(A)') '       [--coil-extcur vmec_input_or_list]'
     write(error_unit, '(A)') '       [--flux-turns file] [--segrog-turns file]'
     stop 1
 end subroutine usage_and_stop

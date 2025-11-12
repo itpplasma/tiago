@@ -44,6 +44,11 @@ def ensure_coil_file(path: Path, url: str | None) -> Tuple[Path, float]:
             raise FileNotFoundError(f"coil file {path} missing; provide --coil-url")
         with urllib.request.urlopen(url) as source:
             payload = source.read().decode("utf-8")
+    if payload_is_stellopt(payload):
+        sanitized = payload if payload.endswith("\n") else payload + "\n"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(sanitized)
+        return path, 0.0
     neo_payload, coil_current = convert_coil_payload(payload)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(neo_payload)
@@ -72,7 +77,7 @@ def convert_coil_payload(payload: str) -> Tuple[str, float]:
             except ValueError:
                 continue
             coords.append(values)
-            currents.append(abs(values[3]))
+            currents.append(values[3])
         if not coords:
             raise ValueError("unable to parse coil payload")
         output = [str(len(coords))]
@@ -167,6 +172,17 @@ def parse_args() -> argparse.Namespace:
         help="Absolute tolerance for flux/voltage comparisons",
     )
     parser.add_argument(
+        "--coil-extcur",
+        default=None,
+        help="Optional VMEC input or list supplying EXTCUR values",
+    )
+    parser.add_argument(
+        "--rel-tolerance",
+        type=float,
+        default=1e-2,
+        help="Relative tolerance; applies to |tiago-legacy| / max(|legacy|, 1e-30)",
+    )
+    parser.add_argument(
         "--coil-url",
         default=None,
         help="Optional URL used to download the coil file if it is missing",
@@ -229,6 +245,8 @@ def run_tiago(args: argparse.Namespace, out_dir: Path) -> Tuple[Path, Path, floa
         "--nfp",
         str(args.nfp),
     ]
+    if args.coil_extcur:
+        cmd.extend(["--coil-extcur", args.coil_extcur])
     if args.flux_turns:
         cmd.extend(["--flux-turns", args.flux_turns])
     if args.segrog_turns:
@@ -264,8 +282,12 @@ def run_xdiagno(
         build_turn_array(seg_labels, segrog_turns_map),
         args.nfp,
     )
-    write_vmec_input(out_dir, args.nfp, args.coil_current)
-    coil_path = str(write_diagno_coils(out_dir, args.coil))
+    coil_path_obj = Path(args.coil)
+    if coil_is_stellopt(coil_path_obj):
+        coil_path = str(coil_path_obj)
+    else:
+        coil_path = str(write_diagno_coils(out_dir, args.coil))
+    prepare_extcur_file(args, out_dir, coil_path_obj)
     cmd = [binary, "-vac", "-coil", coil_path, "-noverb"]
     if args.extra_xdiagno_args:
         cmd.extend(args.extra_xdiagno_args)
@@ -321,7 +343,11 @@ def load_csv(path: Path) -> OrderedDict[str, float]:
 
 
 def compare_arrays(
-    tiago_path: Path, legacy_path: Path, tolerance: float, report: Path
+    tiago_path: Path,
+    legacy_path: Path,
+    abs_tol: float,
+    rel_tol: float,
+    report: Path,
 ) -> Tuple[int, List[Tuple[str, float, float]]]:
     tiago = load_csv(tiago_path)
     legacy = load_csv(legacy_path)
@@ -331,15 +357,27 @@ def compare_arrays(
         handle.write("label,tiago,legacy,diff\n")
         for label, value in tiago.items():
             legacy_value = legacy.get(label)
-            pairs.append((label, value, legacy_value))
             if label not in legacy:
                 failures += 1
                 handle.write(f"{label},{value},MISSING,NaN\n")
                 continue
-            diff = abs(value - legacy_value)
-            if diff > tolerance:
+            if legacy_value is None or math.isnan(legacy_value):
+                handle.write(f"{label},{value},NaN,IGNORED_LEGACY_NAN\n")
+                continue
+            if value is None or math.isnan(value):
                 failures += 1
-                handle.write(f"{label},{value},{legacy_value},{diff}\n")
+                handle.write(f"{label},NaN,{legacy_value},NaN\n")
+                continue
+            pairs.append((label, value, legacy_value))
+            diff = abs(value - legacy_value)
+            scale = max(abs(legacy_value), 1.0e-30)
+            rel_err = diff / scale if scale > 0.0 else math.inf
+            if diff > abs_tol or rel_err > rel_tol:
+                failures += 1
+                handle.write(
+                    f"{label},{value},{legacy_value},{diff}"
+                    f",abs={diff},rel={rel_err}\n"
+                )
         extra = set(legacy.keys()) - set(tiago.keys())
         for label in extra:
             failures += 1
@@ -355,6 +393,10 @@ def main() -> int:
     coil_path, coil_current = ensure_coil_file(Path(args.coil).resolve(), args.coil_url)
     args.coil = str(coil_path)
     args.coil_current = coil_current
+    coil_path_obj = Path(args.coil)
+    if not args.coil_extcur and not coil_is_stellopt(coil_path_obj):
+        vmec_input = write_vmec_input(out_dir, args.nfp, coil_path_obj)
+        args.coil_extcur = str(vmec_input)
     flux_turns = load_turns(args.flux_turns)
     segrog_turns = load_turns(args.segrog_turns)
     tiago_flux, tiago_seg, tiago_time = run_tiago(args, out_dir)
@@ -365,10 +407,18 @@ def main() -> int:
     seg_report = out_dir / "segrog_diff.csv"
     failures = 0
     flux_failures, flux_pairs = compare_arrays(
-        tiago_flux, legacy_flux, args.tolerance, flux_report
+        tiago_flux,
+        legacy_flux,
+        args.tolerance,
+        args.rel_tolerance,
+        flux_report,
     )
     seg_failures, seg_pairs = compare_arrays(
-        tiago_seg, legacy_seg, args.tolerance, seg_report
+        tiago_seg,
+        legacy_seg,
+        args.tolerance,
+        args.rel_tolerance,
+        seg_report,
     )
     failures += flux_failures + seg_failures
     combined_pairs = [(
@@ -435,32 +485,69 @@ def write_diagno_control(
     return control_path
 
 
-def write_vmec_input(out_dir: Path, nfp: int, coil_current: float) -> None:
+def write_vmec_input(out_dir: Path, nfp: int, coil_path: Path) -> Path:
     source = PROJECT_ROOT / "tests" / "data" / "input.diagno.stub"
     target = out_dir / "input."
     lines = []
-    current_value = abs(coil_current) if coil_current > 0 else 1.0
+
+    def floats_close(a: float, b: float) -> bool:
+        scale = max(abs(a), abs(b), 1.0)
+        return abs(a - b) <= scale * 1.0e-9 + 1.0e-12
+
+    unique_currents: List[float] = []
+    with coil_path.open() as handle:
+        header = handle.readline().strip()
+        count = int(header.split()[0])
+        for _ in range(count):
+            line = handle.readline()
+            if not line:
+                break
+            values = line.split()
+            if len(values) < 4:
+                continue
+            curr = float(values[3])
+            if abs(curr) < 1.0e-10:
+                continue
+            if not any(floats_close(curr, seen) for seen in unique_currents):
+                unique_currents.append(curr)
+
+    if not unique_currents:
+        unique_currents.append(1.0)
+    ncurr = len(unique_currents)
+
     for raw in source.read_text().splitlines():
         stripped = raw.strip()
         if stripped.upper().startswith("NFP"):
             lines.append(f"  NFP = {max(1, nfp)}")
+        elif stripped.upper().startswith("NCURR"):
+            lines.append(f"  NCURR = {ncurr}")
         elif stripped.upper().startswith("EXTCUR"):
-            lines.append(f"  EXTCUR( 1) = {current_value:.12E}")
+            for i, curr in enumerate(unique_currents, start=1):
+                lines.append(f"  EXTCUR({i:2d}) = {curr:.12E}")
         else:
             lines.append(raw)
     target.write_text("\n".join(lines) + "\n")
+    return target
 
 
 def write_diagno_coils(out_dir: Path, source_path: str) -> Path:
     dest = out_dir / "coils.tiago"
     src = Path(source_path).resolve()
+
+    def floats_close(a: float, b: float) -> bool:
+        scale = max(abs(a), abs(b), 1.0)
+        return abs(a - b) <= scale * 1.0e-9 + 1.0e-12
+
+    def coords_close(p: Tuple[float, float, float], q: Tuple[float, float, float]) -> bool:
+        return all(floats_close(a, b) for a, b in zip(p, q))
+
     with src.open() as handle:
         header = handle.readline().strip()
         try:
             count = int(header.split()[0])
         except ValueError as exc:
             raise ValueError(f"invalid Tiago coil header '{header}'") from exc
-        points = []
+        points: List[Tuple[float, float, float, float]] = []
         for _ in range(count):
             line = handle.readline()
             if not line:
@@ -470,21 +557,108 @@ def write_diagno_coils(out_dir: Path, source_path: str) -> Path:
                 continue
             x, y, z, current = map(float, values[:4])
             points.append((x, y, z, current))
+
+    if not points:
+        raise ValueError("No coil points found")
+
+    loops: List[List[Tuple[float, float, float, float]]] = []
+    loop_buffer: List[Tuple[float, float, float, float]] = []
+    for point in points:
+        if not loop_buffer:
+            loop_buffer.append(point)
+            continue
+        current_value = loop_buffer[0][3]
+        if not floats_close(point[3], current_value):
+            loops.append(loop_buffer[:])
+            loop_buffer = [point]
+            continue
+        loop_buffer.append(point)
+        if coords_close(point[:3], loop_buffer[0][:3]):
+            loops.append(loop_buffer[:])
+            loop_buffer = []
+
+    if loop_buffer:
+        loop_buffer.append((loop_buffer[0][0], loop_buffer[0][1], loop_buffer[0][2], 0.0))
+        loops.append(loop_buffer[:])
+
+    if not loops:
+        raise ValueError("Unable to derive any closed coils")
+
+    unique_currents: List[float] = []
+    for loop in loops:
+        current_value = loop[0][3]
+        if abs(current_value) < 1.0e-10:
+            continue
+        if not any(floats_close(current_value, seen) for seen in unique_currents):
+            unique_currents.append(current_value)
+
+    def find_group_id(value: float) -> int:
+        for idx, seen in enumerate(unique_currents, start=1):
+            if floats_close(value, seen):
+                return idx
+        # if everything cancelled out (e.g., zero current), keep group 1
+        return 1
+
     with dest.open("w") as handle:
         handle.write("periods 1\n")
         handle.write("begin filament\n")
         handle.write("mirror NIL\n")
-        for idx, (x, y, z, current) in enumerate(points, start=1):
-            if idx == len(points):
+
+        for loop in loops:
+            if len(loop) < 2:
+                continue
+            current_value = loop[0][3]
+            group_id = find_group_id(current_value)
+            label = f"TIAGO_G{group_id:02d}"
+            for x, y, z, curr in loop[:-1]:
                 handle.write(
-                    f" {x: .15E} {y: .15E} {z: .15E} {current: .15E} 1 TIAGO\n"
+                    f" {x: .15E} {y: .15E} {z: .15E} {curr: .15E}\n"
                 )
-            else:
-                handle.write(
-                    f" {x: .15E} {y: .15E} {z: .15E} {current: .15E}\n"
-                )
+            close_x, close_y, close_z, _ = loop[0]
+            handle.write(
+                f" {close_x: .15E} {close_y: .15E} {close_z: .15E}"
+                f" {0.0: .15E} {group_id:4d} {label}\n"
+            )
+
         handle.write("end\n")
+
     return dest
+
+
+def prepare_extcur_file(args: argparse.Namespace, out_dir: Path, coil_path: Path) -> None:
+    target = out_dir / "input."
+    if args.coil_extcur:
+        source = Path(args.coil_extcur).expanduser().resolve()
+        if source != target.resolve():
+            shutil.copyfile(source, target)
+        args.coil_extcur = str(source)
+        return
+    if coil_is_stellopt(coil_path):
+        raise RuntimeError(
+            "STELLOPT coil files require --coil-extcur to supply EXTCUR values"
+        )
+    vmec_input = write_vmec_input(out_dir, args.nfp, coil_path)
+    args.coil_extcur = str(vmec_input)
+
+
+def coil_is_stellopt(path: Path) -> bool:
+    try:
+        with path.open() as handle:
+            text = handle.read(512)
+    except FileNotFoundError:
+        return False
+    return payload_is_stellopt(text)
+
+
+def payload_is_stellopt(payload: str) -> bool:
+    for raw in payload.splitlines():
+        stripped = raw.strip()
+        if not stripped:
+            continue
+        if stripped.startswith("!"):
+            continue
+        return stripped.lower().startswith("periods")
+    return False
 
 
 def write_diagno_segrog(
@@ -694,6 +868,22 @@ def plot_geometry(coil_path: Path, flux_path: Path, seg_path: Path, out_path: Pa
 def read_simple_coils(path: Path) -> List[Tuple[float, float, float]]:
     with path.open() as handle:
         header = handle.readline().strip()
+        if header.lower().startswith("periods"):
+            points = []
+            for line in handle:
+                stripped = line.strip().lower()
+                if not stripped:
+                    continue
+                if stripped.startswith("begin") or stripped.startswith("mirror"):
+                    continue
+                if stripped.startswith("end"):
+                    break
+                vals = line.split()
+                if len(vals) < 3:
+                    continue
+                x, y, z = map(float, vals[:3])
+                points.append((x, y, z))
+            return points
         count = int(header.split()[0])
         points = []
         for _ in range(count):
