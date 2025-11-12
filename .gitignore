@@ -1,0 +1,29 @@
+# Build tree
+/build/
+/build-*//
+/.cmake/
+CMakeFiles/
+CMakeCache.txt
+cmake_install.cmake
+install_manifest.txt
+Testing/
+Meson-
+
+# Compilers
+*.o
+*.obj
+*.mod
+*.smod
+*.a
+*.so
+*.dll
+*.dylib
+
+# Python helpers
+__pycache__/
+*.pyc
+
+# Tooling
+/.idea/
+/.vscode/
+.DS_Store
