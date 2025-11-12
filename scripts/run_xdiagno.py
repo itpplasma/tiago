@@ -20,10 +20,11 @@ import os
 import shutil
 import subprocess
 import sys
+import urllib.request
 from collections import OrderedDict
 from pathlib import Path
 from time import perf_counter
-from typing import List, Tuple
+from typing import Dict, List, Tuple
 
 import matplotlib
 
@@ -33,6 +34,96 @@ import matplotlib.pyplot as plt
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
 SKIP_EXIT_CODE = 125
+
+
+def ensure_coil_file(path: Path, url: str | None) -> Tuple[Path, float]:
+    if path.exists():
+        payload = path.read_text()
+    else:
+        if not url:
+            raise FileNotFoundError(f"coil file {path} missing; provide --coil-url")
+        with urllib.request.urlopen(url) as source:
+            payload = source.read().decode("utf-8")
+    neo_payload, coil_current = convert_coil_payload(payload)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(neo_payload)
+    return path, coil_current
+
+
+def convert_coil_payload(payload: str) -> Tuple[str, float]:
+    lines = payload.splitlines()
+    first_token = ""
+    for raw in lines:
+        stripped = raw.strip()
+        if stripped:
+            first_token = stripped.split()[0]
+            break
+    try:
+        int(first_token)
+    except ValueError:
+        coords: List[List[float]] = []
+        currents: List[float] = []
+        for raw in lines:
+            parts = raw.split()
+            if len(parts) < 4:
+                continue
+            try:
+                values = list(map(float, parts[:4]))
+            except ValueError:
+                continue
+            coords.append(values)
+            currents.append(abs(values[3]))
+        if not coords:
+            raise ValueError("unable to parse coil payload")
+        output = [str(len(coords))]
+        for x, y, z, current in coords:
+            output.append(f"{x:.15E} {y:.15E} {z:.15E} {current:.15E}")
+        mean_current = sum(currents) / len(currents)
+        return "\n".join(output) + "\n", mean_current
+    sanitized = payload if payload.endswith("\n") else payload + "\n"
+    # Extract current from first numeric line for downstream metadata
+    representative = 0.0
+    for raw in lines:
+        parts = raw.split()
+        if len(parts) >= 4:
+            try:
+                representative = abs(float(parts[3]))
+            except ValueError:
+                continue
+            break
+    return sanitized, representative
+
+
+def load_turns(path: str | None) -> Dict[str, float]:
+    mapping: Dict[str, float] = {}
+    if not path:
+        return mapping
+    file_path = Path(path)
+    if not file_path.exists():
+        raise FileNotFoundError(file_path)
+    with file_path.open() as handle:
+        for raw in handle:
+            line = raw.strip()
+            if not line or line.startswith("#"):
+                continue
+            cleaned = line.replace(",", " ")
+            parts = [tok for tok in cleaned.split() if tok]
+            if len(parts) < 2:
+                continue
+            label = parts[0]
+            value = float(parts[1])
+            mapping[label] = value
+    return mapping
+
+
+def build_turn_array(labels: List[str], mapping: Dict[str, float]) -> List[float]:
+    if not mapping:
+        return []
+    return [mapping.get(label, 1.0) for label in labels]
+
+
+def format_turn_list(values: List[float]) -> str:
+    return ", ".join(f"{val:.12g}" for val in values)
 
 
 def parse_args() -> argparse.Namespace:
@@ -64,10 +155,36 @@ def parse_args() -> argparse.Namespace:
         help="Samples per segment for both Tiago and xdiagno integration",
     )
     parser.add_argument(
+        "--nfp",
+        type=int,
+        default=1,
+        help="Field periods assumed by Tiago",
+    )
+    parser.add_argument(
         "--tolerance",
         type=float,
         default=1e-3,
         help="Absolute tolerance for flux/voltage comparisons",
+    )
+    parser.add_argument(
+        "--coil-url",
+        default=None,
+        help="Optional URL used to download the coil file if it is missing",
+    )
+    parser.add_argument(
+        "--label",
+        default="case",
+        help="Short label to differentiate artifact filenames",
+    )
+    parser.add_argument(
+        "--flux-turns",
+        default=None,
+        help="Optional text file mapping flux-loop labels to turn counts",
+    )
+    parser.add_argument(
+        "--segrog-turns",
+        default=None,
+        help="Optional text file mapping segmented Rogowski labels to turn counts",
     )
     parser.add_argument(
         "--legacy-flux",
@@ -109,14 +226,25 @@ def run_tiago(args: argparse.Namespace, out_dir: Path) -> Tuple[Path, Path, floa
         args.seg_area,
         "--samples",
         str(args.samples),
+        "--nfp",
+        str(args.nfp),
     ]
+    if args.flux_turns:
+        cmd.extend(["--flux-turns", args.flux_turns])
+    if args.segrog_turns:
+        cmd.extend(["--segrog-turns", args.segrog_turns])
     start = perf_counter()
     subprocess.run(cmd, check=True)
     duration = perf_counter() - start
     return flux_out, segrog_out, duration
 
 
-def run_xdiagno(args: argparse.Namespace, out_dir: Path) -> Tuple[Path, Path, float]:
+def run_xdiagno(
+    args: argparse.Namespace,
+    out_dir: Path,
+    flux_turns_map: Dict[str, float],
+    segrog_turns_map: Dict[str, float],
+) -> Tuple[Path, Path, float]:
     binary = resolve_xdiagno()
     if not binary:
         print(
@@ -125,10 +253,18 @@ def run_xdiagno(args: argparse.Namespace, out_dir: Path) -> Tuple[Path, Path, fl
             file=sys.stderr,
         )
         sys.exit(SKIP_EXIT_CODE)
-    flux_path = write_diagno_flux(out_dir, args.flux)
-    seg_path = write_diagno_segrog(out_dir, args.segrog, float(args.seg_area))
-    write_diagno_control(out_dir, flux_path, seg_path, args.samples)
-    write_vmec_input(out_dir)
+    flux_path, flux_labels = write_diagno_flux(out_dir, args.flux)
+    seg_path, seg_labels = write_diagno_segrog(out_dir, args.segrog, float(args.seg_area))
+    write_diagno_control(
+        out_dir,
+        flux_path,
+        seg_path,
+        args.samples,
+        build_turn_array(flux_labels, flux_turns_map),
+        build_turn_array(seg_labels, segrog_turns_map),
+        args.nfp,
+    )
+    write_vmec_input(out_dir, args.nfp, args.coil_current)
     coil_path = str(write_diagno_coils(out_dir, args.coil))
     cmd = [binary, "-vac", "-coil", coil_path, "-noverb"]
     if args.extra_xdiagno_args:
@@ -214,10 +350,17 @@ def compare_arrays(
 
 def main() -> int:
     args = parse_args()
-    out_dir = Path(args.output)
+    out_dir = Path(args.output).resolve()
     out_dir.mkdir(parents=True, exist_ok=True)
+    coil_path, coil_current = ensure_coil_file(Path(args.coil).resolve(), args.coil_url)
+    args.coil = str(coil_path)
+    args.coil_current = coil_current
+    flux_turns = load_turns(args.flux_turns)
+    segrog_turns = load_turns(args.segrog_turns)
     tiago_flux, tiago_seg, tiago_time = run_tiago(args, out_dir)
-    legacy_flux, legacy_seg, xdiagno_time = run_xdiagno(args, out_dir)
+    legacy_flux, legacy_seg, xdiagno_time = run_xdiagno(
+        args, out_dir, flux_turns, segrog_turns
+    )
     flux_report = out_dir / "flux_diff.csv"
     seg_report = out_dir / "segrog_diff.csv"
     failures = 0
@@ -239,7 +382,7 @@ def main() -> int:
     )
     generate_plot(
         combined_pairs,
-        out_dir / "diagnostics.png",
+        out_dir / f"diagnostics_{args.label}.png",
         tiago_time,
         xdiagno_time,
     )
@@ -247,7 +390,7 @@ def main() -> int:
         Path(args.coil),
         Path(args.flux),
         Path(args.segrog),
-        out_dir / "geometry.png",
+        out_dir / f"geometry_{args.label}.png",
     )
     if failures > 0:
         print(
@@ -260,31 +403,52 @@ def main() -> int:
 
 
 def write_diagno_control(
-    out_dir: Path, flux_path: Path, seg_path: Path, samples: int
+    out_dir: Path,
+    flux_path: Path,
+    seg_path: Path,
+    samples: int,
+    flux_turns: List[float] | None = None,
+    segrog_turns: List[float] | None = None,
+    nfp: int = 1,
 ) -> Path:
     control_path = out_dir / "diagno.control"
-    payload = (
-        "&diagno_in\n"
-        f"  flux_diag_file = '{flux_path}',\n"
-        f"  seg_rog_file = '{seg_path}',\n"
-        "  nu = 64,\n"
-        "  nv = 64,\n"
-        "  int_type = 'midpoint',\n"
-        f"  int_step = {max(1, samples)},\n"
-        "  lrphiz = .false.,\n"
-        "  lvc_field = .false.,\n"
-        "  luse_extcur = .true.,\n"
-        "  units = 1.0,\n"
-        "/\n"
-    )
-    control_path.write_text(payload)
+    lines = [
+        "&diagno_in",
+        f"  flux_diag_file = '{flux_path}',",
+        f"  seg_rog_file = '{seg_path}',",
+        "  nu = 64,",
+        "  nv = 64,",
+        "  int_type = 'midpoint',",
+        f"  int_step = {max(1, samples)},",
+        "  lrphiz = .false.,",
+        "  lvc_field = .false.,",
+        "  luse_extcur = .true.,",
+        "  units = 1.0,",
+    ]
+    if flux_turns:
+        lines.append(f"  flux_turns = {format_turn_list(flux_turns)},")
+    if segrog_turns:
+        lines.append(f"  segrog_turns = {format_turn_list(segrog_turns)},")
+    lines.append("/" )
+    lines.append("")
+    control_path.write_text("\n".join(lines))
     return control_path
 
 
-def write_vmec_input(out_dir: Path) -> None:
+def write_vmec_input(out_dir: Path, nfp: int, coil_current: float) -> None:
     source = PROJECT_ROOT / "tests" / "data" / "input.diagno.stub"
     target = out_dir / "input."
-    shutil.copyfile(source, target)
+    lines = []
+    current_value = abs(coil_current) if coil_current > 0 else 1.0
+    for raw in source.read_text().splitlines():
+        stripped = raw.strip()
+        if stripped.upper().startswith("NFP"):
+            lines.append(f"  NFP = {max(1, nfp)}")
+        elif stripped.upper().startswith("EXTCUR"):
+            lines.append(f"  EXTCUR( 1) = {current_value:.12E}")
+        else:
+            lines.append(raw)
+    target.write_text("\n".join(lines) + "\n")
 
 
 def write_diagno_coils(out_dir: Path, source_path: str) -> Path:
@@ -323,13 +487,16 @@ def write_diagno_coils(out_dir: Path, source_path: str) -> Path:
     return dest
 
 
-def write_diagno_segrog(out_dir: Path, source_path: str, area_value: float) -> Path:
+def write_diagno_segrog(
+    out_dir: Path, source_path: str, area_value: float
+) -> Tuple[Path, List[str]]:
     dest = out_dir / "segrog.diagno"
     src = Path(source_path).resolve()
     with src.open() as handle:
         lines = [line.rstrip("\n") for line in handle]
     if not lines:
         raise ValueError("segrog file is empty")
+    labels: List[str] = []
     with dest.open("w") as out:
         total = int(lines[0].split()[0])
         out.write(f"{total:6d}\n")
@@ -347,6 +514,7 @@ def write_diagno_segrog(out_dir: Path, source_path: str, area_value: float) -> P
             idia = int(parts[2])
             label = parts[3][:48]
             out.write(f"{nseg:6d}{ifl:6d}{idia:6d} {label:<48}\n")
+            labels.append(label.strip())
             effective = area_value / max(1, nseg - 1)
             for _ in range(nseg):
                 if idx >= len(lines):
@@ -359,16 +527,17 @@ def write_diagno_segrog(out_dir: Path, source_path: str, area_value: float) -> P
                 out.write(
                     f" {x: .10E} {y: .10E} {z: .10E} {effective: .10E}\n"
                 )
-    return dest
+    return dest, labels
 
 
-def write_diagno_flux(out_dir: Path, source_path: str) -> Path:
+def write_diagno_flux(out_dir: Path, source_path: str) -> Tuple[Path, List[str]]:
     dest = out_dir / "fluxloop.diagno"
     src = Path(source_path).resolve()
     with src.open() as handle:
         lines = [line.rstrip("\n") for line in handle]
     if not lines:
         raise ValueError("flux file is empty")
+    labels: List[str] = []
     with dest.open("w") as out:
         total = int(lines[0].split()[0])
         out.write(f"{total:6d}\n")
@@ -386,6 +555,7 @@ def write_diagno_flux(out_dir: Path, source_path: str) -> Path:
             idia = int(parts[2])
             label = parts[3][:48]
             out.write(f"{nseg:6d}{ifl:6d}{idia:6d} {label:<48}\n")
+            labels.append(label.strip())
             for _ in range(nseg):
                 if idx >= len(lines):
                     raise ValueError("unexpected end of flux file")
@@ -395,7 +565,7 @@ def write_diagno_flux(out_dir: Path, source_path: str) -> Path:
                     continue
                 x, y, z = map(float, coords[:3])
                 out.write(f" {x: .10E} {y: .10E} {z: .10E}\n")
-    return dest
+    return dest, labels
 
 
 def convert_diagno_output(raw_path: Path, csv_path: Path, expect_index: bool) -> None:

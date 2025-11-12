@@ -21,7 +21,11 @@ make test         # rebuilds and runs ctest --output-on-failure
 - `tiago_vacuum_smoke` exercises the libneo Biot–Savart solver on the shipped
   sample coil/detector trio.
 - `tiago_vs_xdiagno` runs Tiago and STELLOPT's `xdiagno`, compares results, and
-  emits CSV + PNG diagnostics under `build/tests/output/`.
+  emits CSV + PNG diagnostics under `build/tests/output/sample/`.
+- `tiago_vs_xdiagno_ncsx_nfp1` / `_ncsx_nfp3` cover the two NCSX benchmark
+  cases, automatically downloading the coil files (if needed), applying
+  diagnostic turn scaling, and publishing artifacts under
+  `build/tests/output/<case>/`.
 
 ## 2. Vacuum solver CLI
 `tiago_vacuum_cli` bridges libneo with DIAGNO ingestion:
@@ -31,7 +35,10 @@ make test         # rebuilds and runs ctest --output-on-failure
     --flux-out my_flux.csv \
     --segrog-out my_segrog.csv \
     --seg-area 3.40e-4 \
-    --samples 8
+    --samples 8 \
+    --nfp 3 \
+    --flux-turns tests/cases/ncsx_nfp3/flux_turns.csv \
+    --segrog-turns tests/cases/ncsx_nfp3/segrog_turns.csv
 ```
 Key flags:
 - `--output-dir`: destination for CSV artifacts (defaults to `.`).
@@ -39,6 +46,11 @@ Key flags:
 - `--samples`: quadrature sub-sampling per coil segment.
 - `--seg-area`: effective area in m² for segmented Rogowski traces when the
   raw DIAGNO file omits metadata.
+- `--nfp`: field periods for replicated diagnostics (matches DIAGNO's
+  `nfp_diagno`).
+- `--flux-turns` / `--segrog-turns`: optional text files (one `label value`
+  pair per line, `#` comments allowed) that apply DIAGNO's turn scaling to the
+  Tiago outputs before CSV emission.
 
 The CLI reuses `docs/diagnostics/registry.json`. Set
 `TIAGO_DIAG_METADATA=/path/to/registry.json` to avoid passing
@@ -48,24 +60,32 @@ The CLI reuses `docs/diagnostics/registry.json`. Set
 The harness orchestrates Tiago and STELLOPT's `xdiagno`:
 ```
 python3 scripts/run_xdiagno.py \
-    --coil tests/data/coil_sample.neo \
-    --flux tests/data/fluxloop_sample.diagno \
-    --segrog tests/data/segrog_sample.diagno \
-    --output build/tests/output \
+    --coil tests/cases/ncsx_nfp3/coils.NCSX \
+    --coil-url https://raw.githubusercontent.com/PrincetonUniversity/STELLOPT/develop/BENCHMARKS/FIELDLINES_TEST/coils.NCSX \
+    --flux tests/cases/ncsx_nfp3/fluxloop.diagno \
+    --segrog tests/cases/ncsx_nfp3/segrog.diagno \
+    --flux-turns tests/cases/ncsx_nfp3/flux_turns.csv \
+    --segrog-turns tests/cases/ncsx_nfp3/segrog_turns.csv \
+    --output build/tests/output/ncsx_nfp3 \
+    --label ncsx_nfp3 \
     --tiago-bin ./build/tiago_vacuum_cli \
-    --seg-area 3.40e-4
+    --seg-area 3.40e-4 \
+    --samples 14 \
+    --nfp 3
 ```
 Behavior:
-1. Runs Tiago's CLI to produce `tiago_flux.csv` / `tiago_segrog.csv`.
-2. Auto-generates `diagno.control`, `input.` (VMEC stub), DIAGNO-style coils,
+1. Ensures the requested coil file exists (downloading via `--coil-url` if
+   necessary) and runs Tiago's CLI to produce `tiago_flux.csv` / `tiago_segrog.csv`.
+2. Auto-generates `diagno.control` (with matching `flux_turns`,
+   `segrog_turns`, and `nfp`), `input.` (VMEC stub), DIAGNO-style coils,
    and segmented Rogowski files inside `build/tests/output/`.
 3. Invokes `xdiagno` (from `TIAGO_XDIAGNO` or `PATH`).
 4. Converts `diagno_flux.*` and `diagno_seg.*` into CSVs.
 5. Writes diff reports + PNG overlays:
 - `flux_diff.csv`
 - `segrog_diff.csv`
-- `diagnostics.png` (absolute traces + relative-error subplot + runtime info)
-- `geometry.png` (3D plot of coils and diagnostic curves)
+- `diagnostics_<label>.png` (absolute traces + relative-error subplot + runtime info)
+- `geometry_<label>.png` (3D plot of coils and diagnostic curves)
 
 The PNGs stay under `build/tests/output/` for artifact-safe CI collection. They
 plot Tiago (teal) vs. DIAGNO (orange) traces so discrepancies are visible at a
@@ -88,12 +108,13 @@ glance.
 | `run_xdiagno failed: ... returned non-zero` | Inspect `flux_diff.csv` / `segrog_diff.csv` for the offending labels, and use the PNG overlays to confirm magnitude/sign of the mismatch. |
 
 ## 6. Artifact locations
-After `ctest` (or `make test`) the following files live in `build/tests/output/`:
+After `ctest` (or `make test`) each case stores artifacts under
+`build/tests/output/<label>/`:
 - `tiago_flux.csv`, `tiago_segrog.csv`
 - `diagno_flux.csv`, `diagno_segrog.csv`
 - `flux_diff.csv`, `segrog_diff.csv`
-- `diagnostics.png`
-- `geometry.png`
+- `diagnostics_<label>.png`
+- `geometry_<label>.png`
 - Harness control files (`diagno.control`, `input.`, `coils.tiago`, `segrog.diagno`, `fluxloop.diagno`).
 
 These artifacts provide both numerical and visual evidence that Tiago and

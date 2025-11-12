@@ -37,6 +37,7 @@ contains
             diagnostics(i)%segments = max(1_i32, &
                 size(loops(i)%points) - 1_i32)
             diagnostics(i)%effective_area = area_value
+            diagnostics(i)%turn_scale = 1.0_dp
             allocate(diagnostics(i)%path(size(loops(i)%points)))
             diagnostics(i)%path = loops(i)%points
         end do

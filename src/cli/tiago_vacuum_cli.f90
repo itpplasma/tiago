@@ -13,7 +13,10 @@ program tiago_vacuum_cli
     character(len=512) :: output_dir
     character(len=512) :: flux_out_path
     character(len=512) :: segrog_out_path
+    character(len=512) :: flux_turn_path
+    character(len=512) :: segrog_turn_path
     integer(i32) :: samples_per_segment
+    integer(i32) :: nfp_value
     real(dp) :: seg_area
     logical :: have_flux
     logical :: have_seg
@@ -29,29 +32,38 @@ program tiago_vacuum_cli
     output_dir = '.'
     flux_out_path = 'tiago_flux.csv'
     segrog_out_path = 'tiago_segrog.csv'
+    flux_turn_path = ''
+    segrog_turn_path = ''
     samples_per_segment = 6_i32
+    nfp_value = 1_i32
     seg_area = -1.0_dp
     have_flux = len_trim(flux_path) > 0
     have_seg = len_trim(segrog_path) > 0
 
     call parse_options(argc, output_dir, flux_out_path, segrog_out_path, &
-        samples_per_segment, seg_area)
+        flux_turn_path, segrog_turn_path, samples_per_segment, seg_area, &
+        nfp_value)
     call ensure_paths(output_dir, flux_out_path, segrog_out_path)
     call run_solver(trim(coil_path), trim(flux_path), trim(segrog_path), &
         trim(output_dir), trim(flux_out_path), trim(segrog_out_path), &
-        samples_per_segment, seg_area, have_flux, have_seg)
+        trim(flux_turn_path), trim(segrog_turn_path), samples_per_segment, &
+        seg_area, have_flux, have_seg, nfp_value)
 contains
 
 subroutine parse_options(argc, output_dir, flux_out_path, segrog_out_path, &
-        samples_per_segment, seg_area)
+        flux_turn_path, segrog_turn_path, samples_per_segment, seg_area, &
+        nfp_value)
     use, intrinsic :: iso_fortran_env, only: i32 => int32, dp => real64
     implicit none
     integer, intent(in) :: argc
     character(len=*), intent(inout) :: output_dir
     character(len=*), intent(inout) :: flux_out_path
     character(len=*), intent(inout) :: segrog_out_path
+    character(len=*), intent(inout) :: flux_turn_path
+    character(len=*), intent(inout) :: segrog_turn_path
     integer(i32), intent(inout) :: samples_per_segment
     real(dp), intent(inout) :: seg_area
+    integer(i32), intent(inout) :: nfp_value
 
     integer :: i
     character(len=512) :: arg
@@ -72,11 +84,24 @@ subroutine parse_options(argc, output_dir, flux_out_path, segrog_out_path, &
             i = i + 1
             call ensure_arg(argc, i, '--segrog-out')
             call get_command_argument(i, segrog_out_path)
+        case ('--flux-turns')
+            i = i + 1
+            call ensure_arg(argc, i, '--flux-turns')
+            call get_command_argument(i, flux_turn_path)
+        case ('--segrog-turns')
+            i = i + 1
+            call ensure_arg(argc, i, '--segrog-turns')
+            call get_command_argument(i, segrog_turn_path)
         case ('--samples')
             i = i + 1
             call ensure_arg(argc, i, '--samples')
             call get_command_argument(i, arg)
             read(arg, *) samples_per_segment
+        case ('--nfp')
+            i = i + 1
+            call ensure_arg(argc, i, '--nfp')
+            call get_command_argument(i, arg)
+            read(arg, *) nfp_value
         case ('--seg-area')
             i = i + 1
             call ensure_arg(argc, i, '--seg-area')
@@ -118,8 +143,8 @@ subroutine ensure_paths(output_dir, flux_out_path, segrog_out_path)
 end subroutine ensure_paths
 
 subroutine run_solver(coil_path, flux_path, segrog_path, output_dir, &
-        flux_out_path, segrog_out_path, samples_per_segment, seg_area, &
-        have_flux, have_seg)
+        flux_out_path, segrog_out_path, flux_turn_path, segrog_turn_path, &
+        samples_per_segment, seg_area, have_flux, have_seg, nfp_value)
     use, intrinsic :: iso_fortran_env, only: dp => real64, i32 => int32, &
         error_unit
     use tiago_diagnostic_types, only: flux_loop_t, segmented_rogowski_t
@@ -132,10 +157,13 @@ subroutine run_solver(coil_path, flux_path, segrog_path, output_dir, &
     character(len=*), intent(in) :: output_dir
     character(len=*), intent(in) :: flux_out_path
     character(len=*), intent(in) :: segrog_out_path
+    character(len=*), intent(in) :: flux_turn_path
+    character(len=*), intent(in) :: segrog_turn_path
     integer(i32), intent(in) :: samples_per_segment
     real(dp), intent(in) :: seg_area
     logical, intent(in) :: have_flux
     logical, intent(in) :: have_seg
+    integer(i32), intent(in) :: nfp_value
 
     type(vacuum_solver_t) :: solver
     type(quadrature_rule_t) :: rule
@@ -150,11 +178,14 @@ subroutine run_solver(coil_path, flux_path, segrog_path, output_dir, &
 
     rule%samples_per_segment = samples_per_segment
     call solver%init(coil_path)
+    call solver%set_nfp(nfp_value)
 
     if (have_flux) then
         call read_flux_loop_file(flux_path, loops, ierr, message)
         if (ierr /= 0_i32) call die('flux parse failed: '//trim(message))
+        call apply_flux_turns(trim(flux_turn_path), loops)
         call solver%flux_loops(loops, fluxes, rule)
+        call scale_flux_turns(loops, fluxes)
         call write_result(flux_out_path, loops, fluxes)
     end if
 
@@ -165,7 +196,9 @@ subroutine run_solver(coil_path, flux_path, segrog_path, output_dir, &
         call read_segmented_rogowski_file(segrog_path, segs, ierr, message, &
             seg_area)
         if (ierr /= 0_i32) call die('segrog parse failed: '//trim(message))
+        call apply_segrog_turns(trim(segrog_turn_path), segs)
         call solver%segrog(segs, voltages, rule)
+        call scale_segrog_turns(segs, voltages)
         call write_segrog(segrog_out_path, segs, voltages)
     end if
 
@@ -225,7 +258,8 @@ subroutine usage_and_stop()
     write(error_unit, '(A)') 'Usage: tiago_vacuum_cli <coil> <flux> <segrog>'
     write(error_unit, '(A)') '       [--output-dir dir] [--flux-out file]'
     write(error_unit, '(A)') '       [--segrog-out file] [--samples N]'
-    write(error_unit, '(A)') '       [--seg-area value]'
+    write(error_unit, '(A)') '       [--seg-area value] [--nfp value]'
+    write(error_unit, '(A)') '       [--flux-turns file] [--segrog-turns file]'
     stop 1
 end subroutine usage_and_stop
 
@@ -235,4 +269,146 @@ subroutine die(message)
     write(error_unit, '(A)') trim(message)
     stop 1
 end subroutine die
+
+subroutine apply_flux_turns(path, loops)
+    use, intrinsic :: iso_fortran_env, only: dp => real64, error_unit
+    character(len=*), intent(in) :: path
+    type(flux_loop_t), allocatable, intent(inout) :: loops(:)
+
+    if (len_trim(path) == 0) return
+    if (.not. allocated(loops)) return
+    call read_turn_file_flux(path, loops)
+end subroutine apply_flux_turns
+
+subroutine apply_segrog_turns(path, diagnostics)
+    use, intrinsic :: iso_fortran_env, only: dp => real64, error_unit
+    character(len=*), intent(in) :: path
+    type(segmented_rogowski_t), allocatable, intent(inout) :: diagnostics(:)
+
+    if (len_trim(path) == 0) return
+    if (.not. allocated(diagnostics)) return
+    call read_turn_file_seg(path, diagnostics)
+end subroutine apply_segrog_turns
+
+subroutine read_turn_file_flux(path, loops)
+    use, intrinsic :: iso_fortran_env, only: dp => real64, error_unit
+    character(len=*), intent(in) :: path
+    type(flux_loop_t), allocatable, intent(inout) :: loops(:)
+
+    integer :: unit
+    integer :: ios
+    character(len=256) :: line
+    character(len=128) :: label
+    real(dp) :: value
+    character(len=:), allocatable :: trimmed
+
+    open(newunit=unit, file=trim(path), status='old', action='read', iostat=ios)
+    if (ios /= 0) then
+        write(error_unit, '(A)') 'unable to open turn file: '//trim(path)
+        stop 1
+    end if
+
+    do
+        read(unit, '(A)', iostat=ios) line
+        if (ios /= 0) exit
+        if (len_trim(line) == 0) cycle
+        trimmed = adjustl(line)
+        if (len_trim(trimmed) == 0) cycle
+        if (trimmed(1:1) == '#') cycle
+        read(trimmed, *, iostat=ios) label, value
+        if (ios /= 0) cycle
+        call assign_flux_turn(trim(label), value, loops)
+    end do
+    close(unit)
+end subroutine read_turn_file_flux
+
+subroutine assign_flux_turn(label, value, loops)
+    use, intrinsic :: iso_fortran_env, only: dp => real64
+    character(len=*), intent(in) :: label
+    real(dp), intent(in) :: value
+    type(flux_loop_t), allocatable, intent(inout) :: loops(:)
+
+    integer :: i
+
+    do i = 1, size(loops)
+        if (trim(loops(i)%label) == trim(label)) then
+            loops(i)%turn_scale = value
+            return
+        end if
+    end do
+end subroutine assign_flux_turn
+
+subroutine read_turn_file_seg(path, diagnostics)
+    use, intrinsic :: iso_fortran_env, only: dp => real64, error_unit
+    character(len=*), intent(in) :: path
+    type(segmented_rogowski_t), allocatable, intent(inout) :: diagnostics(:)
+
+    integer :: unit
+    integer :: ios
+    character(len=256) :: line
+    character(len=128) :: label
+    real(dp) :: value
+    character(len=:), allocatable :: trimmed
+
+    open(newunit=unit, file=trim(path), status='old', action='read', iostat=ios)
+    if (ios /= 0) then
+        write(error_unit, '(A)') 'unable to open turn file: '//trim(path)
+        stop 1
+    end if
+
+    do
+        read(unit, '(A)', iostat=ios) line
+        if (ios /= 0) exit
+        if (len_trim(line) == 0) cycle
+        trimmed = adjustl(line)
+        if (len_trim(trimmed) == 0) cycle
+        if (trimmed(1:1) == '#') cycle
+        read(trimmed, *, iostat=ios) label, value
+        if (ios /= 0) cycle
+        call assign_seg_turn(trim(label), value, diagnostics)
+    end do
+    close(unit)
+end subroutine read_turn_file_seg
+
+subroutine assign_seg_turn(label, value, diagnostics)
+    use, intrinsic :: iso_fortran_env, only: dp => real64
+    character(len=*), intent(in) :: label
+    real(dp), intent(in) :: value
+    type(segmented_rogowski_t), allocatable, intent(inout) :: diagnostics(:)
+
+    integer :: i
+
+    do i = 1, size(diagnostics)
+        if (trim(diagnostics(i)%label) == trim(label)) then
+            diagnostics(i)%turn_scale = value
+            return
+        end if
+    end do
+end subroutine assign_seg_turn
+
+subroutine scale_flux_turns(loops, fluxes)
+    use, intrinsic :: iso_fortran_env, only: dp => real64
+    type(flux_loop_t), allocatable, intent(in) :: loops(:)
+    real(dp), allocatable, intent(inout) :: fluxes(:)
+    integer :: i
+
+    if (.not. allocated(loops)) return
+    if (.not. allocated(fluxes)) return
+    do i = 1, min(size(loops), size(fluxes))
+        fluxes(i) = fluxes(i) * loops(i)%turn_scale
+    end do
+end subroutine scale_flux_turns
+
+subroutine scale_segrog_turns(diagnostics, values)
+    use, intrinsic :: iso_fortran_env, only: dp => real64
+    type(segmented_rogowski_t), allocatable, intent(in) :: diagnostics(:)
+    real(dp), allocatable, intent(inout) :: values(:)
+    integer :: i
+
+    if (.not. allocated(diagnostics)) return
+    if (.not. allocated(values)) return
+    do i = 1, min(size(diagnostics), size(values))
+        values(i) = values(i) * diagnostics(i)%turn_scale
+    end do
+end subroutine scale_segrog_turns
 end program tiago_vacuum_cli

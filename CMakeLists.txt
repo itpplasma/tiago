@@ -78,7 +78,41 @@ add_test(NAME tiago_vs_xdiagno
             --coil ${CMAKE_SOURCE_DIR}/tests/data/coil_sample.neo
             --flux ${CMAKE_SOURCE_DIR}/tests/data/fluxloop_sample.diagno
             --segrog ${CMAKE_SOURCE_DIR}/tests/data/segrog_sample.diagno
-            --output ${TIAGO_OUTPUT_DIR}
+            --output ${TIAGO_OUTPUT_DIR}/sample
+            --label sample
             --tiago-bin $<TARGET_FILE:tiago_vacuum_cli>
             --seg-area 3.40e-4)
 set_tests_properties(tiago_vs_xdiagno PROPERTIES SKIP_RETURN_CODE 125)
+
+foreach(case_name IN ITEMS ncsx_nfp1 ncsx_nfp3)
+    if(case_name STREQUAL "ncsx_nfp1")
+        set(coil_file "coils.NCSX_nfp1")
+        set(coil_url "https://raw.githubusercontent.com/PrincetonUniversity/STELLOPT/develop/BENCHMARKS/FIELDLINES_TEST/coils.NCSX_nfp1")
+        set(case_nfp 1)
+        set(case_samples 12)
+        set(case_tol 1.0e-6)
+    else()
+        set(coil_file "coils.NCSX")
+        set(coil_url "https://raw.githubusercontent.com/PrincetonUniversity/STELLOPT/develop/BENCHMARKS/FIELDLINES_TEST/coils.NCSX")
+        set(case_nfp 3)
+        set(case_samples 14)
+        set(case_tol 5.0e-7)
+    endif()
+    add_test(NAME tiago_vs_xdiagno_${case_name}
+        COMMAND ${Python3_EXECUTABLE}
+                ${CMAKE_SOURCE_DIR}/scripts/run_xdiagno.py
+                --coil ${CMAKE_SOURCE_DIR}/tests/cases/${case_name}/${coil_file}
+                --coil-url ${coil_url}
+                --flux ${CMAKE_SOURCE_DIR}/tests/cases/${case_name}/fluxloop.diagno
+                --segrog ${CMAKE_SOURCE_DIR}/tests/cases/${case_name}/segrog.diagno
+                --output ${TIAGO_OUTPUT_DIR}/${case_name}
+                --label ${case_name}
+                --tiago-bin $<TARGET_FILE:tiago_vacuum_cli>
+                --seg-area 3.40e-4
+                --samples ${case_samples}
+                --nfp ${case_nfp}
+                --tolerance ${case_tol}
+                --flux-turns ${CMAKE_SOURCE_DIR}/tests/cases/${case_name}/flux_turns.csv
+                --segrog-turns ${CMAKE_SOURCE_DIR}/tests/cases/${case_name}/segrog_turns.csv)
+    set_tests_properties(tiago_vs_xdiagno_${case_name} PROPERTIES SKIP_RETURN_CODE 125)
+endforeach()

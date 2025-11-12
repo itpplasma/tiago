@@ -7,6 +7,8 @@ module tiago_vacuum_forward
     private
 
     real(dp), parameter :: closure_tolerance = 1.0e-10_dp
+    real(dp), parameter :: pi = acos(-1.0_dp)
+    real(dp), parameter :: two_pi = 2.0_dp * pi
     real(dp), parameter :: meters_to_cm = 100.0_dp
     real(dp), parameter :: amps_to_statamp = 2.9979245368431e9_dp
     real(dp), parameter :: gauss_to_tesla = 1.0e-4_dp
@@ -24,11 +26,13 @@ module tiago_vacuum_forward
     type :: vacuum_solver_t
         type(biotsavart_field_t) :: field
         logical :: is_ready = .false.
+        integer(i32) :: nfp = 1_i32
     contains
         procedure :: init => vacuum_solver_init
         procedure :: finalize => vacuum_solver_finalize
         procedure :: flux_loops => vacuum_solver_flux_loops
         procedure :: segrog => vacuum_solver_segrog
+        procedure :: set_nfp => vacuum_solver_set_nfp
     end type vacuum_solver_t
 
     public :: vacuum_solver_t
@@ -44,6 +48,13 @@ contains
         call scale_coils_to_cgs(self%field)
         self%is_ready = .true.
     end subroutine vacuum_solver_init
+
+    subroutine vacuum_solver_set_nfp(self, value)
+        class(vacuum_solver_t), intent(inout) :: self
+        integer(i32), intent(in) :: value
+
+        if (value > 0_i32) self%nfp = value
+    end subroutine vacuum_solver_set_nfp
 
     subroutine vacuum_solver_finalize(self)
         class(vacuum_solver_t), intent(inout) :: self
@@ -68,7 +79,8 @@ contains
 
         do i = 1, size(loops)
             rule = select_rule(loops(i)%label, default_rule, overrides)
-            fluxes(i) = evaluate_loop_flux(self%field, loops(i), rule)
+            fluxes(i) = evaluate_loop_flux(self%field, loops(i), rule, &
+                self%nfp)
         end do
     end subroutine vacuum_solver_flux_loops
 
@@ -102,18 +114,24 @@ contains
         if (.not. self%is_ready) call abort_with('vacuum solver not initialised')
     end subroutine assert_ready
 
-    function evaluate_loop_flux(field, loop, rule) result(flux)
+    function evaluate_loop_flux(field, loop, rule, nfp) result(flux)
         type(biotsavart_field_t), intent(in) :: field
         type(flux_loop_t), intent(in) :: loop
         type(quadrature_rule_t), intent(in) :: rule
+        integer(i32), intent(in) :: nfp
         real(dp) :: flux
 
         integer :: seg
         integer :: samples
+        integer :: period
+        real(dp) :: angle
         real(dp) :: dl(3)
         real(dp) :: start_point(3)
         real(dp) :: end_point(3)
         real(dp) :: weight
+        real(dp) :: rotated_start(3)
+        real(dp) :: rotated_end(3)
+        real(dp) :: rotated_dl(3)
 
         flux = 0.0_dp
         samples = max(1_i32, rule%samples_per_segment)
@@ -124,12 +142,30 @@ contains
             weight = 1.0_dp / real(samples, dp)
             flux = flux + integrate_segment(field, start_point, dl, samples, &
                 weight)
+            if (loop%repeat_count > 0 .and. nfp > 1) then
+                do period = 1, nfp - 1
+                    angle = real(period, dp) * two_pi / real(nfp, dp)
+                    call rotate_point(start_point, angle, rotated_start)
+                    call rotate_point(end_point, angle, rotated_end)
+                    rotated_dl = rotated_end - rotated_start
+                    flux = flux + integrate_segment(field, rotated_start, &
+                        rotated_dl, samples, weight)
+                end do
+            end if
         end do
 
         flux = flux * maxwell_to_weber
 
         if (loop%subtract_toroidal_flux) then
             flux = flux - estimate_toroidal_flux(field, loop)
+            if (loop%repeat_count > 0 .and. nfp > 1) then
+                do period = 1, nfp - 1
+                    angle = real(period, dp) * two_pi / real(nfp, dp)
+                    call rotate_point(loop_centroid(loop), angle, rotated_start)
+                    flux = flux - toroidal_flux_at_point(field, rotated_start, &
+                        polygon_area_xy(loop))
+                end do
+            end if
         end if
     end function evaluate_loop_flux
 
@@ -164,18 +200,25 @@ contains
         type(flux_loop_t), intent(in) :: loop
 
         real(dp) :: centroid(3)
-        real(dp) :: centroid_cm(3)
-        real(dp) :: b_field(3)
-        real(dp) :: b_gauss(3)
         real(dp) :: area
 
         centroid = loop_centroid(loop)
-        centroid_cm = centroid * meters_to_cm
-        call field%compute_bfield(centroid_cm, b_gauss)
-        b_field = b_gauss * gauss_to_tesla
         area = polygon_area_xy(loop)
-        estimate_toroidal_flux = b_field(3) * area
+        estimate_toroidal_flux = toroidal_flux_at_point(field, centroid, area)
     end function estimate_toroidal_flux
+
+    real(dp) function toroidal_flux_at_point(field, position, area)
+        type(biotsavart_field_t), intent(in) :: field
+        real(dp), intent(in) :: position(3)
+        real(dp), intent(in) :: area
+
+        real(dp) :: position_cm(3)
+        real(dp) :: b_gauss(3)
+
+        position_cm = position * meters_to_cm
+        call field%compute_bfield(position_cm, b_gauss)
+        toroidal_flux_at_point = b_gauss(3) * gauss_to_tesla * area
+    end function toroidal_flux_at_point
 
     function loop_centroid(loop) result(center)
         type(flux_loop_t), intent(in) :: loop
@@ -380,6 +423,21 @@ contains
         character(len=*), intent(in) :: message
         error stop trim(message)
     end subroutine abort_with
+
+    subroutine rotate_point(point, angle, rotated)
+        real(dp), intent(in) :: point(3)
+        real(dp), intent(in) :: angle
+        real(dp), intent(out) :: rotated(3)
+
+        real(dp) :: cang
+        real(dp) :: sang
+
+        cang = cos(angle)
+        sang = sin(angle)
+        rotated(1) = point(1) * cang - point(2) * sang
+        rotated(2) = point(1) * sang + point(2) * cang
+        rotated(3) = point(3)
+    end subroutine rotate_point
 
     subroutine scale_coils_to_cgs(field)
         type(biotsavart_field_t), intent(inout) :: field

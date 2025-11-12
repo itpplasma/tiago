@@ -146,12 +146,12 @@ contains
         character(len=:), allocatable, intent(out) :: message
 
         integer(i32) :: npts
-        integer(i32) :: closed_flag
+        integer(i32) :: repeat_flag
         integer(i32) :: subtract_flag
         character(len=128) :: label_buffer
 
         message = ''
-        read(line, *, iostat=ios) npts, closed_flag, subtract_flag, label_buffer
+        read(line, *, iostat=ios) npts, repeat_flag, subtract_flag, label_buffer
         if (ios /= 0) then
             message = 'failed to parse loop header: '//trim(line)
             return
@@ -163,8 +163,8 @@ contains
             return
         end if
 
-        loop%is_open = (closed_flag /= 0_i32)
         loop%subtract_toroidal_flux = (subtract_flag /= 0_i32)
+        loop%repeat_count = max(0_i32, repeat_flag)
         loop%label = trim(label_buffer)
         if (len_trim(loop%label) == 0) then
             loop%label = 'loop_' // trim(adjustl(int_to_string(npts)))
@@ -193,6 +193,11 @@ contains
             loop%points(j)%y = y
             loop%points(j)%z = z
         end do
+        if (size(loop%points) >= 2) then
+            loop%is_open = .not. points_match(loop%points(1), loop%points(size(loop%points)))
+        else
+            loop%is_open = .false.
+        end if
     end subroutine load_loop_points
 
     subroutine lint_single_loop(loop, index, ok, report)
@@ -275,6 +280,19 @@ contains
         dz = a%z - b%z
         dist = sqrt(dx * dx + dy * dy + dz * dz)
     end function closure_distance
+
+    logical function points_match(a, b)
+        type(loop_point_t), intent(in) :: a
+        type(loop_point_t), intent(in) :: b
+        real(dp) :: dx
+        real(dp) :: dy
+        real(dp) :: dz
+
+        dx = a%x - b%x
+        dy = a%y - b%y
+        dz = a%z - b%z
+        points_match = sqrt(dx * dx + dy * dy + dz * dz) < closure_tolerance
+    end function points_match
 
     subroutine append_line(buffer, line)
         character(len=:), allocatable, intent(inout) :: buffer

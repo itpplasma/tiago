@@ -13,6 +13,8 @@ module tiago_diagnostic_types
         character(len=:), allocatable :: label
         logical :: is_open = .false.
         logical :: subtract_toroidal_flux = .false.
+        integer(i32) :: repeat_count = 0
+        real(dp) :: turn_scale = 1.0_dp
         type(loop_point_t), allocatable :: points(:)
     end type flux_loop_t
 
@@ -20,6 +22,7 @@ module tiago_diagnostic_types
         character(len=:), allocatable :: label
         real(dp) :: effective_area = 0.0_dp
         integer(i32) :: segments = 0_i32
+        real(dp) :: turn_scale = 1.0_dp
         type(loop_point_t), allocatable :: path(:)
     end type segmented_rogowski_t
 

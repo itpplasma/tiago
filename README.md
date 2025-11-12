@@ -37,12 +37,17 @@ Pass extra cache entries through `CMAKE_ARGS`, e.g.
     tests/data/coil_sample.neo \
     tests/data/fluxloop_sample.diagno \
     tests/data/segrog_sample.diagno \
-    --output-dir build/tests/output --seg-area 3.40e-4 --samples 8
+    --output-dir build/tests/output --seg-area 3.40e-4 --samples 8 \
+    --nfp 3 --flux-turns tests/cases/ncsx_nfp3/flux_turns.csv \
+    --segrog-turns tests/cases/ncsx_nfp3/segrog_turns.csv
 ```
 This command emits `tiago_flux.csv` and `tiago_segrog.csv` in the output
 directory. Override sample metadata via
 `--flux-out`, `--segrog-out`, `--kind`, or the registry file referenced by
-`docs/diagnostics/registry.json`.
+`docs/diagnostics/registry.json`. `--nfp` matches the field-period geometry,
+while `--flux-turns` / `--segrog-turns` accept text files of `label scale`
+pairs so Tiago mirrors DIAGNO's namelist-based `flux_turns` and
+`segrog_turns` arrays.
 
 ## Cross-code validation & visual artifacts
 ```
@@ -64,8 +69,13 @@ script writes:
 - `geometry.png` – coil filaments plus flux-loop/segmented Rogowski paths so you
   can inspect geometry coverage visually
 
-`ctest` target `tiago_vs_xdiagno` wraps this flow so every test run produces the
-PNG evidence automatically.
+`ctest` target `tiago_vs_xdiagno` wraps this flow for the toy sample, while the
+`tiago_vs_xdiagno_ncsx_nfp1` and `tiago_vs_xdiagno_ncsx_nfp3` tests target two
+NCSX vacuum scenarios. During those runs the harness automatically downloads
+`coils.NCSX_nfp1` / `coils.NCSX` from the public STELLOPT tree (only when the
+files are absent), runs Tiago and `xdiagno` with matching `nfp` values and turn
+scalars, and stores artifacts in `build/tests/output/<case>/diagnostics_<case>.png`
+and `geometry_<case>.png`.
 
 ## Directory layout
 ```
