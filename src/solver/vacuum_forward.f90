@@ -34,6 +34,7 @@ module tiago_vacuum_forward
         procedure :: flux_loops => vacuum_solver_flux_loops
         procedure :: segrog => vacuum_solver_segrog
         procedure :: set_nfp => vacuum_solver_set_nfp
+        procedure :: flux_and_segrog => vacuum_solver_flux_and_segrog
     end type vacuum_solver_t
 
     public :: vacuum_solver_t
@@ -88,11 +89,13 @@ contains
         if (allocated(fluxes)) deallocate(fluxes)
         allocate(fluxes(size(loops)))
 
+!$omp parallel do default(shared) private(i, rule) collapse(1)
         do i = 1, size(loops)
             rule = select_rule(loops(i)%label, default_rule, overrides)
             fluxes(i) = evaluate_loop_flux(self%field, loops(i), rule, &
                 self%nfp)
         end do
+!$omp end parallel do
     end subroutine vacuum_solver_flux_loops
 
     subroutine vacuum_solver_segrog(self, diagnostics, voltages, default_rule, &
@@ -113,12 +116,55 @@ contains
         if (allocated(voltages)) deallocate(voltages)
         allocate(voltages(size(diagnostics)))
 
+!$omp parallel do default(shared) private(i, rule)
         do i = 1, size(diagnostics)
             rule = select_rule(diagnostics(i)%label, default_rule, overrides)
             voltages(i) = evaluate_segrog_signal(self%field, diagnostics(i), &
                 rule)
         end do
+!$omp end parallel do
     end subroutine vacuum_solver_segrog
+
+    subroutine vacuum_solver_flux_and_segrog(self, loops, fluxes, diagnostics, &
+            voltages, default_rule, overrides)
+        class(vacuum_solver_t), intent(in) :: self
+        type(flux_loop_t), allocatable, intent(in) :: loops(:)
+        real(dp), allocatable, intent(out) :: fluxes(:)
+        type(segmented_rogowski_t), allocatable, intent(in) :: diagnostics(:)
+        real(dp), allocatable, intent(out) :: voltages(:)
+        type(quadrature_rule_t), intent(in), optional :: default_rule
+        type(quadrature_override_t), intent(in), optional :: overrides(:)
+
+        integer :: i
+        type(quadrature_rule_t) :: rule
+
+        call assert_ready(self)
+        if (.not. allocated(loops)) call abort_with('flux loop array not set')
+        if (.not. allocated(diagnostics)) then
+            call abort_with('segmented Rogowski array not set')
+        end if
+        if (allocated(fluxes)) deallocate(fluxes)
+        if (allocated(voltages)) deallocate(voltages)
+        allocate(fluxes(size(loops)))
+        allocate(voltages(size(diagnostics)))
+
+!$omp parallel default(shared) private(i, rule)
+!$omp do nowait
+        do i = 1, size(loops)
+            rule = select_rule(loops(i)%label, default_rule, overrides)
+            fluxes(i) = evaluate_loop_flux(self%field, loops(i), rule, &
+                self%nfp)
+        end do
+!$omp end do nowait
+!$omp do
+        do i = 1, size(diagnostics)
+            rule = select_rule(diagnostics(i)%label, default_rule, overrides)
+            voltages(i) = evaluate_segrog_signal(self%field, diagnostics(i), &
+                rule)
+        end do
+!$omp end do
+!$omp end parallel
+    end subroutine vacuum_solver_flux_and_segrog
 
     subroutine assert_ready(self)
         class(vacuum_solver_t), intent(in) :: self
@@ -148,9 +194,6 @@ contains
         flux = 0.0_dp
         samples = max(1_i32, rule%samples_per_segment)
 
-!$omp parallel do default(shared) private(seg, period, start_point, end_point, &
-!$omp& dl, weight, rotated_start, rotated_end, rotated_dl, seg_flux, angle) &
-!$omp& reduction(+:flux)
         do seg = 1, segment_count(loop)
             call segment_endpoints(loop, seg, start_point, end_point)
             dl = end_point - start_point
@@ -168,7 +211,6 @@ contains
                 end do
             end if
         end do
-!$omp end parallel do
 
         flux = flux * maxwell_to_weber
 
@@ -292,8 +334,6 @@ contains
         voltage = 0.0_dp
         effective_segments = max(1_i32, diagnostic%segments)
 
-!$omp parallel do default(shared) private(seg, start_point, end_point, dl, &
-!$omp& tangent, norm_dl) reduction(+:voltage)
         do seg = 1, size(diagnostic%path) - 1
             call extract_path_segment(diagnostic, seg, start_point, end_point)
             dl = end_point - start_point
@@ -302,7 +342,6 @@ contains
             voltage = voltage + integrate_segrog_segment(field, start_point, dl, &
                 norm_dl, tangent, samples, weight)
         end do
-!$omp end parallel do
 
         voltage = voltage * diagnostic%effective_area / &
             real(effective_segments, dp)
