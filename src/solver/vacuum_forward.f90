@@ -263,6 +263,8 @@ contains
             L = sqrt(dl_coil(1)**2 + dl_coil(2)**2 + dl_coil(3)**2)
 
             ! Sample loop inner - compute contribution from coil_i to all samples
+            ! Use SIMD vectorization for independent sample calculations
+!$omp simd reduction(+:integrate_segment)
             do s = 1, samples
                 step = (real(s, dp) - 0.5_dp) / real(samples, dp)
                 sample_point_cm = start_point_cm + step * dl_cm
@@ -295,6 +297,7 @@ contains
                               a_field(2) * dl_cm(2) + &
                               a_field(3) * dl_cm(3))
             end do
+!$omp end simd
         end do
     end function integrate_segment
 
@@ -431,6 +434,8 @@ contains
             dl_coil_hat(3) = dl_coil(3) / L
 
             ! Sample loop inner - compute contribution from coil_i to all samples
+            ! Use SIMD vectorization for independent sample calculations
+!$omp simd reduction(+:integrate_segrog_segment)
             do s = 1, samples
                 step = (real(s, dp) - 0.5_dp) / real(samples, dp)
                 sample_point = start_point + step * dl
@@ -482,6 +487,7 @@ contains
                      b_field(2) * tangent(2) + &
                      b_field(3) * tangent(3)) * norm_dl
             end do
+!$omp end simd
         end do
     end function integrate_segrog_segment
 
