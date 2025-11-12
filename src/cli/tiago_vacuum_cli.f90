@@ -197,6 +197,9 @@ subroutine run_solver(coil_path, flux_path, segrog_path, output_dir, &
         call read_flux_loop_file(flux_path, loops, ierr, message)
         if (ierr /= 0_i32) call die('flux parse failed: '//trim(message))
         call apply_flux_turns(trim(flux_turn_path), loops)
+        call solver%flux_loops(loops, fluxes, rule)
+        call scale_flux_turns(loops, fluxes)
+        call write_result(flux_out_path, loops, fluxes)
     end if
 
     if (have_seg) then
@@ -207,19 +210,6 @@ subroutine run_solver(coil_path, flux_path, segrog_path, output_dir, &
             seg_area)
         if (ierr /= 0_i32) call die('segrog parse failed: '//trim(message))
         call apply_segrog_turns(trim(segrog_turn_path), segs)
-    end if
-
-    if (have_flux .and. have_seg) then
-        call solver%flux_and_segrog(loops, fluxes, segs, voltages, rule)
-        call scale_flux_turns(loops, fluxes)
-        call scale_segrog_turns(segs, voltages)
-        call write_result(flux_out_path, loops, fluxes)
-        call write_segrog(segrog_out_path, segs, voltages)
-    else if (have_flux) then
-        call solver%flux_loops(loops, fluxes, rule)
-        call scale_flux_turns(loops, fluxes)
-        call write_result(flux_out_path, loops, fluxes)
-    else if (have_seg) then
         call solver%segrog(segs, voltages, rule)
         call scale_segrog_turns(segs, voltages)
         call write_segrog(segrog_out_path, segs, voltages)
