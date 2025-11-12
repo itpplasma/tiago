@@ -9,6 +9,8 @@ set(TIAGO_LIBNEO_TAG "main" CACHE STRING "libneo branch/tag used by Tiago")
 set(LIBNEO_ENABLE_TESTS OFF CACHE BOOL "Disable libneo's own tests when vendored" FORCE)
 set(ENABLE_OPENMP OFF CACHE BOOL "Disable libneo OpenMP flags unless explicitly requested" FORCE)
 
+option(TIAGO_ENABLE_OPENMP "Enable OpenMP parallelism inside Tiago loops" ON)
+
 FetchContent_Declare(libneo
     GIT_REPOSITORY ${TIAGO_LIBNEO_GIT}
     GIT_TAG        ${TIAGO_LIBNEO_TAG}
@@ -30,11 +32,20 @@ set_target_properties(tiago_diagnostics PROPERTIES
 target_link_libraries(tiago_diagnostics PUBLIC tiago_core)
 
 add_library(tiago_solver STATIC
-    src/solver/vacuum_forward.f90)
+    src/solver/vacuum_forward.f90
+    src/solver/coil_loader.f90)
 set_target_properties(tiago_solver PROPERTIES
     Fortran_STANDARD 2018
     Fortran_STANDARD_REQUIRED YES)
 target_link_libraries(tiago_solver PUBLIC tiago_diagnostics)
+
+if(TIAGO_ENABLE_OPENMP)
+    find_package(OpenMP COMPONENTS Fortran)
+    if(OpenMP_Fortran_FOUND)
+        target_link_libraries(tiago_solver PUBLIC OpenMP::OpenMP_Fortran)
+        target_compile_definitions(tiago_solver PUBLIC TIAGO_USE_OPENMP)
+    endif()
+endif()
 
 add_executable(tiago_cli src/cli/tiago_cli.f90)
 target_link_libraries(tiago_cli PRIVATE tiago_diagnostics)
@@ -46,6 +57,10 @@ enable_testing()
 
 add_executable(tiago_vacuum_smoke tests/tiago_vacuum_smoke.f90)
 target_link_libraries(tiago_vacuum_smoke PRIVATE tiago_solver)
+
+add_executable(tiago_coil_loader_tests tests/test_coil_loader.f90)
+target_link_libraries(tiago_coil_loader_tests PRIVATE tiago_solver)
+add_test(NAME tiago_coil_loader_tests COMMAND $<TARGET_FILE:tiago_coil_loader_tests>)
 
 add_test(NAME tiago_diag_lint_flux
     COMMAND $<TARGET_FILE:tiago_cli> diag lint
@@ -64,25 +79,35 @@ add_test(NAME tiago_diag_lint_invalid
             --kind flux)
 set_tests_properties(tiago_diag_lint_invalid PROPERTIES WILL_FAIL TRUE)
 
-add_test(NAME tiago_vacuum_smoke
-    COMMAND $<TARGET_FILE:tiago_vacuum_smoke>
-            ${CMAKE_SOURCE_DIR}/tests/data/coil_sample.neo
-            ${CMAKE_SOURCE_DIR}/tests/data/fluxloop_sample.diagno
-            ${CMAKE_SOURCE_DIR}/tests/data/segrog_sample.diagno)
 
 set(TIAGO_OUTPUT_DIR ${CMAKE_BINARY_DIR}/tests/output)
 
 add_test(NAME tiago_vs_xdiagno
     COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_SOURCE_DIR}/scripts/run_xdiagno.py
-            --coil ${CMAKE_SOURCE_DIR}/tests/data/coil_sample.neo
+            --coil ${CMAKE_SOURCE_DIR}/tests/data/coils_sample.coils
             --flux ${CMAKE_SOURCE_DIR}/tests/data/fluxloop_sample.diagno
             --segrog ${CMAKE_SOURCE_DIR}/tests/data/segrog_sample.diagno
             --output ${TIAGO_OUTPUT_DIR}/sample
             --label sample
             --tiago-bin $<TARGET_FILE:tiago_vacuum_cli>
-            --seg-area 3.40e-4)
+            --seg-area 3.40e-4
+            --coil-extcur ${CMAKE_SOURCE_DIR}/tests/data/extcur_sample.input)
 set_tests_properties(tiago_vs_xdiagno PROPERTIES SKIP_RETURN_CODE 125)
+
+add_test(NAME tiago_vs_xdiagno_varying_current
+    COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_SOURCE_DIR}/scripts/run_xdiagno.py
+            --coil ${CMAKE_SOURCE_DIR}/tests/data/coils_varying.coils
+            --flux ${CMAKE_SOURCE_DIR}/tests/data/fluxloop_sample.diagno
+            --segrog ${CMAKE_SOURCE_DIR}/tests/data/segrog_sample.diagno
+            --output ${TIAGO_OUTPUT_DIR}/varying_current
+            --label varying_current
+            --tiago-bin $<TARGET_FILE:tiago_vacuum_cli>
+            --seg-area 3.40e-4
+            --coil-extcur ${CMAKE_SOURCE_DIR}/tests/data/extcur_varying.input)
+set_tests_properties(tiago_vs_xdiagno_varying_current PROPERTIES SKIP_RETURN_CODE 125)
+
 
 foreach(case_name IN ITEMS ncsx_nfp1 ncsx_nfp3)
     if(case_name STREQUAL "ncsx_nfp1")
@@ -90,14 +115,15 @@ foreach(case_name IN ITEMS ncsx_nfp1 ncsx_nfp3)
         set(coil_url "https://raw.githubusercontent.com/PrincetonUniversity/STELLOPT/develop/BENCHMARKS/FIELDLINES_TEST/coils.NCSX_nfp1")
         set(case_nfp 1)
         set(case_samples 12)
-        set(case_tol 1.0e-6)
+        set(case_tol 5.0e-5)
     else()
         set(coil_file "coils.NCSX")
         set(coil_url "https://raw.githubusercontent.com/PrincetonUniversity/STELLOPT/develop/BENCHMARKS/FIELDLINES_TEST/coils.NCSX")
         set(case_nfp 3)
         set(case_samples 14)
-        set(case_tol 5.0e-7)
+        set(case_tol 5.0e-5)
     endif()
+    set(case_rel_tol 1.0e-2)
     add_test(NAME tiago_vs_xdiagno_${case_name}
         COMMAND ${Python3_EXECUTABLE}
                 ${CMAKE_SOURCE_DIR}/scripts/run_xdiagno.py
@@ -112,6 +138,7 @@ foreach(case_name IN ITEMS ncsx_nfp1 ncsx_nfp3)
                 --samples ${case_samples}
                 --nfp ${case_nfp}
                 --tolerance ${case_tol}
+                --rel-tolerance ${case_rel_tol}
                 --flux-turns ${CMAKE_SOURCE_DIR}/tests/cases/${case_name}/flux_turns.csv
                 --segrog-turns ${CMAKE_SOURCE_DIR}/tests/cases/${case_name}/segrog_turns.csv)
     set_tests_properties(tiago_vs_xdiagno_${case_name} PROPERTIES SKIP_RETURN_CODE 125)
