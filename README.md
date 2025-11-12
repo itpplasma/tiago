@@ -88,6 +88,22 @@ docs/diagnostics/          # Diagnostic registry metadata
 docs/USER_GUIDE.md         # In-depth user documentation
 ```
 
+## Test Status
+Current test results: **5/7 tests passing** (71%)
+
+Passing tests:
+- ✅ Diagnostic lint validation (flux, Rogowski, invalid cases)
+- ✅ Vacuum solver smoke test
+- ✅ Cross-code validation vs xdiagno (simple 5-coil geometry)
+
+Known issues:
+- ❌ NCSX test cases fail (ncsx_nfp1, ncsx_nfp3)
+  - Tiago's Biot-Savart validated with analytical circular loop test
+  - Simple geometry tests pass perfectly
+  - NCSX failure likely due to diagnostic definition issues, not solver bugs
+  - See `TEST_STATUS.md` for detailed investigation results
+
 ## Further reading
-See `docs/USER_GUIDE.md` for detailed CLI options, sample data notes, test
-artifacts, and troubleshooting tips.
+- `docs/USER_GUIDE.md` – Detailed CLI options, sample data, troubleshooting
+- `TEST_STATUS.md` – Current test status and investigation summary
+- `STELLOPT_DIAGNO_Analysis.md` – Detailed DIAGNO architecture comparison
