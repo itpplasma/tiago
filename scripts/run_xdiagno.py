@@ -26,6 +26,11 @@ from collections import OrderedDict
 from pathlib import Path
 from typing import List, Tuple
 
+import matplotlib
+
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
+
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
 SKIP_EXIT_CODE = 125
@@ -398,100 +403,19 @@ def parse_diagno_file(raw_path: Path, expect_index: bool) -> List[Tuple[str, flo
 def generate_plot(pairs: List[Tuple[str, float, float]], path: Path) -> None:
     if not pairs:
         return
-    width = max(480, len(pairs) * 40)
-    height = 320
-    data = bytearray([255] * width * height * 3)
-    values = [v for (_, v, lv) in pairs for v in (v, lv) if v is not None and not math.isnan(v)]
-    if not values:
-        return
-    min_val = min(values)
-    max_val = max(values)
-    if math.isclose(max_val, min_val):
-        max_val += 1.0
-        min_val -= 1.0
-    margin = 40
-    def to_point(idx: int, value: float) -> Tuple[int, int]:
-        if len(pairs) == 1:
-            pos = 0
-        else:
-            pos = idx / (len(pairs) - 1)
-        x = margin + int(pos * (width - 2 * margin))
-        span = height - 2 * margin
-        y = height - margin - int(((value - min_val) / (max_val - min_val)) * span)
-        return x, max(0, min(height - 1, y))
+    labels = [label for label, _, _ in pairs]
+    tiago_vals = [val for _, val, _ in pairs]
+    legacy_vals = [val for _, _, val in pairs]
 
-    def draw_line(points: List[Tuple[int, int]], color: Tuple[int, int, int]) -> None:
-        if not points:
-            return
-        for px, py in points:
-            stamp(px, py, color)
-        for (x0, y0), (x1, y1) in zip(points, points[1:]):
-            steps = max(abs(x1 - x0), abs(y1 - y0))
-            if steps == 0:
-                continue
-            for s in range(steps + 1):
-                t = s / steps
-                xs = int(round(x0 + (x1 - x0) * t))
-                ys = int(round(y0 + (y1 - y0) * t))
-                stamp(xs, ys, color)
-
-    def stamp(x: int, y: int, color: Tuple[int, int, int]) -> None:
-        for dx in (-1, 0, 1):
-            for dy in (-1, 0, 1):
-                xx = x + dx
-                yy = y + dy
-                if 0 <= xx < width and 0 <= yy < height:
-                    offset = (yy * width + xx) * 3
-                    data[offset : offset + 3] = bytes(color)
-
-    tiago_points = []
-    legacy_points = []
-    for idx, (_, tiago_val, legacy_val) in enumerate(pairs):
-        if tiago_val is not None and not math.isnan(tiago_val):
-            tiago_points.append(to_point(idx, tiago_val))
-        if legacy_val is not None and not math.isnan(legacy_val):
-            legacy_points.append(to_point(idx, legacy_val))
-
-    draw_axes(data, width, height, margin)
-    draw_line(legacy_points, (246, 141, 64))
-    draw_line(tiago_points, (24, 181, 170))
-    write_png(path, width, height, data)
-
-
-def draw_axes(buffer: bytearray, width: int, height: int, margin: int) -> None:
-    color = (200, 200, 200)
-    for x in range(margin, width - margin):
-        idx = ((height - margin) * width + x) * 3
-        buffer[idx : idx + 3] = bytes(color)
-    for y in range(margin, height - margin):
-        idx = (y * width + margin) * 3
-        buffer[idx : idx + 3] = bytes(color)
-
-
-def write_png(path: Path, width: int, height: int, data: bytearray) -> None:
-    def chunk(tag: bytes, payload: bytes) -> bytes:
-        crc = zlib.crc32(tag + payload) & 0xFFFFFFFF
-        return struct.pack(
-            ">I", len(payload)
-        ) + tag + payload + struct.pack(
-            ">I", crc
-        )
-
-    raw_rows = []
-    row_bytes = width * 3
-    for y in range(height):
-        start = y * row_bytes
-        raw_rows.append(b"\x00" + bytes(data[start : start + row_bytes]))
-    raw = b"".join(raw_rows)
-    png = b"\x89PNG\r\n\x1a\n"
-    png += chunk(
-        b"IHDR",
-        struct.pack(">IIBBBBB", width, height, 8, 2, 0, 0, 0),
-    )
-    png += chunk(b"IDAT", zlib.compress(raw, 9))
-    png += chunk(b"IEND", b"")
-    with path.open("wb") as handle:
-        handle.write(png)
+    plt.figure(figsize=(max(6, len(pairs) * 0.6), 3))
+    plt.plot(labels, legacy_vals, color="#f68d40", marker="o", label="xdiagno")
+    plt.plot(labels, tiago_vals, color="#18b5aa", marker="x", label="tiago")
+    plt.xticks(rotation=45, ha="right")
+    plt.tight_layout()
+    plt.grid(True, linestyle="--", alpha=0.3)
+    plt.legend()
+    plt.savefig(path)
+    plt.close()
 
 
 if __name__ == "__main__":
