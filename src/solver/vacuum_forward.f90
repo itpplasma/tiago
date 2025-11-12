@@ -7,6 +7,10 @@ module tiago_vacuum_forward
     private
 
     real(dp), parameter :: closure_tolerance = 1.0e-10_dp
+    real(dp), parameter :: meters_to_cm = 100.0_dp
+    real(dp), parameter :: amps_to_statamp = 2.9979245368431e9_dp
+    real(dp), parameter :: gauss_to_tesla = 1.0e-4_dp
+    real(dp), parameter :: maxwell_to_weber = 1.0e-8_dp
 
     type :: quadrature_rule_t
         integer(i32) :: samples_per_segment = 4_i32
@@ -37,6 +41,7 @@ contains
         character(len=*), intent(in) :: coil_file
 
         call self%field%biotsavart_field_init(trim(coil_file))
+        call scale_coils_to_cgs(self%field)
         self%is_ready = .true.
     end subroutine vacuum_solver_init
 
@@ -121,6 +126,8 @@ contains
                 weight)
         end do
 
+        flux = flux * maxwell_to_weber
+
         if (loop%subtract_toroidal_flux) then
             flux = flux - estimate_toroidal_flux(field, loop)
         end if
@@ -137,14 +144,18 @@ contains
         real(dp) :: a_field(3)
         real(dp) :: sample_point(3)
         real(dp) :: step
+        real(dp) :: sample_point_cm(3)
+        real(dp) :: dl_cm(3)
 
         integrate_segment = 0.0_dp
+        dl_cm = dl * meters_to_cm
         do s = 1, samples
             step = (real(s, dp) - 0.5_dp) / real(samples, dp)
             sample_point = start_point + step * dl
-            call field%compute_afield(sample_point, a_field)
+            sample_point_cm = sample_point * meters_to_cm
+            call field%compute_afield(sample_point_cm, a_field)
             integrate_segment = integrate_segment + &
-                weight * dot_product(a_field, dl)
+                weight * dot_product(a_field, dl_cm)
         end do
     end function integrate_segment
 
@@ -153,11 +164,15 @@ contains
         type(flux_loop_t), intent(in) :: loop
 
         real(dp) :: centroid(3)
+        real(dp) :: centroid_cm(3)
         real(dp) :: b_field(3)
+        real(dp) :: b_gauss(3)
         real(dp) :: area
 
         centroid = loop_centroid(loop)
-        call field%compute_bfield(centroid, b_field)
+        centroid_cm = centroid * meters_to_cm
+        call field%compute_bfield(centroid_cm, b_gauss)
+        b_field = b_gauss * gauss_to_tesla
         area = polygon_area_xy(loop)
         estimate_toroidal_flux = b_field(3) * area
     end function estimate_toroidal_flux
@@ -224,7 +239,7 @@ contains
             norm_dl = max(closure_tolerance, sqrt(sum(dl**2)))
             tangent = dl / norm_dl
             voltage = voltage + integrate_segrog_segment(field, start_point, dl, &
-                tangent, samples, weight)
+                norm_dl, tangent, samples, weight)
         end do
 
         voltage = voltage * diagnostic%effective_area / &
@@ -232,10 +247,11 @@ contains
     end function evaluate_segrog_signal
 
     real(dp) function integrate_segrog_segment(field, start_point, dl, &
-            tangent, samples, weight)
+            norm_dl, tangent, samples, weight)
         type(biotsavart_field_t), intent(in) :: field
         real(dp), intent(in) :: start_point(3)
         real(dp), intent(in) :: dl(3)
+        real(dp), intent(in) :: norm_dl
         real(dp), intent(in) :: tangent(3)
         integer(i32), intent(in) :: samples
         real(dp), intent(in) :: weight
@@ -244,14 +260,18 @@ contains
         real(dp) :: step
         real(dp) :: sample_point(3)
         real(dp) :: b_field(3)
+        real(dp) :: sample_point_cm(3)
+        real(dp) :: b_gauss(3)
 
         integrate_segrog_segment = 0.0_dp
         do s = 1, samples
             step = (real(s, dp) - 0.5_dp) / real(samples, dp)
             sample_point = start_point + step * dl
-            call field%compute_bfield(sample_point, b_field)
+            sample_point_cm = sample_point * meters_to_cm
+            call field%compute_bfield(sample_point_cm, b_gauss)
+            b_field = b_gauss * gauss_to_tesla
             integrate_segrog_segment = integrate_segrog_segment + weight * &
-                dot_product(b_field, tangent)
+                dot_product(b_field, tangent) * norm_dl
         end do
     end function integrate_segrog_segment
 
@@ -360,4 +380,14 @@ contains
         character(len=*), intent(in) :: message
         error stop trim(message)
     end subroutine abort_with
+
+    subroutine scale_coils_to_cgs(field)
+        type(biotsavart_field_t), intent(inout) :: field
+
+        if (.not. allocated(field%coils%x)) return
+        field%coils%x = field%coils%x * meters_to_cm
+        field%coils%y = field%coils%y * meters_to_cm
+        field%coils%z = field%coils%z * meters_to_cm
+        field%coils%current = field%coils%current * amps_to_statamp
+    end subroutine scale_coils_to_cgs
 end module tiago_vacuum_forward

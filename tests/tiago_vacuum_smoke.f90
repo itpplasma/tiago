@@ -49,8 +49,8 @@ program tiago_vacuum_smoke
     call solver%flux_loops(loops, fluxes, rule)
     call solver%segrog(segs, voltages)
 
-    call assert_close(fluxes(1), 1.0271e-11_dp, 5.0e-13_dp, 'flux sample')
-    call assert_close(voltages(1), 3.2570e-14_dp, 1.0e-15_dp, &
+    call assert_close(fluxes(1), 3.0793e-8_dp, 5.0e-10_dp, 'flux sample')
+    call assert_close(voltages(1), 1.9527e-11_dp, 5.0e-13_dp, &
         'segrog sample')
 
     call solver%finalize()

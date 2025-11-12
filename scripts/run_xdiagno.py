@@ -278,10 +278,15 @@ def write_diagno_coils(out_dir: Path, source_path: str) -> Path:
         handle.write("periods 1\n")
         handle.write("begin filament\n")
         handle.write("mirror NIL\n")
-        for x, y, z, current in points:
-            handle.write(
-                f" {x: .15E} {y: .15E} {z: .15E} {current: .15E}\n"
-            )
+        for idx, (x, y, z, current) in enumerate(points, start=1):
+            if idx == len(points):
+                handle.write(
+                    f" {x: .15E} {y: .15E} {z: .15E} {current: .15E} 1 TIAGO\n"
+                )
+            else:
+                handle.write(
+                    f" {x: .15E} {y: .15E} {z: .15E} {current: .15E}\n"
+                )
         handle.write("end\n")
     return dest
 
