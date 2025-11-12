@@ -153,7 +153,7 @@ contains
         do i = 1, n_points
             if (group_ids(i) < 1) cycle
             if (ref_current(group_ids(i)) == 0.0_dp) then
-                ref_current(group_ids(i)) = abs(tmp_current(i))
+                ref_current(group_ids(i)) = tmp_current(i)
             end if
         end do
 

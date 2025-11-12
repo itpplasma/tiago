@@ -108,6 +108,18 @@ add_test(NAME tiago_vs_xdiagno_varying_current
             --coil-extcur ${CMAKE_SOURCE_DIR}/tests/data/extcur_varying.input)
 set_tests_properties(tiago_vs_xdiagno_varying_current PROPERTIES SKIP_RETURN_CODE 125)
 
+add_test(NAME tiago_vs_xdiagno_negative_current
+    COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_SOURCE_DIR}/scripts/run_xdiagno.py
+            --coil ${CMAKE_SOURCE_DIR}/tests/data/coils_negative.coils
+            --flux ${CMAKE_SOURCE_DIR}/tests/data/fluxloop_sample.diagno
+            --segrog ${CMAKE_SOURCE_DIR}/tests/data/segrog_sample.diagno
+            --output ${TIAGO_OUTPUT_DIR}/negative_current
+            --label negative_current
+            --tiago-bin $<TARGET_FILE:tiago_vacuum_cli>
+            --seg-area 3.40e-4
+            --coil-extcur ${CMAKE_SOURCE_DIR}/tests/data/extcur_negative.input)
+set_tests_properties(tiago_vs_xdiagno_negative_current PROPERTIES SKIP_RETURN_CODE 125)
 
 foreach(case_name IN ITEMS ncsx_nfp1 ncsx_nfp3)
     if(case_name STREQUAL "ncsx_nfp1")
