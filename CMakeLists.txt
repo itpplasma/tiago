@@ -127,6 +127,12 @@ target_link_libraries(tiago_plasma_response_ncsx_tests PRIVATE tiago_solver)
 add_test(NAME tiago_plasma_response_ncsx_tests COMMAND $<TARGET_FILE:tiago_plasma_response_ncsx_tests>
          "${CMAKE_SOURCE_DIR}/tests/cases/ncsx_nfp3/wout_ncsx.nc")
 
+add_test(NAME tiago_plasma_response_comparison_plots
+    COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_SOURCE_DIR}/scripts/compare_plasma_vacuum.py
+            --output-dir ${TIAGO_OUTPUT_DIR}
+            --label ncsx_nfp3)
+
 add_test(NAME tiago_diag_lint_flux
     COMMAND $<TARGET_FILE:tiago_cli> diag lint
             ${CMAKE_SOURCE_DIR}/tests/data/fluxloop_sample.diagno
