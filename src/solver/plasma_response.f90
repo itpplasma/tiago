@@ -107,24 +107,25 @@ contains
             return
         end if
 
-        ! Flatten to C order (theta fastest) from Fortran array (nphi, ntheta, 3)
-        ! where nphi varies fastest in memory (column-major)
+        ! Flatten to 1D matching simsopt: phi OUTER (slowest), theta INNER (fastest)
+        ! Virtual-casing expects: {x[0,0], x[0,1], ..., x[0,Np-1], x[1,0], ...}
+        ! Index formula: jphi * ntheta + jtheta (with 0-based indexing)
         allocate(x_flat(nphi * ntheta * 3))
         do k = 1, 3
-            do j = 1, ntheta  ! Theta OUTER (slowest in virtual-casing order)
-                do i = 1, nphi  ! Phi INNER (fastest in virtual-casing order)
-                    idx = (k-1) * nphi * ntheta + (j-1) * nphi + i
+            do i = 1, nphi  ! Phi OUTER (slowest in 1D array index)
+                do j = 1, ntheta  ! Theta INNER (fastest in 1D array index)
+                    idx = (k-1) * nphi * ntheta + (i-1) * ntheta + j
                     x_flat(idx) = real(x_surf(i, j, k), c_double)
                 end do
             end do
         end do
 
-        ! Flatten B-field with same convention
+        ! Flatten B-field with same convention: phi outer, theta inner
         allocate(b_flat(src_nphi * src_ntheta * 3))
         do k = 1, 3
-            do j = 1, src_ntheta  ! Theta OUTER
-                do i = 1, src_nphi  ! Phi INNER
-                    idx = (k-1) * src_nphi * src_ntheta + (j-1) * src_nphi + i
+            do i = 1, src_nphi  ! Phi OUTER
+                do j = 1, src_ntheta  ! Theta INNER
+                    idx = (k-1) * src_nphi * src_ntheta + (i-1) * src_ntheta + j
                     b_flat(idx) = real(b_total(i, j, k), c_double)
                 end do
             end do
@@ -166,15 +167,15 @@ contains
             return
         end if
 
-        ! Flatten input B-field (theta fastest in vc order)
+        ! Flatten input B-field matching simsopt: phi OUTER, theta INNER
         allocate(b_total_flat(self%src_nphi * self%src_ntheta * 3))
         allocate(b_ext_flat(self%src_nphi * self%src_ntheta * 3))
 
         do k = 1, 3
-            do j = 1, self%src_ntheta  ! Theta OUTER
-                do i = 1, self%src_nphi  ! Phi INNER
+            do i = 1, self%src_nphi  ! Phi OUTER (slowest in 1D)
+                do j = 1, self%src_ntheta  ! Theta INNER (fastest in 1D)
                     idx = (k-1) * self%src_nphi * self%src_ntheta + &
-                          (j-1) * self%src_nphi + i
+                          (i-1) * self%src_ntheta + j
                     b_total_flat(idx) = real(b_total(i, j, k), c_double)
                 end do
             end do
@@ -194,12 +195,12 @@ contains
                                                   size(b_ext_flat)))
         print *, '  Max b_ext:', maxval(abs(b_ext_flat))
 
-        ! Unflatten result to Fortran array (src_nphi, src_ntheta, 3)
+        ! Unflatten result: phi outer, theta inner
         do k = 1, 3
-            do j = 1, self%src_ntheta  ! Theta OUTER
-                do i = 1, self%src_nphi  ! Phi INNER
+            do i = 1, self%src_nphi  ! Phi OUTER
+                do j = 1, self%src_ntheta  ! Theta INNER
                     idx = (k-1) * self%src_nphi * self%src_ntheta + &
-                          (j-1) * self%src_nphi + i
+                          (i-1) * self%src_ntheta + j
                     b_external(i, j, k) = real(b_ext_flat(idx), dp)
                 end do
             end do
