@@ -66,7 +66,8 @@ def run_command(cmd: list[str], verbose: bool = False) -> subprocess.CompletedPr
 
 
 def load_tiago_field(bext_csv: Path, nphi: int | None = None,
-                     ntheta: int | None = None) -> tuple[np.ndarray, int, int]:
+                     ntheta: int | None = None
+                     ) -> tuple[np.ndarray, np.ndarray | None, int, int]:
     df = pd.read_csv(bext_csv)
     if nphi is None:
         nphi = int(df["iphi"].max())
@@ -76,7 +77,11 @@ def load_tiago_field(bext_csv: Path, nphi: int | None = None,
     if vectors.shape[0] != nphi * ntheta:
         raise ValueError(f"TIAGO output size mismatch for {bext_csv}: "
                          f"expected {nphi*ntheta}, found {vectors.shape[0]}")
-    return vectors.reshape((nphi, ntheta, 3)), nphi, ntheta
+    coords = None
+    if {"X", "Y", "Z"}.issubset(df.columns):
+        coords = df[["X", "Y", "Z"]].to_numpy().reshape((nphi, ntheta, 3))
+    field = vectors.reshape((nphi, ntheta, 3))
+    return field, coords, nphi, ntheta
 
 
 def compute_simsopt_field(wout_file: str, nphi: int, ntheta: int
@@ -146,6 +151,20 @@ def flatten_xyz(field: np.ndarray) -> np.ndarray:
         flat[comp * nphi * ntheta:(comp + 1) * nphi * ntheta] = \
             field[:, :, comp].reshape(-1, order="C")
     return flat
+
+
+def unflatten_xyz(flat: np.ndarray, nphi: int, ntheta: int) -> np.ndarray:
+    """Inverse of flatten_xyz for component-major virtual casing vectors."""
+    vec = np.asarray(flat, dtype=float)
+    expected = nphi * ntheta * 3
+    if vec.size != expected:
+        raise ValueError(f"unflatten_xyz size mismatch: expected {expected}, found {vec.size}")
+    field = np.zeros((nphi, ntheta, 3))
+    block = nphi * ntheta
+    for comp in range(3):
+        start = comp * block
+        field[:, :, comp] = vec[start:start + block].reshape((nphi, ntheta), order="C")
+    return field
 
 
 def build_native_vc(gamma: np.ndarray, nfp: int, src_nphi: int, src_ntheta: int,
@@ -237,7 +256,7 @@ def main() -> None:
                           f"{args.offset_distance:.9f}"])
     run_command(tiago_cmd, verbose=args.debug)
     timings["tiago_cmd"] = time.perf_counter() - t0
-    tiago_field, tiago_nphi, tiago_ntheta = load_tiago_field(
+    tiago_field, tiago_coords, tiago_nphi, tiago_ntheta = load_tiago_field(
         tiago_output, args.src_nphi, args.src_ntheta)
     tiago_rms = float(np.sqrt(np.mean(tiago_field**2)))
     print(f"TIAGO B_external RMS: {tiago_rms:.6f} T "
@@ -250,7 +269,7 @@ def main() -> None:
     tiago_offset_field = None
     tiago_offset_dims = None
     if args.offset_distance and args.offset_distance > 0.0 and tiago_offset_output.exists():
-        tiago_offset_field, off_nphi, off_ntheta = load_tiago_field(
+        tiago_offset_field, tiago_offset_coords, off_nphi, off_ntheta = load_tiago_field(
             tiago_offset_output)
         tiago_offset_dims = (off_nphi, off_ntheta)
         log_field_stats("TIAGO off-surface B_external", tiago_offset_field, args.debug)
@@ -298,19 +317,17 @@ def main() -> None:
     if args.offset_distance and args.offset_distance > 0.0 and tiago_offset_field is not None:
         normals = compute_normals(gamma)
         off_nphi, off_ntheta = tiago_offset_dims
-        phi_stride = max(1, tiago_nphi // max(1, off_nphi))
-        theta_stride = max(1, tiago_ntheta // max(1, off_ntheta))
-        gamma_sub = gamma[::phi_stride, ::theta_stride, :][:off_nphi, :off_ntheta, :]
-        normals_sub = normals[::phi_stride, ::theta_stride, :][:off_nphi, :off_ntheta, :]
-        gamma_offset = gamma_sub + args.offset_distance * normals_sub
+        if tiago_offset_coords is None:
+            raise RuntimeError("Offset CSV missing X/Y/Z columns; rebuild helper binary.")
+        gamma_offset = tiago_offset_coords
 
         t0 = time.perf_counter()
         simsopt_offset_flat = native_vc.compute_external_B_offsurf(
             flatten_xyz(simsopt_b_total),
             flatten_xyz(gamma_offset))
         timings["native_offsurface"] = time.perf_counter() - t0
-        simsopt_offset_field = np.asarray(simsopt_offset_flat).reshape(
-            off_nphi, off_ntheta, 3)
+        simsopt_offset_field = unflatten_xyz(
+            np.asarray(simsopt_offset_flat), off_nphi, off_ntheta)
         log_field_stats("simsopt off-surface B_external", simsopt_offset_field, args.debug)
 
         diff_offset = tiago_offset_field - simsopt_offset_field
