@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.24)
-project(TIAGO LANGUAGES Fortran)
+project(TIAGO LANGUAGES Fortran CXX)
 
 # Enable native CPU optimizations
 add_compile_options(-march=native -mtune=native)
@@ -13,6 +13,10 @@ set(LIBNEO_ENABLE_TESTS OFF CACHE BOOL "Disable libneo's own tests when vendored
 set(ENABLE_OPENMP OFF CACHE BOOL "Disable libneo OpenMP flags unless explicitly requested" FORCE)
 
 option(TIAGO_ENABLE_OPENMP "Enable OpenMP parallelism inside Tiago loops" ON)
+option(TIAGO_ENABLE_PLASMA "Enable plasma response via virtual casing" ON)
+
+# Find OpenMP early for plasma dependencies
+find_package(OpenMP)
 
 FetchContent_Declare(libneo
     GIT_REPOSITORY ${TIAGO_LIBNEO_GIT}
@@ -20,6 +24,40 @@ FetchContent_Declare(libneo
     GIT_SHALLOW    TRUE
     SOURCE_SUBDIR  .)
 FetchContent_MakeAvailable(libneo)
+
+if(TIAGO_ENABLE_PLASMA)
+    FetchContent_Declare(virtual_casing
+        GIT_REPOSITORY "https://github.com/hiddenSymmetries/virtual-casing.git"
+        GIT_TAG        "master"
+        GIT_SHALLOW    TRUE)
+    FetchContent_MakeAvailable(virtual_casing)
+
+    # OpenMP is already found above, add to module path for FFTW
+    list(APPEND CMAKE_MODULE_PATH ${virtual_casing_SOURCE_DIR}/cmake)
+
+    # Find dependencies for virtual-casing
+    find_package(FFTW COMPONENTS DOUBLE_LIB)
+    if(NOT FFTW_DOUBLE_LIB_FOUND)
+        message(WARNING "FFTW not found, disabling plasma response")
+        set(TIAGO_ENABLE_PLASMA OFF)
+    endif()
+    find_package(BLAS)
+    find_package(LAPACK)
+
+    # Create static library from virtual-casing source
+    add_library(vc_static STATIC EXCLUDE_FROM_ALL
+        ${virtual_casing_SOURCE_DIR}/src/virtual-casing.cpp)
+    target_include_directories(vc_static PRIVATE
+        ${virtual_casing_SOURCE_DIR}/include
+        ${virtual_casing_SOURCE_DIR}/extern/SCTL/include
+        ${virtual_casing_SOURCE_DIR}/extern/BIEST/include)
+    target_link_libraries(vc_static PRIVATE
+        FFTW::Double OpenMP::OpenMP_CXX ${BLAS_LIBRARIES} ${LAPACK_LIBRARIES})
+
+    set(TIAGO_USE_PLASMA ON)
+else()
+    set(TIAGO_USE_PLASMA OFF)
+endif()
 
 add_library(tiago_core INTERFACE)
 target_link_libraries(tiago_core INTERFACE LIBNEO::neo)
@@ -37,10 +75,19 @@ target_link_libraries(tiago_diagnostics PUBLIC tiago_core)
 add_library(tiago_solver STATIC
     src/solver/vacuum_forward.f90
     src/solver/coil_loader.f90)
+if(TIAGO_USE_PLASMA)
+    target_sources(tiago_solver PRIVATE src/solver/plasma_response.f90)
+endif()
 set_target_properties(tiago_solver PROPERTIES
     Fortran_STANDARD 2018
     Fortran_STANDARD_REQUIRED YES)
 target_link_libraries(tiago_solver PUBLIC tiago_diagnostics)
+if(TIAGO_USE_PLASMA)
+    target_link_libraries(tiago_solver PRIVATE vc_static)
+    target_include_directories(tiago_solver PRIVATE
+        ${virtual_casing_SOURCE_DIR}/include)
+    target_compile_definitions(tiago_solver PUBLIC TIAGO_PLASMA_RESPONSE)
+endif()
 
 if(TIAGO_ENABLE_OPENMP)
     find_package(OpenMP COMPONENTS Fortran)
