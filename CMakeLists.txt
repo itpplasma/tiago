@@ -136,6 +136,10 @@ add_test(NAME tiago_vs_simsopt_virtualcasing
             16 16
             ${TIAGO_OUTPUT_DIR}/tiago_vs_simsopt_comparison.txt)
 
+add_test(NAME tiago_vs_simsopt_plots
+    COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_SOURCE_DIR}/scripts/plot_tiago_vs_simsopt.py)
+
 add_test(NAME tiago_plasma_response_comparison_plots
     COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_SOURCE_DIR}/scripts/compare_plasma_vacuum.py
