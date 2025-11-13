@@ -107,31 +107,35 @@ contains
             return
         end if
 
-        ! Flatten surface coordinates to C order matching simsopt convention
-        ! Order: phi varies slowest (outer), theta varies fastest (inner)
-        ! Produces: x[phi=0,theta=0..N-1], x[phi=1,theta=0..N-1], ..., then y[], then z[]
+        ! Flatten to C order (theta fastest) from Fortran array (nphi, ntheta, 3)
+        ! where nphi varies fastest in memory (column-major)
         allocate(x_flat(nphi * ntheta * 3))
         do k = 1, 3
-            do i = 1, nphi  ! Phi OUTER (varies slowly in C-order flatten)
-                do j = 1, ntheta  ! Theta INNER (varies fast in C-order flatten)
-                    idx = (k-1) * nphi * ntheta + (i-1) * ntheta + j
+            do j = 1, ntheta  ! Theta OUTER (slowest in virtual-casing order)
+                do i = 1, nphi  ! Phi INNER (fastest in virtual-casing order)
+                    idx = (k-1) * nphi * ntheta + (j-1) * nphi + i
                     x_flat(idx) = real(x_surf(i, j, k), c_double)
                 end do
             end do
         end do
 
-        ! Flatten total B-field with same convention
+        ! Flatten B-field with same convention
         allocate(b_flat(src_nphi * src_ntheta * 3))
         do k = 1, 3
-            do i = 1, src_nphi  ! Phi OUTER
-                do j = 1, src_ntheta  ! Theta INNER
-                    idx = (k-1) * src_nphi * src_ntheta + (i-1) * src_ntheta + j
+            do j = 1, src_ntheta  ! Theta OUTER
+                do i = 1, src_nphi  ! Phi INNER
+                    idx = (k-1) * src_nphi * src_ntheta + (j-1) * src_nphi + i
                     b_flat(idx) = real(b_total(i, j, k), c_double)
                 end do
             end do
         end do
 
         ! Call setup
+        print *, 'DEBUG: VirtualCasingSetupD:'
+        print *, '  nphi=', nphi, ' ntheta=', ntheta
+        print *, '  src_nphi=', src_nphi, ' src_ntheta=', src_ntheta
+        print *, '  x_flat[1:10]:', x_flat(1:min(10, size(x_flat)))
+
         call VirtualCasingSetupD(int(digits_val, c_int), int(nfp, c_int), stellsym_c, &
                                 int(nphi, c_long), int(ntheta, c_long), x_flat, &
                                 int(src_nphi, c_long), int(src_ntheta, c_long), &
@@ -155,39 +159,47 @@ contains
         real(dp), intent(out) :: b_external(:,:,:)  ! (src_nphi, src_ntheta, 3)
 
         real(c_double), allocatable :: b_total_flat(:), b_ext_flat(:)
-        integer :: i, j, k, idx, nphi, ntheta
+        integer :: i, j, k, idx
 
         if (.not. self%initialized) then
             b_external = 0.0_dp
             return
         end if
 
-        nphi = self%src_nphi
-        ntheta = self%src_ntheta
-
-        ! Flatten input B-field with phi outer, theta inner
-        allocate(b_total_flat(nphi * ntheta * 3))
-        allocate(b_ext_flat(nphi * ntheta * 3))
+        ! Flatten input B-field (theta fastest in vc order)
+        allocate(b_total_flat(self%src_nphi * self%src_ntheta * 3))
+        allocate(b_ext_flat(self%src_nphi * self%src_ntheta * 3))
 
         do k = 1, 3
-            do i = 1, nphi  ! Phi OUTER
-                do j = 1, ntheta  ! Theta INNER
-                    idx = (k-1) * nphi * ntheta + (i-1) * ntheta + j
+            do j = 1, self%src_ntheta  ! Theta OUTER
+                do i = 1, self%src_nphi  ! Phi INNER
+                    idx = (k-1) * self%src_nphi * self%src_ntheta + &
+                          (j-1) * self%src_nphi + i
                     b_total_flat(idx) = real(b_total(i, j, k), c_double)
                 end do
             end do
         end do
 
         ! Call virtual casing computation
+        print *, 'DEBUG: VirtualCasingComputeBextD:'
+        print *, '  b_total_flat[1:10]:', b_total_flat(1:min(10, &
+                                                     size(b_total_flat)))
+
         call VirtualCasingComputeBextD(b_ext_flat, b_total_flat, &
-                                      int(nphi, c_long), int(ntheta, c_long), &
+                                      int(self%src_nphi, c_long), &
+                                      int(self%src_ntheta, c_long), &
                                       self%ctx)
 
-        ! Unflatten result with same convention
+        print *, '  b_ext_flat[1:10]:', b_ext_flat(1:min(10, &
+                                                  size(b_ext_flat)))
+        print *, '  Max b_ext:', maxval(abs(b_ext_flat))
+
+        ! Unflatten result to Fortran array (src_nphi, src_ntheta, 3)
         do k = 1, 3
-            do i = 1, nphi  ! Phi OUTER
-                do j = 1, ntheta  ! Theta INNER
-                    idx = (k-1) * nphi * ntheta + (i-1) * ntheta + j
+            do j = 1, self%src_ntheta  ! Theta OUTER
+                do i = 1, self%src_nphi  ! Phi INNER
+                    idx = (k-1) * self%src_nphi * self%src_ntheta + &
+                          (j-1) * self%src_nphi + i
                     b_external(i, j, k) = real(b_ext_flat(idx), dp)
                 end do
             end do
