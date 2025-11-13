@@ -19,7 +19,7 @@ B_total_simsopt = B_total_simsopt.reshape(nphi, ntheta, 3)
 Bmag_simsopt = np.linalg.norm(B_total_simsopt, axis=2)
 
 # Create output directory
-outdir = Path('tests/output')
+outdir = Path('build/tests/output')
 outdir.mkdir(parents=True, exist_ok=True)
 
 # Plot 1: B-field magnitude on one field period
