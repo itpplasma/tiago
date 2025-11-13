@@ -127,6 +127,10 @@ target_link_libraries(tiago_plasma_response_ncsx_tests PRIVATE tiago_solver)
 add_test(NAME tiago_plasma_response_ncsx_tests COMMAND $<TARGET_FILE:tiago_plasma_response_ncsx_tests>
          "${CMAKE_SOURCE_DIR}/tests/cases/ncsx_nfp3/wout_ncsx.nc")
 
+add_executable(tiago_plasma_response_validation tests/test_plasma_response_validation.f90)
+target_link_libraries(tiago_plasma_response_validation PRIVATE tiago_solver)
+add_test(NAME tiago_plasma_response_validation COMMAND $<TARGET_FILE:tiago_plasma_response_validation>)
+
 add_test(NAME tiago_plasma_response_comparison_plots
     COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_SOURCE_DIR}/scripts/compare_plasma_vacuum.py
