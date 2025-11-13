@@ -129,6 +129,13 @@ add_test(NAME tiago_vs_simsopt_reference
             ${CMAKE_SOURCE_DIR}/tests/data/simsopt_ncsx/simsopt_gamma.csv
             ${CMAKE_SOURCE_DIR}/tests/data/simsopt_ncsx/simsopt_B_total.csv)
 
+add_test(NAME tiago_vs_simsopt_virtualcasing
+    COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_SOURCE_DIR}/scripts/compare_with_simsopt.py
+            ${CMAKE_SOURCE_DIR}/tests/cases/ncsx_nfp3/wout_ncsx.nc
+            16 16
+            ${TIAGO_OUTPUT_DIR}/tiago_vs_simsopt_comparison.txt)
+
 add_test(NAME tiago_plasma_response_comparison_plots
     COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_SOURCE_DIR}/scripts/compare_plasma_vacuum.py

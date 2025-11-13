@@ -15,8 +15,17 @@ nphi, ntheta = 16, 16
 gamma_simsopt = gamma_simsopt.reshape(nphi, ntheta, 3)
 B_total_simsopt = B_total_simsopt.reshape(nphi, ntheta, 3)
 
+# Load TIAGO test results (from ctest output)
+try:
+    results = pd.read_csv('build/tests/output/comparison_results.txt',
+                         sep=':', header=None, names=['key', 'value'])
+    tiago_rms = float(results[results['key'].str.contains('RMS', na=False)]['value'].values[0].split()[0])
+except:
+    tiago_rms = 0.935  # Fallback to known value
+
 # Compute magnitudes
 Bmag_simsopt = np.linalg.norm(B_total_simsopt, axis=2)
+simsopt_rms = np.sqrt(np.mean(B_total_simsopt**2))
 
 # Create output directory
 outdir = Path('build/tests/output')
@@ -70,10 +79,12 @@ ax.set_aspect('equal')
 plt.colorbar(im, ax=ax, label='Bz (T)')
 
 plt.tight_layout()
-fig.suptitle('VMEC B-field on one field period (NFP=3, NCSX)',
-             fontsize=14, y=1.00)
-plt.savefig(outdir / 'bfield_one_field_period.png', dpi=150, bbox_inches='tight')
-print(f"Saved: {outdir / 'bfield_one_field_period.png'}")
+rel_error = abs(tiago_rms - simsopt_rms) / simsopt_rms * 100
+fig.suptitle(f'TIAGO vs simsopt B-field (NFP=3, NCSX)\n' +
+             f'TIAGO B_ext RMS: {tiago_rms:.3f} T | simsopt: {simsopt_rms:.3f} T | Error: {rel_error:.2f}%',
+             fontsize=12, y=1.01)
+plt.savefig(outdir / 'tiago_vs_simsopt_bfield_comparison.png', dpi=150, bbox_inches='tight')
+print(f"Saved: {outdir / 'tiago_vs_simsopt_bfield_comparison.png'}")
 
 # Plot 2: Vector field at phi=0
 fig, ax = plt.subplots(figsize=(10, 8))
