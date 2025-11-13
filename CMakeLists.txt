@@ -109,6 +109,10 @@ add_executable(tiago_coil_loader_tests tests/test_coil_loader.f90)
 target_link_libraries(tiago_coil_loader_tests PRIVATE tiago_solver)
 add_test(NAME tiago_coil_loader_tests COMMAND $<TARGET_FILE:tiago_coil_loader_tests>)
 
+add_executable(tiago_plasma_response_tests tests/test_plasma_response.f90)
+target_link_libraries(tiago_plasma_response_tests PRIVATE tiago_solver)
+add_test(NAME tiago_plasma_response_tests COMMAND $<TARGET_FILE:tiago_plasma_response_tests>)
+
 add_test(NAME tiago_diag_lint_flux
     COMMAND $<TARGET_FILE:tiago_cli> diag lint
             ${CMAKE_SOURCE_DIR}/tests/data/fluxloop_sample.diagno
