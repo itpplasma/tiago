@@ -29,3 +29,14 @@ __pycache__/
 .DS_Store
 # Case assets generated at runtime
 tests/cases/**/coils.*
+
+# Debug and test artifacts
+*.dat
+*.npy
+*_output*.txt
+debug_*
+healaxis.dat
+compile_commands.json
+CTestTestfile.cmake
+Makefile
+_deps/
