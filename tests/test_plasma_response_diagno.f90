@@ -143,7 +143,9 @@ subroutine create_toroidal_surface(nphi, ntheta, pi, x_surf)
 
     do iphi = 1, nphi
         do itheta = 1, ntheta
-            phi = 2.0_dp * pi * (iphi - 1) / nphi
+            ! Grid phase must use half-point offset for stellarator symmetry
+            ! C API expects phi at 0.5/(N_phi), 1.5/(N_phi), ..., (N_phi-0.5)/(N_phi)
+            phi = 2.0_dp * pi * (iphi - 0.5_dp) / nphi
             theta = 2.0_dp * pi * (itheta - 1) / ntheta
 
             r = r_major + r_minor * cos(theta)

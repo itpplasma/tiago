@@ -207,7 +207,7 @@ contains
     end subroutine plasma_response_finalize
 
     ! Check if initialized
-    logical function plasma_response_is_initialized(self)
+    pure logical function plasma_response_is_initialized(self)
         class(plasma_response_t), intent(in) :: self
         plasma_response_is_initialized = self%initialized
     end function plasma_response_is_initialized
