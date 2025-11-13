@@ -107,6 +107,15 @@ enable_testing()
 
 set(TIAGO_OUTPUT_DIR ${CMAKE_BINARY_DIR}/tests/output)
 file(MAKE_DIRECTORY ${TIAGO_OUTPUT_DIR})
+set(TIAGO_CASES_DIR ${CMAKE_BINARY_DIR}/tests/cases)
+file(MAKE_DIRECTORY ${TIAGO_CASES_DIR})
+
+set(TIAGO_WOUT_LI383_URL "https://raw.githubusercontent.com/hiddenSymmetries/simsopt/master/tests/test_files/wout_li383_low_res_reference.nc")
+set(TIAGO_WOUT_LI383 ${TIAGO_CASES_DIR}/wout_li383_low_res_reference.nc)
+
+set(TIAGO_SIMSOPT_DIR ${TIAGO_OUTPUT_DIR}/simsopt_li383)
+set(TIAGO_SIMSOPT_GAMMA ${TIAGO_SIMSOPT_DIR}/gamma.csv)
+set(TIAGO_SIMSOPT_BTOTAL ${TIAGO_SIMSOPT_DIR}/b_total.csv)
 
 add_executable(tiago_coil_loader_tests tests/test_coil_loader.f90)
 target_link_libraries(tiago_coil_loader_tests PRIVATE tiago_solver)
@@ -116,41 +125,62 @@ add_executable(tiago_plasma_response_tests tests/test_plasma_response.f90)
 target_link_libraries(tiago_plasma_response_tests PRIVATE tiago_solver)
 add_test(NAME tiago_plasma_response_tests COMMAND $<TARGET_FILE:tiago_plasma_response_tests>)
 
-add_executable(tiago_plasma_response_ncsx_tests tests/test_plasma_response_ncsx.f90)
-target_link_libraries(tiago_plasma_response_ncsx_tests PRIVATE tiago_solver)
-add_test(NAME tiago_plasma_response_ncsx_tests COMMAND $<TARGET_FILE:tiago_plasma_response_ncsx_tests>
-         "${CMAKE_SOURCE_DIR}/tests/cases/ncsx_nfp3/wout_ncsx.nc")
-
 add_executable(debug_tiago_virtual_casing tests/debug_tiago_virtual_casing.f90)
 target_link_libraries(debug_tiago_virtual_casing PRIVATE tiago_solver)
 
 add_executable(test_tiago_with_simsopt_grid tests/test_tiago_with_simsopt_grid.f90)
 target_link_libraries(test_tiago_with_simsopt_grid PRIVATE tiago_solver)
 
+add_test(NAME tiago_download_wout_li383
+    COMMAND ${CMAKE_COMMAND}
+            -DURL=${TIAGO_WOUT_LI383_URL}
+            -DDEST=${TIAGO_WOUT_LI383}
+            -P ${CMAKE_SOURCE_DIR}/cmake/DownloadFile.cmake)
+set_tests_properties(tiago_download_wout_li383 PROPERTIES
+    FIXTURES_SETUP wout_li383
+    TIMEOUT 120)
+
+add_test(NAME tiago_generate_simsopt_li383
+    COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_SOURCE_DIR}/scripts/generate_simsopt_reference.py
+            --wout ${TIAGO_WOUT_LI383}
+            --output-dir ${TIAGO_SIMSOPT_DIR}
+            --src-nphi 16
+            --src-ntheta 16)
+set_tests_properties(tiago_generate_simsopt_li383 PROPERTIES
+    FIXTURES_SETUP simsopt_li383
+    FIXTURES_REQUIRED wout_li383)
+
 add_test(NAME tiago_vs_simsopt_reference
     COMMAND $<TARGET_FILE:test_tiago_with_simsopt_grid>
-            ${CMAKE_SOURCE_DIR}/tests/data/simsopt_ncsx/simsopt_gamma.csv
-            ${CMAKE_SOURCE_DIR}/tests/data/simsopt_ncsx/simsopt_B_total.csv
+            ${TIAGO_SIMSOPT_GAMMA}
+            ${TIAGO_SIMSOPT_BTOTAL}
             ${TIAGO_OUTPUT_DIR}/tiago_b_ext.csv)
+set_tests_properties(tiago_vs_simsopt_reference PROPERTIES
+    FIXTURES_REQUIRED simsopt_li383)
 
 add_test(NAME tiago_vs_simsopt_virtualcasing
     COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_SOURCE_DIR}/scripts/compare_with_simsopt.py
-            ${CMAKE_SOURCE_DIR}/tests/cases/ncsx_nfp3/wout_ncsx.nc
+            ${TIAGO_WOUT_LI383}
             16 16
             ${TIAGO_OUTPUT_DIR}/tiago_vs_simsopt_comparison.txt)
+set_tests_properties(tiago_vs_simsopt_virtualcasing PROPERTIES
+    FIXTURES_REQUIRED wout_li383)
 
 add_test(NAME tiago_vs_simsopt_plots
     COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_SOURCE_DIR}/scripts/plot_tiago_vs_simsopt.py
             --tiago-bin $<TARGET_FILE:test_tiago_with_simsopt_grid>
-            --gamma ${CMAKE_SOURCE_DIR}/tests/data/simsopt_ncsx/simsopt_gamma.csv
-            --b-total ${CMAKE_SOURCE_DIR}/tests/data/simsopt_ncsx/simsopt_B_total.csv
-            --wout ${CMAKE_SOURCE_DIR}/tests/cases/ncsx_nfp3/wout_ncsx.nc
+            --gamma ${TIAGO_SIMSOPT_GAMMA}
+            --b-total ${TIAGO_SIMSOPT_BTOTAL}
+            --wout ${TIAGO_WOUT_LI383}
             --output-dir ${TIAGO_OUTPUT_DIR}
             --src-nphi 16
             --src-ntheta 16
             --debug)
+set_tests_properties(tiago_vs_simsopt_plots PROPERTIES
+    FIXTURES_REQUIRED simsopt_li383)
 
 add_test(NAME tiago_plasma_response_comparison_plots
     COMMAND ${Python3_EXECUTABLE}
