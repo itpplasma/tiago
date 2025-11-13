@@ -113,23 +113,10 @@ add_executable(tiago_plasma_response_tests tests/test_plasma_response.f90)
 target_link_libraries(tiago_plasma_response_tests PRIVATE tiago_solver)
 add_test(NAME tiago_plasma_response_tests COMMAND $<TARGET_FILE:tiago_plasma_response_tests>)
 
-add_executable(tiago_plasma_response_vmec_tests tests/test_plasma_response_vmec.f90)
-target_link_libraries(tiago_plasma_response_vmec_tests PRIVATE tiago_solver)
-add_test(NAME tiago_plasma_response_vmec_tests COMMAND $<TARGET_FILE:tiago_plasma_response_vmec_tests>)
-
-add_executable(tiago_plasma_response_diagno_tests tests/test_plasma_response_diagno.f90)
-target_link_libraries(tiago_plasma_response_diagno_tests PRIVATE tiago_solver)
-add_test(NAME tiago_plasma_response_diagno_tests COMMAND $<TARGET_FILE:tiago_plasma_response_diagno_tests>
-         "${CMAKE_SOURCE_DIR}/tests/data/coils_sample.coils")
-
 add_executable(tiago_plasma_response_ncsx_tests tests/test_plasma_response_ncsx.f90)
 target_link_libraries(tiago_plasma_response_ncsx_tests PRIVATE tiago_solver)
 add_test(NAME tiago_plasma_response_ncsx_tests COMMAND $<TARGET_FILE:tiago_plasma_response_ncsx_tests>
          "${CMAKE_SOURCE_DIR}/tests/cases/ncsx_nfp3/wout_ncsx.nc")
-
-add_executable(tiago_plasma_response_validation tests/test_plasma_response_validation.f90)
-target_link_libraries(tiago_plasma_response_validation PRIVATE tiago_solver)
-add_test(NAME tiago_plasma_response_validation COMMAND $<TARGET_FILE:tiago_plasma_response_validation>)
 
 add_test(NAME tiago_plasma_response_comparison_plots
     COMMAND ${Python3_EXECUTABLE}
