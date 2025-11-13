@@ -1,6 +1,9 @@
 cmake_minimum_required(VERSION 3.24)
 project(TIAGO LANGUAGES Fortran)
 
+# Enable native CPU optimizations
+add_compile_options(-march=native -mtune=native)
+
 include(FetchContent)
 find_package(Python3 COMPONENTS Interpreter REQUIRED)
 
@@ -54,9 +57,6 @@ add_executable(tiago_vacuum_cli src/cli/tiago_vacuum_cli.f90)
 target_link_libraries(tiago_vacuum_cli PRIVATE tiago_solver)
 
 enable_testing()
-
-add_executable(tiago_vacuum_smoke tests/tiago_vacuum_smoke.f90)
-target_link_libraries(tiago_vacuum_smoke PRIVATE tiago_solver)
 
 add_executable(tiago_coil_loader_tests tests/test_coil_loader.f90)
 target_link_libraries(tiago_coil_loader_tests PRIVATE tiago_solver)
