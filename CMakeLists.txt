@@ -76,7 +76,9 @@ add_library(tiago_solver STATIC
     src/solver/vacuum_forward.f90
     src/solver/coil_loader.f90)
 if(TIAGO_USE_PLASMA)
-    target_sources(tiago_solver PRIVATE src/solver/plasma_response.f90)
+    target_sources(tiago_solver PRIVATE
+        src/solver/plasma_response.f90
+        src/solver/virtual_casing_bridge.cpp)
 endif()
 set_target_properties(tiago_solver PROPERTIES
     Fortran_STANDARD 2018
@@ -85,7 +87,9 @@ target_link_libraries(tiago_solver PUBLIC tiago_diagnostics)
 if(TIAGO_USE_PLASMA)
     target_link_libraries(tiago_solver PRIVATE vc_static)
     target_include_directories(tiago_solver PRIVATE
-        ${virtual_casing_SOURCE_DIR}/include)
+        ${virtual_casing_SOURCE_DIR}/include
+        ${virtual_casing_SOURCE_DIR}/extern/BIEST/include
+        ${virtual_casing_SOURCE_DIR}/extern/SCTL/include)
     target_compile_definitions(tiago_solver PUBLIC TIAGO_PLASMA_RESPONSE)
 endif()
 

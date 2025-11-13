@@ -47,6 +47,18 @@ module tiago_plasma_response
             integer(c_long), value :: nt, np
             type(c_ptr), value :: ctx
         end subroutine
+
+        ! Compute B_external at off-surface target points
+        subroutine VirtualCasingComputeBextOffSurfD(bext, b, xt, src_nt, src_np, &
+                                                   trg_nt, trg_np, ctx) &
+                 bind(C, name='VirtualCasingComputeBextOffSurfD')
+            use iso_c_binding
+            real(c_double), intent(out) :: bext(*)
+            real(c_double), intent(in) :: b(*)
+            real(c_double), intent(in) :: xt(*)
+            integer(c_long), value :: src_nt, src_np, trg_nt, trg_np
+            type(c_ptr), value :: ctx
+        end subroutine
     end interface
 
     ! Fortran wrapper type for virtual casing plasma response
@@ -60,6 +72,7 @@ module tiago_plasma_response
     contains
         procedure :: init => plasma_response_init
         procedure :: compute_bext => plasma_response_compute_bext
+        procedure :: compute_bext_at => plasma_response_compute_bext_at
         procedure :: finalize => plasma_response_finalize
         procedure :: is_initialized => plasma_response_is_initialized
     end type plasma_response_t
@@ -208,6 +221,70 @@ contains
 
         deallocate(b_total_flat, b_ext_flat)
     end subroutine plasma_response_compute_bext
+
+    subroutine plasma_response_compute_bext_at(self, b_total, x_eval, b_external)
+        class(plasma_response_t), intent(in) :: self
+        real(dp), intent(in) :: b_total(:,:,:)  ! (src_nphi, src_ntheta, 3)
+        real(dp), intent(in) :: x_eval(:,:,:)   ! (eval_nphi, eval_ntheta, 3)
+        real(dp), intent(out) :: b_external(:,:,:)  ! (eval_nphi, eval_ntheta, 3)
+
+        integer :: eval_nphi, eval_ntheta
+        real(c_double), allocatable :: b_total_flat(:), x_eval_flat(:), b_ext_flat(:)
+        integer :: i, j, k, idx
+
+        if (.not. self%initialized) then
+            b_external = 0.0_dp
+            return
+        end if
+
+        eval_nphi = size(x_eval, 1)
+        eval_ntheta = size(x_eval, 2)
+
+        if (size(b_external, 1) /= eval_nphi .or. size(b_external, 2) /= eval_ntheta) then
+            error stop 'compute_bext_at: output array shape mismatch'
+        end if
+
+        allocate(b_total_flat(self%src_nphi * self%src_ntheta * 3))
+        allocate(x_eval_flat(eval_nphi * eval_ntheta * 3))
+        allocate(b_ext_flat(eval_nphi * eval_ntheta * 3))
+
+        ! Flatten surface B field (phi outer, theta inner)
+        do k = 1, 3
+            do i = 1, self%src_nphi
+                do j = 1, self%src_ntheta
+                    idx = (k-1) * self%src_nphi * self%src_ntheta + &
+                          (i-1) * self%src_ntheta + j
+                    b_total_flat(idx) = real(b_total(i, j, k), c_double)
+                end do
+            end do
+        end do
+
+        ! Flatten evaluation coordinates (phi outer, theta inner)
+        do k = 1, 3
+            do i = 1, eval_nphi
+                do j = 1, eval_ntheta
+                    idx = (k-1) * eval_nphi * eval_ntheta + (i-1) * eval_ntheta + j
+                    x_eval_flat(idx) = real(x_eval(i, j, k), c_double)
+                end do
+            end do
+        end do
+
+        call VirtualCasingComputeBextOffSurfD(b_ext_flat, b_total_flat, x_eval_flat, &
+            int(self%src_nphi, c_long), int(self%src_ntheta, c_long), &
+            int(eval_nphi, c_long), int(eval_ntheta, c_long), self%ctx)
+
+        ! Unflatten result
+        do k = 1, 3
+            do i = 1, eval_nphi
+                do j = 1, eval_ntheta
+                    idx = (k-1) * eval_nphi * eval_ntheta + (i-1) * eval_ntheta + j
+                    b_external(i, j, k) = real(b_ext_flat(idx), dp)
+                end do
+            end do
+        end do
+
+        deallocate(b_total_flat, x_eval_flat, b_ext_flat)
+    end subroutine plasma_response_compute_bext_at
 
     ! Finalize and free resources
     subroutine plasma_response_finalize(self)

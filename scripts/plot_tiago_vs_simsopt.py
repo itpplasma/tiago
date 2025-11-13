@@ -11,6 +11,7 @@ from pathlib import Path
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
+import virtual_casing as vc_native
 
 try:
     from simsopt.mhd.vmec import Vmec
@@ -40,6 +41,9 @@ def parse_args() -> argparse.Namespace:
                         help="Poloidal grid samples (default: 16).")
     parser.add_argument("--debug", action="store_true",
                         help="Print detailed field statistics for troubleshooting.")
+    parser.add_argument("--offset-distance", type=float, default=0.05,
+                        help="Meters to displace points along outward normal for off-surface comparison "
+                             "(<=0 disables off-surface evaluation).")
     return parser.parse_args()
 
 
@@ -60,26 +64,36 @@ def run_command(cmd: list[str], verbose: bool = False) -> subprocess.CompletedPr
     return result
 
 
-def load_tiago_field(bext_csv: Path, nphi: int, ntheta: int) -> np.ndarray:
+def load_tiago_field(bext_csv: Path, nphi: int | None = None,
+                     ntheta: int | None = None) -> tuple[np.ndarray, int, int]:
     df = pd.read_csv(bext_csv)
+    if nphi is None:
+        nphi = int(df["iphi"].max())
+    if ntheta is None:
+        ntheta = int(df["itheta"].max())
     vectors = df[["Bx", "By", "Bz"]].to_numpy()
     if vectors.shape[0] != nphi * ntheta:
-        raise ValueError("TIAGO output does not match requested grid dimensions.")
-    return vectors.reshape((nphi, ntheta, 3))
+        raise ValueError(f"TIAGO output size mismatch for {bext_csv}: "
+                         f"expected {nphi*ntheta}, found {vectors.shape[0]}")
+    return vectors.reshape((nphi, ntheta, 3)), nphi, ntheta
 
 
 def compute_simsopt_field(wout_file: str, nphi: int, ntheta: int
-                          ) -> tuple[np.ndarray, np.ndarray, float, int]:
+                          ) -> tuple[np.ndarray, np.ndarray, float, int,
+                                     VirtualCasing, np.ndarray]:
     vmec = Vmec(wout_file)
     vc = VirtualCasing.from_vmec(vmec, src_nphi=nphi, src_ntheta=ntheta,
                                  use_stellsym=True, digits=6, filename=None)
     gamma = np.asarray(vc.gamma)
     bext = np.asarray(vc.B_external)
+    b_total = np.asarray(vc.B_total)
     rms = float(np.sqrt(np.mean(bext**2)))
     return (gamma.reshape(nphi, ntheta, 3),
             bext.reshape(nphi, ntheta, 3),
             rms,
-            int(vmec.wout.nfp))
+            int(vmec.wout.nfp),
+            vc,
+            b_total.reshape(nphi, ntheta, 3))
 
 
 def log_field_stats(tag: str, field: np.ndarray, debug: bool) -> None:
@@ -102,9 +116,54 @@ def save_vector_csv(path: Path, field: np.ndarray) -> None:
                              f"{bx:.15e},{by:.15e},{bz:.15e}\n")
 
 
+def compute_normals(gamma: np.ndarray) -> np.ndarray:
+    nphi, ntheta, _ = gamma.shape
+    normals = np.zeros_like(gamma)
+
+    for iphi in range(nphi):
+        ip_next = (iphi + 1) % nphi
+        ip_prev = (iphi - 1) % nphi
+        for itheta in range(ntheta):
+            it_next = (itheta + 1) % ntheta
+            it_prev = (itheta - 1) % ntheta
+
+            dphi = gamma[ip_next, itheta, :] - gamma[ip_prev, itheta, :]
+            dtheta = gamma[iphi, it_next, :] - gamma[iphi, it_prev, :]
+            normal = np.cross(dphi, dtheta)
+            norm_mag = np.linalg.norm(normal)
+            if norm_mag > 0:
+                normals[iphi, itheta, :] = normal / norm_mag
+            else:
+                normals[iphi, itheta, :] = normal
+    return normals
+
+
+def flatten_xyz(field: np.ndarray) -> np.ndarray:
+    nphi, ntheta, _ = field.shape
+    flat = np.zeros(nphi * ntheta * 3)
+    for comp in range(3):
+        flat[comp * nphi * ntheta:(comp + 1) * nphi * ntheta] = \
+            field[:, :, comp].reshape(-1, order="C")
+    return flat
+
+
+def build_native_vc(gamma: np.ndarray, nfp: int, src_nphi: int, src_ntheta: int,
+                    digits: int = 6, use_stellsym: bool = True,
+                    trg_nphi: int | None = None, trg_ntheta: int | None = None):
+    ctx = vc_native.VirtualCasing()
+    gamma_flat = flatten_xyz(gamma)
+    trg_nphi = trg_nphi or src_nphi
+    trg_ntheta = trg_ntheta or src_ntheta
+    ctx.setup(digits, nfp, use_stellsym,
+              src_nphi, src_ntheta, gamma_flat,
+              src_nphi, src_ntheta,
+              trg_nphi, trg_ntheta)
+    return ctx
+
+
 def make_plots(gamma: np.ndarray, tiago_field: np.ndarray, simsopt_field: np.ndarray,
-               nfp: int, output_dir: Path,
-               prefix: str = "tiago_vs_simsopt") -> None:
+               nfp: int, output_dir: Path, prefix: str,
+               title: str) -> None:
     tiago_mag = np.linalg.norm(tiago_field, axis=2)
     simsopt_mag = np.linalg.norm(simsopt_field, axis=2)
     diff_mag = tiago_mag - simsopt_mag
@@ -129,7 +188,7 @@ def make_plots(gamma: np.ndarray, tiago_field: np.ndarray, simsopt_field: np.nda
         cbar.ax.set_ylabel("Tesla")
 
     surface_plot = output_dir / f"{prefix}_surface.png"
-    fig.suptitle("TIAGO vs simsopt plasma response on the NCSX boundary", y=1.02)
+    fig.suptitle(title, y=1.02)
     fig.savefig(surface_plot, dpi=200)
     plt.close(fig)
 
@@ -148,7 +207,7 @@ def make_plots(gamma: np.ndarray, tiago_field: np.ndarray, simsopt_field: np.nda
         cbar.ax.set_ylabel("Tesla")
 
     grid_plot = output_dir / f"{prefix}_grid.png"
-    fig2.suptitle("TIAGO vs simsopt plasma response (φ, θ space)", y=1.02)
+    fig2.suptitle(f"{title} (φ, θ space)", y=1.02)
     fig2.savefig(grid_plot, dpi=200)
     plt.close(fig2)
 
@@ -161,12 +220,17 @@ def main() -> None:
     output_dir.mkdir(parents=True, exist_ok=True)
 
     tiago_output = output_dir / "tiago_b_ext.csv"
+    tiago_offset_output = output_dir / "tiago_b_ext_offset.csv"
     simsopt_output = output_dir / "simsopt_b_ext.csv"
 
     print("Running TIAGO reference test to capture B_external samples...")
-    run_command([args.tiago_bin, args.gamma, args.b_total, str(tiago_output)],
-                verbose=args.debug)
-    tiago_field = load_tiago_field(tiago_output, args.src_nphi, args.src_ntheta)
+    tiago_cmd = [args.tiago_bin, args.gamma, args.b_total, str(tiago_output)]
+    if args.offset_distance and args.offset_distance > 0.0:
+        tiago_cmd.extend([str(tiago_offset_output),
+                          f"{args.offset_distance:.9f}"])
+    run_command(tiago_cmd, verbose=args.debug)
+    tiago_field, tiago_nphi, tiago_ntheta = load_tiago_field(
+        tiago_output, args.src_nphi, args.src_ntheta)
     tiago_rms = float(np.sqrt(np.mean(tiago_field**2)))
     print(f"TIAGO B_external RMS: {tiago_rms:.6f} T "
           f"(samples → {tiago_output})")
@@ -175,9 +239,23 @@ def main() -> None:
         raise RuntimeError("TIAGO B_external field is identically zero; "
                            "ensure test_tiago_with_simsopt_grid produced data.")
 
+    tiago_offset_field = None
+    tiago_offset_dims = None
+    if args.offset_distance and args.offset_distance > 0.0 and tiago_offset_output.exists():
+        tiago_offset_field, off_nphi, off_ntheta = load_tiago_field(
+            tiago_offset_output)
+        tiago_offset_dims = (off_nphi, off_ntheta)
+        log_field_stats("TIAGO off-surface B_external", tiago_offset_field, args.debug)
+    elif args.offset_distance and args.offset_distance > 0.0:
+        print(f"WARNING: Expected off-surface CSV {tiago_offset_output} missing; "
+              "skipping TIAGO off-surface comparison.")
+
     print("Computing simsopt Virtual Casing reference...")
-    gamma, simsopt_field, simsopt_rms, nfp = compute_simsopt_field(
+    (gamma, simsopt_field, simsopt_rms, nfp,
+     vc_obj, simsopt_b_total) = compute_simsopt_field(
         args.wout, args.src_nphi, args.src_ntheta)
+    native_vc = build_native_vc(gamma, nfp, args.src_nphi, args.src_ntheta,
+                                digits=6, use_stellsym=True)
     save_vector_csv(simsopt_output, simsopt_field)
     print(f"simsopt B_external RMS: {simsopt_rms:.6f} T "
           f"(samples → {simsopt_output})")
@@ -195,7 +273,39 @@ def main() -> None:
         print(f"[DEBUG] Sample TIAGO B_ext[0,0,:]={tiago_field[0,0,:]}")
         print(f"[DEBUG] Sample simsopt B_ext[0,0,:]={simsopt_field[0,0,:]}")
 
-    make_plots(gamma, tiago_field, simsopt_field, nfp, output_dir)
+    make_plots(gamma, tiago_field, simsopt_field, nfp, output_dir,
+               prefix="tiago_vs_simsopt",
+               title="TIAGO vs simsopt plasma response on the VMEC surface")
+
+    if args.offset_distance and args.offset_distance > 0.0 and tiago_offset_field is not None:
+        normals = compute_normals(gamma)
+        off_nphi, off_ntheta = tiago_offset_dims
+        phi_stride = max(1, tiago_nphi // max(1, off_nphi))
+        theta_stride = max(1, tiago_ntheta // max(1, off_ntheta))
+        gamma_sub = gamma[::phi_stride, ::theta_stride, :][:off_nphi, :off_ntheta, :]
+        normals_sub = normals[::phi_stride, ::theta_stride, :][:off_nphi, :off_ntheta, :]
+        gamma_offset = gamma_sub + args.offset_distance * normals_sub
+
+        simsopt_offset_flat = native_vc.compute_external_B_offsurf(
+            flatten_xyz(simsopt_b_total),
+            flatten_xyz(gamma_offset))
+        simsopt_offset_field = np.asarray(simsopt_offset_flat).reshape(
+            off_nphi, off_ntheta, 3)
+        log_field_stats("simsopt off-surface B_external", simsopt_offset_field, args.debug)
+
+        diff_offset = tiago_offset_field - simsopt_offset_field
+        max_abs_off = float(np.max(np.abs(diff_offset)))
+        mean_abs_off = float(np.mean(np.abs(diff_offset)))
+        rms_tiago_off = float(np.sqrt(np.mean(tiago_offset_field**2)))
+        rms_simsopt_off = float(np.sqrt(np.mean(simsopt_offset_field**2)))
+        rel_error_off = abs(rms_tiago_off - rms_simsopt_off) / max(rms_simsopt_off, 1e-12) * 100.0
+        print(f"Off-surface relative RMS error: {rel_error_off:.3f}% "
+              f"(max |ΔB|={max_abs_off:.4e} T, mean |ΔB|={mean_abs_off:.4e} T)")
+
+        make_plots(gamma_offset, tiago_offset_field, simsopt_offset_field,
+                   nfp, output_dir,
+                   prefix="tiago_vs_simsopt_offset",
+                   title=f"Off-surface (+{args.offset_distance:.3f} m) TIAGO vs simsopt")
 
 
 if __name__ == "__main__":
