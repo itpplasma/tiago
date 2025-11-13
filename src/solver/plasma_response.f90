@@ -3,7 +3,7 @@ module tiago_plasma_response
     !! using virtual casing principle via the virtual_casing C library
     use, intrinsic :: iso_fortran_env, only: dp => real64
     use, intrinsic :: iso_c_binding, only: c_int, c_double, c_ptr, &
-                                            c_bool, c_long, c_null_ptr, c_associated
+                                            c_bool, c_long, c_null_ptr, c_associated, c_loc
     implicit none
 
     private
@@ -17,10 +17,11 @@ module tiago_plasma_response
             type(c_ptr) :: VirtualCasingCreateContextD
         end function
 
-        ! Destroy context
-        subroutine VirtualCasingDestroyContextD(ctx) bind(C, name='VirtualCasingDestroyContextD')
+        ! Destroy context - takes pointer-to-pointer (void**)
+        subroutine VirtualCasingDestroyContextD(ctx_ptr) &
+                bind(C, name='VirtualCasingDestroyContextD')
             use iso_c_binding
-            type(c_ptr), intent(inout) :: ctx
+            type(c_ptr), value :: ctx_ptr
         end subroutine
 
         ! Setup from surface geometry and B-field
@@ -196,8 +197,10 @@ contains
     ! Finalize and free resources
     subroutine plasma_response_finalize(self)
         class(plasma_response_t), intent(inout) :: self
+        type(c_ptr), target :: ctx_tmp
         if (c_associated(self%ctx)) then
-            call VirtualCasingDestroyContextD(self%ctx)
+            ctx_tmp = self%ctx
+            call VirtualCasingDestroyContextD(c_loc(ctx_tmp))
             self%ctx = c_null_ptr
             self%initialized = .false.
         end if
