@@ -122,6 +122,11 @@ target_link_libraries(tiago_plasma_response_diagno_tests PRIVATE tiago_solver)
 add_test(NAME tiago_plasma_response_diagno_tests COMMAND $<TARGET_FILE:tiago_plasma_response_diagno_tests>
          "${CMAKE_SOURCE_DIR}/tests/data/coils_sample.coils")
 
+add_executable(tiago_plasma_response_ncsx_tests tests/test_plasma_response_ncsx.f90)
+target_link_libraries(tiago_plasma_response_ncsx_tests PRIVATE tiago_solver)
+add_test(NAME tiago_plasma_response_ncsx_tests COMMAND $<TARGET_FILE:tiago_plasma_response_ncsx_tests>
+         "${CMAKE_SOURCE_DIR}/tests/cases/ncsx_nfp3/wout_ncsx.nc")
+
 add_test(NAME tiago_diag_lint_flux
     COMMAND $<TARGET_FILE:tiago_cli> diag lint
             ${CMAKE_SOURCE_DIR}/tests/data/fluxloop_sample.diagno
