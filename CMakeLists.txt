@@ -118,6 +118,17 @@ target_link_libraries(tiago_plasma_response_ncsx_tests PRIVATE tiago_solver)
 add_test(NAME tiago_plasma_response_ncsx_tests COMMAND $<TARGET_FILE:tiago_plasma_response_ncsx_tests>
          "${CMAKE_SOURCE_DIR}/tests/cases/ncsx_nfp3/wout_ncsx.nc")
 
+add_executable(debug_tiago_virtual_casing tests/debug_tiago_virtual_casing.f90)
+target_link_libraries(debug_tiago_virtual_casing PRIVATE tiago_solver)
+
+add_executable(test_tiago_with_simsopt_grid tests/test_tiago_with_simsopt_grid.f90)
+target_link_libraries(test_tiago_with_simsopt_grid PRIVATE tiago_solver)
+
+add_test(NAME tiago_vs_simsopt_reference
+    COMMAND $<TARGET_FILE:test_tiago_with_simsopt_grid>
+            ${CMAKE_SOURCE_DIR}/tests/data/simsopt_ncsx/simsopt_gamma.csv
+            ${CMAKE_SOURCE_DIR}/tests/data/simsopt_ncsx/simsopt_B_total.csv)
+
 add_test(NAME tiago_plasma_response_comparison_plots
     COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_SOURCE_DIR}/scripts/compare_plasma_vacuum.py
