@@ -8,17 +8,25 @@ program test_tiago_with_simsopt_grid
     real(dp), allocatable :: x_surf(:,:,:), b_total(:,:,:), b_ext(:,:,:)
     integer :: nphi, ntheta, iphi, itheta, iunit, nfp, nargs
     real(dp) :: b_ext_rms, expected_rms, rel_error
-    character(len=512) :: gamma_file, b_file, arg
+    character(len=512) :: gamma_file, b_file, bext_file
+    logical :: write_bext
 
     ! Parse command-line arguments
     nargs = command_argument_count()
     if (nargs < 2) then
-        print *, 'Usage: test_tiago_with_simsopt_grid <gamma.csv> <b_total.csv>'
+        print *, 'Usage: test_tiago_with_simsopt_grid <gamma.csv> <b_total.csv> [b_ext.csv]'
         stop 1
     end if
 
     call get_command_argument(1, gamma_file)
     call get_command_argument(2, b_file)
+    write_bext = .false.
+    if (nargs >= 3) then
+        call get_command_argument(3, bext_file)
+        if (len_trim(bext_file) > 0) then
+            write_bext = .true.
+        end if
+    end if
 
     ! Load simsopt data from Python-generated files
     nphi = 16
@@ -81,6 +89,20 @@ program test_tiago_with_simsopt_grid
     end if
 
     print *, 'Test PASSED: B_external RMS within 2% of simsopt reference'
+
+    if (write_bext) then
+        print *, 'Writing TIAGO B_external samples to ', trim(bext_file)
+        open(newunit=iunit, file=trim(bext_file), status='replace', action='write')
+        write(iunit, '(A)') 'iphi,itheta,Bx,By,Bz'
+        do iphi = 1, nphi
+            do itheta = 1, ntheta
+                write(iunit, '(I0,",",I0,",",ES23.15E3,",",ES23.15E3,",",ES23.15E3)') iphi, itheta, &
+                    b_ext(iphi, itheta, 1), b_ext(iphi, itheta, 2), &
+                    b_ext(iphi, itheta, 3)
+            end do
+        end do
+        close(iunit)
+    end if
 
     call pr%finalize()
     deallocate(x_surf, b_total, b_ext)

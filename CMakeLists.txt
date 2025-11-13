@@ -105,6 +105,9 @@ target_link_libraries(tiago_vacuum_cli PRIVATE tiago_solver)
 
 enable_testing()
 
+set(TIAGO_OUTPUT_DIR ${CMAKE_BINARY_DIR}/tests/output)
+file(MAKE_DIRECTORY ${TIAGO_OUTPUT_DIR})
+
 add_executable(tiago_coil_loader_tests tests/test_coil_loader.f90)
 target_link_libraries(tiago_coil_loader_tests PRIVATE tiago_solver)
 add_test(NAME tiago_coil_loader_tests COMMAND $<TARGET_FILE:tiago_coil_loader_tests>)
@@ -127,7 +130,8 @@ target_link_libraries(test_tiago_with_simsopt_grid PRIVATE tiago_solver)
 add_test(NAME tiago_vs_simsopt_reference
     COMMAND $<TARGET_FILE:test_tiago_with_simsopt_grid>
             ${CMAKE_SOURCE_DIR}/tests/data/simsopt_ncsx/simsopt_gamma.csv
-            ${CMAKE_SOURCE_DIR}/tests/data/simsopt_ncsx/simsopt_B_total.csv)
+            ${CMAKE_SOURCE_DIR}/tests/data/simsopt_ncsx/simsopt_B_total.csv
+            ${TIAGO_OUTPUT_DIR}/tiago_b_ext.csv)
 
 add_test(NAME tiago_vs_simsopt_virtualcasing
     COMMAND ${Python3_EXECUTABLE}
@@ -138,7 +142,15 @@ add_test(NAME tiago_vs_simsopt_virtualcasing
 
 add_test(NAME tiago_vs_simsopt_plots
     COMMAND ${Python3_EXECUTABLE}
-            ${CMAKE_SOURCE_DIR}/scripts/plot_tiago_vs_simsopt.py)
+            ${CMAKE_SOURCE_DIR}/scripts/plot_tiago_vs_simsopt.py
+            --tiago-bin $<TARGET_FILE:test_tiago_with_simsopt_grid>
+            --gamma ${CMAKE_SOURCE_DIR}/tests/data/simsopt_ncsx/simsopt_gamma.csv
+            --b-total ${CMAKE_SOURCE_DIR}/tests/data/simsopt_ncsx/simsopt_B_total.csv
+            --wout ${CMAKE_SOURCE_DIR}/tests/cases/ncsx_nfp3/wout_ncsx.nc
+            --output-dir ${TIAGO_OUTPUT_DIR}
+            --src-nphi 16
+            --src-ntheta 16
+            --debug)
 
 add_test(NAME tiago_plasma_response_comparison_plots
     COMMAND ${Python3_EXECUTABLE}
@@ -163,8 +175,6 @@ add_test(NAME tiago_diag_lint_invalid
             --kind flux)
 set_tests_properties(tiago_diag_lint_invalid PROPERTIES WILL_FAIL TRUE)
 
-
-set(TIAGO_OUTPUT_DIR ${CMAKE_BINARY_DIR}/tests/output)
 
 add_test(NAME tiago_vs_xdiagno
     COMMAND ${Python3_EXECUTABLE}
