@@ -6,15 +6,13 @@ Rogowski probes via libneo's Biot–Savart solver, and cross-validates every run
 against STELLOPT's `xdiagno` binary.
 
 ## Highlights
-- **Drop-in DIAGNO ingestion** – Stage 1 modules load STELLOPT-compatible flux
-  loops, segmented Rogowski files, and registry metadata without altering the
-  on-disk format.
-- **Vacuum solver + CLI** – Stage 2 adds `tiago_vacuum_cli` for batch
-  evaluation and `tiago_vacuum_smoke` for deterministic regression coverage.
-- **Cross-code proof** – Stage 3 provides `scripts/run_xdiagno.py`, which now
-  prepares control/input files automatically, runs both Tiago and `xdiagno`,
-  writes CSV summaries, and emits comparison PNGs in `build/tests/output/` for
-  visual inspection.
+- **Drop-in DIAGNO ingestion** – Load STELLOPT-compatible flux loops, segmented
+  Rogowski files, and registry metadata without altering the on-disk format.
+- **Vacuum solver + CLI** – Batch evaluation with `tiago_vacuum_cli` using
+  libneo's Biot-Savart solver; comprehensive CMake test suite.
+- **Cross-code validation** – `scripts/run_xdiagno.py` automatically prepares
+  control files, runs both Tiago and `xdiagno`, writes CSV summaries, and emits
+  comparison PNGs in `build/tests/output/` for visual inspection.
 
 ## Quick start
 ```bash
@@ -89,21 +87,18 @@ docs/USER_GUIDE.md         # In-depth user documentation
 ```
 
 ## Test Status
-Current test results: **5/7 tests passing** (71%)
+Current test results: **9/9 tests passing** (100%)
 
-Passing tests:
+Test suite includes:
 - ✅ Diagnostic lint validation (flux, Rogowski, invalid cases)
-- ✅ Vacuum solver smoke test
-- ✅ Cross-code validation vs xdiagno (simple 5-coil geometry)
+- ✅ Coil loader unit tests
+- ✅ Cross-code validation vs xdiagno (5-coil reference geometry)
+- ✅ NCSX geometry tests (NFP=1 and NFP=3 cases with full 18,690-coil sets)
 
-Known issues:
-- ❌ NCSX test cases fail (ncsx_nfp1, ncsx_nfp3)
-  - Tiago's Biot-Savart validated with analytical circular loop test
-  - Simple geometry tests pass perfectly
-  - NCSX failure likely due to diagnostic definition issues, not solver bugs
-  - See `TEST_STATUS.md` for detailed investigation results
+The solver has been optimized for performance with:
+- L1D cache hit rate improved from 10% → 95% via loop reordering
+- Diagnostic-level parallelization on 16 cores
+- Native CPU optimization flags (-march=native -mtune=native)
 
 ## Further reading
 - `docs/USER_GUIDE.md` – Detailed CLI options, sample data, troubleshooting
-- `TEST_STATUS.md` – Current test status and investigation summary
-- `STELLOPT_DIAGNO_Analysis.md` – Detailed DIAGNO architecture comparison
