@@ -11,6 +11,7 @@ from pathlib import Path
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
+import time
 import virtual_casing as vc_native
 
 try:
@@ -163,7 +164,7 @@ def build_native_vc(gamma: np.ndarray, nfp: int, src_nphi: int, src_ntheta: int,
 
 def make_plots(gamma: np.ndarray, tiago_field: np.ndarray, simsopt_field: np.ndarray,
                nfp: int, output_dir: Path, prefix: str,
-               title: str) -> None:
+               title: str, timing_text: str | None = None) -> None:
     tiago_mag = np.linalg.norm(tiago_field, axis=2)
     simsopt_mag = np.linalg.norm(simsopt_field, axis=2)
     diff_mag = tiago_mag - simsopt_mag
@@ -189,7 +190,9 @@ def make_plots(gamma: np.ndarray, tiago_field: np.ndarray, simsopt_field: np.nda
 
     surface_plot = output_dir / f"{prefix}_surface.png"
     fig.suptitle(title, y=1.02)
-    fig.savefig(surface_plot, dpi=200)
+    if timing_text:
+        fig.text(0.02, 0.02, timing_text, fontsize=9, ha="left", va="bottom")
+    fig.savefig(surface_plot, dpi=200, bbox_inches="tight")
     plt.close(fig)
 
     phi_period = 2.0 * np.pi / max(nfp, 1)
@@ -208,7 +211,9 @@ def make_plots(gamma: np.ndarray, tiago_field: np.ndarray, simsopt_field: np.nda
 
     grid_plot = output_dir / f"{prefix}_grid.png"
     fig2.suptitle(f"{title} (φ, θ space)", y=1.02)
-    fig2.savefig(grid_plot, dpi=200)
+    if timing_text:
+        fig2.text(0.02, 0.02, timing_text, fontsize=9, ha="left", va="bottom")
+    fig2.savefig(grid_plot, dpi=200, bbox_inches="tight")
     plt.close(fig2)
 
     print(f"Saved plots:\n  • {surface_plot}\n  • {grid_plot}")
@@ -218,17 +223,20 @@ def main() -> None:
     args = parse_args()
     output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
+    timings: dict[str, float] = {}
 
     tiago_output = output_dir / "tiago_b_ext.csv"
     tiago_offset_output = output_dir / "tiago_b_ext_offset.csv"
     simsopt_output = output_dir / "simsopt_b_ext.csv"
 
     print("Running TIAGO reference test to capture B_external samples...")
+    t0 = time.perf_counter()
     tiago_cmd = [args.tiago_bin, args.gamma, args.b_total, str(tiago_output)]
     if args.offset_distance and args.offset_distance > 0.0:
         tiago_cmd.extend([str(tiago_offset_output),
                           f"{args.offset_distance:.9f}"])
     run_command(tiago_cmd, verbose=args.debug)
+    timings["tiago_cmd"] = time.perf_counter() - t0
     tiago_field, tiago_nphi, tiago_ntheta = load_tiago_field(
         tiago_output, args.src_nphi, args.src_ntheta)
     tiago_rms = float(np.sqrt(np.mean(tiago_field**2)))
@@ -251,11 +259,15 @@ def main() -> None:
               "skipping TIAGO off-surface comparison.")
 
     print("Computing simsopt Virtual Casing reference...")
+    t0 = time.perf_counter()
     (gamma, simsopt_field, simsopt_rms, nfp,
      vc_obj, simsopt_b_total) = compute_simsopt_field(
         args.wout, args.src_nphi, args.src_ntheta)
+    timings["simsopt_vc"] = time.perf_counter() - t0
+    t0 = time.perf_counter()
     native_vc = build_native_vc(gamma, nfp, args.src_nphi, args.src_ntheta,
                                 digits=6, use_stellsym=True)
+    timings["native_setup"] = time.perf_counter() - t0
     save_vector_csv(simsopt_output, simsopt_field)
     print(f"simsopt B_external RMS: {simsopt_rms:.6f} T "
           f"(samples → {simsopt_output})")
@@ -273,9 +285,15 @@ def main() -> None:
         print(f"[DEBUG] Sample TIAGO B_ext[0,0,:]={tiago_field[0,0,:]}")
         print(f"[DEBUG] Sample simsopt B_ext[0,0,:]={simsopt_field[0,0,:]}")
 
+    t0 = time.perf_counter()
+    surf_timing_text = (f"tiago_cmd={timings['tiago_cmd']:.2f}s | "
+                        f"simsopt_vc={timings['simsopt_vc']:.2f}s | "
+                        f"native_setup={timings['native_setup']:.2f}s")
     make_plots(gamma, tiago_field, simsopt_field, nfp, output_dir,
                prefix="tiago_vs_simsopt",
-               title="TIAGO vs simsopt plasma response on the VMEC surface")
+               title="TIAGO vs simsopt plasma response on the VMEC surface",
+               timing_text=surf_timing_text)
+    timings["plot_surface"] = time.perf_counter() - t0
 
     if args.offset_distance and args.offset_distance > 0.0 and tiago_offset_field is not None:
         normals = compute_normals(gamma)
@@ -286,9 +304,11 @@ def main() -> None:
         normals_sub = normals[::phi_stride, ::theta_stride, :][:off_nphi, :off_ntheta, :]
         gamma_offset = gamma_sub + args.offset_distance * normals_sub
 
+        t0 = time.perf_counter()
         simsopt_offset_flat = native_vc.compute_external_B_offsurf(
             flatten_xyz(simsopt_b_total),
             flatten_xyz(gamma_offset))
+        timings["native_offsurface"] = time.perf_counter() - t0
         simsopt_offset_field = np.asarray(simsopt_offset_flat).reshape(
             off_nphi, off_ntheta, 3)
         log_field_stats("simsopt off-surface B_external", simsopt_offset_field, args.debug)
@@ -302,10 +322,20 @@ def main() -> None:
         print(f"Off-surface relative RMS error: {rel_error_off:.3f}% "
               f"(max |ΔB|={max_abs_off:.4e} T, mean |ΔB|={mean_abs_off:.4e} T)")
 
+        t0 = time.perf_counter()
+        off_timing_text = (f"tiago_cmd={timings['tiago_cmd']:.2f}s | "
+                           f"native_offsurf={timings.get('native_offsurface', 0.0):.2f}s")
         make_plots(gamma_offset, tiago_offset_field, simsopt_offset_field,
                    nfp, output_dir,
                    prefix="tiago_vs_simsopt_offset",
-                   title=f"Off-surface (+{args.offset_distance:.3f} m) TIAGO vs simsopt")
+                   title=f"Off-surface (+{args.offset_distance:.3f} m) TIAGO vs simsopt",
+                   timing_text=off_timing_text)
+        timings["plot_offsurface"] = time.perf_counter() - t0
+
+    if timings:
+        print("\n=== TIMINGS (s) ===")
+        for key in sorted(timings):
+            print(f"{key:>18s}: {timings[key]:6.2f}")
 
 
 if __name__ == "__main__":
