@@ -107,23 +107,25 @@ contains
             return
         end if
 
-        ! Flatten surface coordinates to C order: {x11, x12, ..., y11, y12, ..., z11, ...}
+        ! Flatten surface coordinates to C order matching simsopt convention
+        ! Order: phi varies slowest (outer), theta varies fastest (inner)
+        ! Produces: x[phi=0,theta=0..N-1], x[phi=1,theta=0..N-1], ..., then y[], then z[]
         allocate(x_flat(nphi * ntheta * 3))
         do k = 1, 3
-            do j = 1, ntheta
-                do i = 1, nphi
-                    idx = (k-1) * nphi * ntheta + (j-1) * nphi + i
+            do i = 1, nphi  ! Phi OUTER (varies slowly in C-order flatten)
+                do j = 1, ntheta  ! Theta INNER (varies fast in C-order flatten)
+                    idx = (k-1) * nphi * ntheta + (i-1) * ntheta + j
                     x_flat(idx) = real(x_surf(i, j, k), c_double)
                 end do
             end do
         end do
 
-        ! Flatten total B-field similarly
+        ! Flatten total B-field with same convention
         allocate(b_flat(src_nphi * src_ntheta * 3))
         do k = 1, 3
-            do j = 1, src_ntheta
-                do i = 1, src_nphi
-                    idx = (k-1) * src_nphi * src_ntheta + (j-1) * src_nphi + i
+            do i = 1, src_nphi  ! Phi OUTER
+                do j = 1, src_ntheta  ! Theta INNER
+                    idx = (k-1) * src_nphi * src_ntheta + (i-1) * src_ntheta + j
                     b_flat(idx) = real(b_total(i, j, k), c_double)
                 end do
             end do
@@ -163,14 +165,14 @@ contains
         nphi = self%src_nphi
         ntheta = self%src_ntheta
 
-        ! Flatten input B-field
+        ! Flatten input B-field with phi outer, theta inner
         allocate(b_total_flat(nphi * ntheta * 3))
         allocate(b_ext_flat(nphi * ntheta * 3))
 
         do k = 1, 3
-            do j = 1, ntheta
-                do i = 1, nphi
-                    idx = (k-1) * nphi * ntheta + (j-1) * nphi + i
+            do i = 1, nphi  ! Phi OUTER
+                do j = 1, ntheta  ! Theta INNER
+                    idx = (k-1) * nphi * ntheta + (i-1) * ntheta + j
                     b_total_flat(idx) = real(b_total(i, j, k), c_double)
                 end do
             end do
@@ -181,11 +183,11 @@ contains
                                       int(nphi, c_long), int(ntheta, c_long), &
                                       self%ctx)
 
-        ! Unflatten result
+        ! Unflatten result with same convention
         do k = 1, 3
-            do j = 1, ntheta
-                do i = 1, nphi
-                    idx = (k-1) * nphi * ntheta + (j-1) * nphi + i
+            do i = 1, nphi  ! Phi OUTER
+                do j = 1, ntheta  ! Theta INNER
+                    idx = (k-1) * nphi * ntheta + (i-1) * ntheta + j
                     b_external(i, j, k) = real(b_ext_flat(idx), dp)
                 end do
             end do
