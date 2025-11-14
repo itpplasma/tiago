@@ -152,7 +152,7 @@ contains
         self%ntheta = theta_count
         self%dphi = phi_step
         self%dtheta = theta_step
-        self%norm_const = 0.25_dp / pi
+        self%norm_const = 0.25_dp / (pi * real(phi_count * theta_count, dp))
         self%initialized = .true.
 
         deallocate(normals, k, bn, jac)
