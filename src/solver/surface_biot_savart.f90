@@ -52,6 +52,7 @@ contains
         real(dp), intent(in) :: x_surf(:, :, :)
         real(dp), intent(in) :: b_total(:, :, :)
         integer, intent(in) :: nfp
+        real(dp) :: nfp_real
 
         real(dp), allocatable :: normals(:, :, :)
         real(dp), allocatable :: k(:, :, :)
@@ -115,7 +116,7 @@ contains
                 dx_dphi(:) = (x_surf(ip, j, :) - x_surf(im, j, :)) / (2.0_dp * phi_step)
                 dx_dtheta(:) = (x_surf(i, jp, :) - x_surf(i, jm, :)) / (2.0_dp * theta_step)
 
-                normal_vec = cross_product(dx_dtheta, dx_dphi)
+                normal_vec = cross_product(dx_dphi, dx_dtheta)
                 norm_mag = sqrt(sum(normal_vec**2))
                 if (norm_mag < 1.0e-12_dp) error stop 'degenerate surface normal encountered'
                 normals(i, j, :) = normal_vec / norm_mag
@@ -152,7 +153,7 @@ contains
         self%ntheta = theta_count
         self%dphi = phi_step
         self%dtheta = theta_step
-        self%norm_const = 0.25_dp / (pi * real(phi_count * theta_count, dp))
+        self%norm_const = 0.25_dp / pi
         self%initialized = .true.
 
         deallocate(normals, k, bn, jac)
