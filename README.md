@@ -86,11 +86,5 @@ docs/diagnostics/          # Diagnostic registry metadata
 docs/USER_GUIDE.md         # In-depth user documentation
 ```
 
-## Test suite
-- Diagnostic lint validation (flux, Rogowski, invalid cases)
-- Coil loader unit tests
-- Cross-code validation vs xdiagno (5-coil reference geometry)
-- NCSX geometry tests (NFP=1 and NFP=3 cases with full 18,690-coil sets)
-
 ## Further reading
 - `docs/USER_GUIDE.md` – Detailed CLI options, sample data, troubleshooting
