@@ -58,10 +58,20 @@ contains
         real(dp), allocatable :: k(:, :, :)
         real(dp), allocatable :: bn(:, :)
         real(dp), allocatable :: jac(:, :)
+        real(dp), allocatable :: x_extended(:, :, :)
+        real(dp), allocatable :: k_extended(:, :, :)
+        real(dp), allocatable :: normals_extended(:, :, :)
+        real(dp), allocatable :: bn_extended(:, :)
+        real(dp), allocatable :: jac_extended(:, :)
         integer :: phi_count
         integer :: theta_count
+        integer :: phi_count_extended
         integer :: i
         integer :: j
+        integer :: ifp
+        integer :: ii
+        integer :: idx_start
+        integer :: idx_end
         real(dp) :: phi_step
         real(dp) :: theta_step
         real(dp) :: phi_period
@@ -78,6 +88,9 @@ contains
         logical :: periodic(2)
         real(dp) :: limits_min(2)
         real(dp) :: limits_max(2)
+        real(dp) :: factor
+        real(dp) :: cop
+        real(dp) :: sip
 
         if (size(x_surf, 1) < 4 .or. size(x_surf, 2) < 4) then
             error stop 'surface_biot_savart requires at least 4x4 surface grid'
@@ -126,51 +139,100 @@ contains
                 normals(i, j, :) = normal_vec / norm_mag
                 jac(i, j) = norm_mag
 
-                k(i, j, :) = cross_product(normals(i, j, :), b_total(i, j, :))
-                bn(i, j) = sum(normals(i, j, :) * b_total(i, j, :))
+                k(i, j, :) = cross_product(b_total(i, j, :), normal_vec)
+                bn(i, j) = sum(normal_vec * b_total(i, j, :))
+            end do
+        end do
+
+        phi_count_extended = phi_count * nfp
+        allocate(x_extended(phi_count_extended, theta_count, 3))
+        allocate(k_extended(phi_count_extended, theta_count, 3))
+        allocate(normals_extended(phi_count_extended, theta_count, 3))
+        allocate(bn_extended(phi_count_extended, theta_count))
+        allocate(jac_extended(phi_count_extended, theta_count))
+
+        x_extended(1:phi_count, :, :) = x_surf
+        k_extended(1:phi_count, :, :) = k
+        normals_extended(1:phi_count, :, :) = normals
+        bn_extended(1:phi_count, :) = bn
+        jac_extended(1:phi_count, :) = jac
+
+        factor = two_pi / real(nfp, dp)
+        do ifp = 2, nfp
+            cop = cos(real(ifp - 1, dp) * factor)
+            sip = sin(real(ifp - 1, dp) * factor)
+            idx_start = (ifp - 1) * phi_count + 1
+            idx_end = ifp * phi_count
+
+            do j = 1, theta_count
+                do i = 1, phi_count
+                    ii = idx_start + i - 1
+                    x_extended(ii, j, 1) = x_surf(i, j, 1) * cop - x_surf(i, j, 2) * sip
+                    x_extended(ii, j, 2) = x_surf(i, j, 1) * sip + x_surf(i, j, 2) * cop
+                    x_extended(ii, j, 3) = x_surf(i, j, 3)
+
+                    k_extended(ii, j, 1) = k(i, j, 1) * cop - k(i, j, 2) * sip
+                    k_extended(ii, j, 2) = k(i, j, 1) * sip + k(i, j, 2) * cop
+                    k_extended(ii, j, 3) = k(i, j, 3)
+
+                    normals_extended(ii, j, 1) = normals(i, j, 1) * cop - normals(i, j, 2) * sip
+                    normals_extended(ii, j, 2) = normals(i, j, 1) * sip + normals(i, j, 2) * cop
+                    normals_extended(ii, j, 3) = normals(i, j, 3)
+
+                    bn_extended(ii, j) = bn(i, j)
+                    jac_extended(ii, j) = jac(i, j)
+                end do
             end do
         end do
 
         limits_min = [0.0_dp, 0.0_dp]
-        limits_max = [phi_period, theta_period]
+        limits_max = [two_pi, theta_period]
         periodic = [.true., .true.]
         spline_order = [3, 3]
 
         do i = 1, 3
-            call construct_splines_2d(limits_min, limits_max, x_surf(:, :, i), &
+            call construct_splines_2d(limits_min, limits_max, x_extended(:, :, i), &
                 spline_order, periodic, self%x_spline(i))
-            call construct_splines_2d(limits_min, limits_max, k(:, :, i), &
+            call construct_splines_2d(limits_min, limits_max, k_extended(:, :, i), &
                 spline_order, periodic, self%k_spline(i))
-            call construct_splines_2d(limits_min, limits_max, normals(:, :, i), &
+            call construct_splines_2d(limits_min, limits_max, normals_extended(:, :, i), &
                 spline_order, periodic, self%normal_spline(i))
         end do
-        call construct_splines_2d(limits_min, limits_max, bn, &
+        call construct_splines_2d(limits_min, limits_max, bn_extended, &
             spline_order, periodic, self%bn_spline)
-        call construct_splines_2d(limits_min, limits_max, jac, &
+        call construct_splines_2d(limits_min, limits_max, jac_extended, &
             spline_order, periodic, self%jacobian_spline)
 
         self%phi_min = 0.0_dp
-        self%phi_max = phi_period
+        self%phi_max = two_pi
         self%theta_min = 0.0_dp
         self%theta_max = theta_period
-        self%nphi = phi_count
+        self%nphi = phi_count_extended
         self%ntheta = theta_count
-        self%dphi = phi_step
+        self%dphi = two_pi / real(phi_count_extended, dp)
         self%dtheta = theta_step
         nfp_real = real(nfp, dp)
-        self%norm_const = 1.0_dp / (2.0_dp * pi * nfp_real)
+        self%norm_const = 1.0_dp / (2.0_dp * pi * pi * real(phi_count * theta_count, dp))
         self%initialized = .true.
 
         print '(A,I0)', '[biot_savart_init] nfp = ', nfp
-        print '(A,I0,A,I0)', '[biot_savart_init] grid: ', phi_count, ' x ', theta_count
+        print '(A,I0,A,I0,A,I0,A,I0)', '[biot_savart_init] grid: ', phi_count, ' x ', theta_count, &
+            ' (half-period) -> ', phi_count_extended, ' x ', theta_count, ' (full-torus)'
         print '(A,1pe12.5,A,1pe12.5)', '[biot_savart_init] phi range: ', self%phi_min, ' to ', self%phi_max
         print '(A,1pe12.5,A,1pe12.5)', '[biot_savart_init] theta range: ', self%theta_min, ' to ', self%theta_max
-        print '(A,1pe12.5)', '[biot_savart_init] norm_const = nfp/(2pi) = ', self%norm_const
+        print '(A,1pe12.5)', '[biot_savart_init] norm_const = 1/(2pi^2) = ', self%norm_const
         print '(A,1pe12.5)', '[biot_savart_init] Sample K(1,1) = ', sqrt(sum(k(1, 1, :)**2))
         print '(A,1pe12.5)', '[biot_savart_init] Sample bn(1,1) = ', bn(1, 1)
         print '(A,1pe12.5)', '[biot_savart_init] Sample jac(1,1) = ', jac(1, 1)
+        print '(A,3(1pe12.5,","))', '[biot_savart_init] x_surf(1,1,:) = ', x_surf(1, 1, :)
+        print '(A,3(1pe12.5,","))', '[biot_savart_init] x_extended(17,1,:) = ', x_extended(17, 1, :)
+        print '(A,3(1pe12.5,","))', '[biot_savart_init] x_extended(33,1,:) = ', x_extended(33, 1, :)
+        print '(A,3(1pe12.5,","))', '[biot_savart_init] k(1,1,:) = ', k(1, 1, :)
+        print '(A,3(1pe12.5,","))', '[biot_savart_init] k_extended(17,1,:) = ', k_extended(17, 1, :)
+        print '(A,3(1pe12.5,","))', '[biot_savart_init] k_extended(33,1,:) = ', k_extended(33, 1, :)
 
         deallocate(normals, k, bn, jac)
+        deallocate(x_extended, k_extended, normals_extended, bn_extended, jac_extended)
     end subroutine biot_savart_init
 
     subroutine biot_savart_finalize(self)
@@ -305,7 +367,7 @@ contains
                         if (dist2 < 1.0e-20_dp) cycle
                         dist = sqrt(dist2)
                         inv_r = 1.0_dp / dist
-                        weight = self%norm_const * jacobian * weight_phi * weight_theta
+                        weight = self%norm_const * weight_phi * weight_theta * jacobian
 
                         if (compute_b) then
                             inv_r3 = inv_r / dist2

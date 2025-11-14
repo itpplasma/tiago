@@ -54,29 +54,30 @@ program test_tiago_with_simsopt_grid
     if (.not. response%is_initialized()) stop 'plasma response init failed'
 
     call response%compute_bext(b_total, b_ext)
+    call write_vector_csv(output_file, b_ext, x_surf)
 
     if (check_reference) then
         allocate(ref_ext(nphi, ntheta, 3))
         call read_vector_csv(ref_file, ref_ext)
-        ref_ext = b_total - ref_ext  ! simsopt plasma field (B_total - B_external)
+        ! ref_ext is simsopt B_external (field from coils, currents outside plasma)
+        ! b_ext is TIAGO B_external (should match)
 
         rms_diff = sqrt(sum((b_ext - ref_ext)**2) / real(size(b_ext), dp))
         rel_error = rms_diff / max(1.0e-12_dp, sqrt(sum(ref_ext**2) / real(size(ref_ext), dp)))
-        print '(A,1pe12.5)', 'RMS absolute error (TIAGO vs simsopt plasma) = ', rms_diff
-        print '(A,1pe12.5)', 'Relative RMS error                         = ', rel_error
-        print '(A,1pe12.5)', 'TIAGO RMS                                  = ', sqrt(sum(b_ext**2) / real(size(b_ext), dp))
-        print '(A,1pe12.5)', 'Simsopt plasma RMS                         = ', sqrt(sum(ref_ext**2) / real(size(ref_ext), dp))
+        print '(A,1pe12.5)', 'RMS absolute error (TIAGO vs simsopt B_external) = ', rms_diff
+        print '(A,1pe12.5)', 'Relative RMS error                              = ', rel_error
+        print '(A,1pe12.5)', 'TIAGO B_external RMS                            = ', sqrt(sum(b_ext**2) / real(size(b_ext), dp))
+        print '(A,1pe12.5)', 'Simsopt B_external RMS                          = ', sqrt(sum(ref_ext**2) / real(size(ref_ext), dp))
         if (rel_error > 0.02_dp) then
-            print *, 'ERROR: Plasma Biot-Savart deviates more than 2% from simsopt plasma reference'
+            print *, 'ERROR: Virtual casing B_external deviates more than 2% from simsopt reference'
             print *, 'STRICT TEST FAILED - FIX THE IMPLEMENTATION!'
             error stop 1
         else
-            print *, 'SUCCESS: Plasma Biot-Savart matches simsopt plasma reference within 2% tolerance'
+            print *, 'SUCCESS: Virtual casing B_external matches simsopt reference within 2% tolerance'
         end if
         deallocate(ref_ext)
     end if
 
-    call write_vector_csv(output_file, b_ext, x_surf)
     call response%finalize()
     deallocate(x_surf, b_total, b_ext)
 

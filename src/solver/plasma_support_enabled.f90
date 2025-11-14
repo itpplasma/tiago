@@ -73,6 +73,7 @@ contains
             error stop 'sample_bfield: output array shape mismatch'
         end if
 
+        ! Batch evaluation - all points at once!
         call self%ctx%compute_bext_points(self%b_total, points, bfield)
     end subroutine plasma_sample_bfield
 
@@ -81,17 +82,8 @@ contains
         real(dp), intent(in) :: points(:, :)
         real(dp), intent(out) :: avec(:, :)
 
-        if (.not. self%enabled) then
-            avec = 0.0_dp
-            return
-        end if
-
-        if (size(points, 2) /= 3) error stop 'sample_vector_potential expects Cartesian points'
-        if (size(avec, 1) /= size(points, 1) .or. size(avec, 2) /= 3) then
-            error stop 'sample_vector_potential: output array shape mismatch'
-        end if
-
-        call self%ctx%compute_vector_potential_points(points, avec)
+        ! TODO: Implement batch off-surface A-field evaluation using virtual-casing
+        error stop 'plasma_sample_vector_potential: batch point evaluation not yet implemented with virtual-casing'
     end subroutine plasma_sample_vector_potential
 
     subroutine plasma_sample_surface_bfield(self, points, bfield)
@@ -99,16 +91,8 @@ contains
         real(dp), intent(in) :: points(:, :)
         real(dp), intent(out) :: bfield(:, :)
 
-        if (.not. self%enabled) then
-            bfield = 0.0_dp
-            return
-        end if
-        if (size(points, 2) /= 3) error stop 'sample_surface_bfield expects Cartesian points'
-        if (size(bfield, 1) /= size(points, 1) .or. size(bfield, 2) /= 3) then
-            error stop 'sample_surface_bfield: output array shape mismatch'
-        end if
-
-        call self%ctx%compute_surface_bext_points(points, bfield)
+        ! TODO: Implement batch surface B-field evaluation using virtual-casing
+        error stop 'plasma_sample_surface_bfield: batch surface evaluation not yet implemented with virtual-casing'
     end subroutine plasma_sample_surface_bfield
 
     logical function plasma_has_data(self)
