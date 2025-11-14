@@ -86,19 +86,11 @@ docs/diagnostics/          # Diagnostic registry metadata
 docs/USER_GUIDE.md         # In-depth user documentation
 ```
 
-## Test Status
-Current test results: **9/9 tests passing** (100%)
-
-Test suite includes:
-- ✅ Diagnostic lint validation (flux, Rogowski, invalid cases)
-- ✅ Coil loader unit tests
-- ✅ Cross-code validation vs xdiagno (5-coil reference geometry)
-- ✅ NCSX geometry tests (NFP=1 and NFP=3 cases with full 18,690-coil sets)
-
-The solver has been optimized for performance with:
-- L1D cache hit rate improved from 10% → 95% via loop reordering
-- Diagnostic-level parallelization on 16 cores
-- Native CPU optimization flags (-march=native -mtune=native)
+## Test suite
+- Diagnostic lint validation (flux, Rogowski, invalid cases)
+- Coil loader unit tests
+- Cross-code validation vs xdiagno (5-coil reference geometry)
+- NCSX geometry tests (NFP=1 and NFP=3 cases with full 18,690-coil sets)
 
 ## Further reading
 - `docs/USER_GUIDE.md` – Detailed CLI options, sample data, troubleshooting
