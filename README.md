@@ -1,4 +1,4 @@
-# Toolkit for Inference and Analysis of Generalized Observables (Tiago)
+# TIAGO: Toolkit for Inference and Analysis of Generalized Observables
 
 Tiago is a modern Fortran toolkit for vacuum magnetic diagnostic studies. It
 parses legacy DIAGNO coil descriptions, evaluates flux loops and segmented

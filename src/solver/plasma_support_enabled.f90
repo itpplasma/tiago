@@ -82,8 +82,9 @@ contains
         real(dp), intent(in) :: points(:, :)
         real(dp), intent(out) :: avec(:, :)
 
-        ! TODO: Implement batch off-surface A-field evaluation using virtual-casing
-        error stop 'plasma_sample_vector_potential: batch point evaluation not yet implemented with virtual-casing'
+        ! Virtual-casing library does not provide batch vector potential evaluation.
+        ! Use numerical differentiation of B-field if A-field is required off-surface.
+        error stop 'plasma vector potential evaluation not supported by virtual-casing API'
     end subroutine plasma_sample_vector_potential
 
     subroutine plasma_sample_surface_bfield(self, points, bfield)
@@ -91,8 +92,9 @@ contains
         real(dp), intent(in) :: points(:, :)
         real(dp), intent(out) :: bfield(:, :)
 
-        ! TODO: Implement batch surface B-field evaluation using virtual-casing
-        error stop 'plasma_sample_surface_bfield: batch surface evaluation not yet implemented with virtual-casing'
+        ! For B-field on the plasma surface, use VMEC directly via vmec_field_tools module.
+        ! Virtual-casing is only needed for B-field OUTSIDE the plasma boundary.
+        error stop 'plasma on-surface B-field: use VMEC vmec_field_cylindrical() directly'
     end subroutine plasma_sample_surface_bfield
 
     logical function plasma_has_data(self)

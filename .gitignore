@@ -22,6 +22,7 @@ Meson-
 # Python helpers
 __pycache__/
 *.pyc
+*.pyo
 
 # Tooling
 /.idea/
@@ -41,3 +42,10 @@ compile_commands.json
 CTestTestfile.cmake
 Makefile
 _deps/
+tests/debug/output/
+tests/debug/*.csv
+tests/debug/*.dat
+tests/debug/*.png
+tiago_*.csv
+diagno_*.csv
+*_diff.csv

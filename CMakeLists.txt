@@ -133,21 +133,6 @@ add_executable(tiago_coil_loader_tests tests/test_coil_loader.f90)
 target_link_libraries(tiago_coil_loader_tests PRIVATE tiago_solver)
 add_test(NAME tiago_coil_loader_tests COMMAND $<TARGET_FILE:tiago_coil_loader_tests>)
 
-if(TIAGO_USE_PLASMA)
-    # DISABLED: test_plasma_support_sample requires reference data regeneration
-    # add_executable(test_plasma_support_sample tests/test_plasma_support_sample.f90)
-    # target_link_libraries(test_plasma_support_sample PRIVATE tiago_solver)
-    # add_test(NAME tiago_plasma_support_sample
-    #     COMMAND $<TARGET_FILE:test_plasma_support_sample> ${TIAGO_WOUT_LI383})
-    # set_tests_properties(tiago_plasma_support_sample PROPERTIES
-    #     FIXTURES_REQUIRED wout_li383)
-endif()
-
-# DISABLED: test_plasma_response uses point evaluation API not available in virtual-casing
-# add_executable(tiago_plasma_response_tests tests/test_plasma_response.f90)
-# target_link_libraries(tiago_plasma_response_tests PRIVATE tiago_solver)
-# add_test(NAME tiago_plasma_response_tests COMMAND $<TARGET_FILE:tiago_plasma_response_tests>)
-
 add_executable(test_tiago_with_simsopt_grid tests/test_tiago_with_simsopt_grid.f90)
 target_link_libraries(test_tiago_with_simsopt_grid PRIVATE tiago_solver)
 

@@ -215,22 +215,6 @@ contains
         self%norm_const = 1.0_dp / (2.0_dp * pi * pi * real(phi_count * theta_count, dp))
         self%initialized = .true.
 
-        print '(A,I0)', '[biot_savart_init] nfp = ', nfp
-        print '(A,I0,A,I0,A,I0,A,I0)', '[biot_savart_init] grid: ', phi_count, ' x ', theta_count, &
-            ' (half-period) -> ', phi_count_extended, ' x ', theta_count, ' (full-torus)'
-        print '(A,1pe12.5,A,1pe12.5)', '[biot_savart_init] phi range: ', self%phi_min, ' to ', self%phi_max
-        print '(A,1pe12.5,A,1pe12.5)', '[biot_savart_init] theta range: ', self%theta_min, ' to ', self%theta_max
-        print '(A,1pe12.5)', '[biot_savart_init] norm_const = 1/(2pi^2) = ', self%norm_const
-        print '(A,1pe12.5)', '[biot_savart_init] Sample K(1,1) = ', sqrt(sum(k(1, 1, :)**2))
-        print '(A,1pe12.5)', '[biot_savart_init] Sample bn(1,1) = ', bn(1, 1)
-        print '(A,1pe12.5)', '[biot_savart_init] Sample jac(1,1) = ', jac(1, 1)
-        print '(A,3(1pe12.5,","))', '[biot_savart_init] x_surf(1,1,:) = ', x_surf(1, 1, :)
-        print '(A,3(1pe12.5,","))', '[biot_savart_init] x_extended(17,1,:) = ', x_extended(17, 1, :)
-        print '(A,3(1pe12.5,","))', '[biot_savart_init] x_extended(33,1,:) = ', x_extended(33, 1, :)
-        print '(A,3(1pe12.5,","))', '[biot_savart_init] k(1,1,:) = ', k(1, 1, :)
-        print '(A,3(1pe12.5,","))', '[biot_savart_init] k_extended(17,1,:) = ', k_extended(17, 1, :)
-        print '(A,3(1pe12.5,","))', '[biot_savart_init] k_extended(33,1,:) = ', k_extended(33, 1, :)
-
         deallocate(normals, k, bn, jac)
         deallocate(x_extended, k_extended, normals_extended, bn_extended, jac_extended)
     end subroutine biot_savart_init
