@@ -82,9 +82,4 @@ CMakeLists.txt             # FetchContent bridge + targets
 scripts/run_xdiagno.py     # Cross-code harness + PNG generator
 src/                       # Fortran diagnostics, solver, CLI
 tests/                     # Sample inputs + regression drivers
-docs/diagnostics/          # Diagnostic registry metadata
-docs/USER_GUIDE.md         # In-depth user documentation
 ```
-
-## Further reading
-- `docs/USER_GUIDE.md` – Detailed CLI options, sample data, troubleshooting
