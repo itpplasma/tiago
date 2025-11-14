@@ -1,0 +1,7 @@
+module tiago_build_config
+    implicit none
+
+    character(len=*), parameter :: simsopt_sample_url = "@TIAGO_WOUT_SIMSOPT_SMALL_URL@"
+    character(len=*), parameter :: simsopt_sample_path = "@TIAGO_WOUT_SIMSOPT_SMALL@"
+    character(len=*), parameter :: download_script_path = "@CMAKE_SOURCE_DIR@/cmake/DownloadFile.cmake"
+end module tiago_build_config

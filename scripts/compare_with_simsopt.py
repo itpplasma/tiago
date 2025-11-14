@@ -50,7 +50,7 @@ def compare_plasma_response(wout_file, src_nphi=16, src_ntheta=16,
         print(f"ERROR computing plasma response: {e}")
         sys.exit(1)
 
-    # Extract simsopt results
+    # Extract simsopt results (already in SI units)
     B_ext_simsopt = vc_simsopt.B_external
     B_normal_simsopt = vc_simsopt.B_external_normal
     gamma_simsopt = vc_simsopt.gamma

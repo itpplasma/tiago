@@ -14,9 +14,8 @@ try:
     from simsopt.mhd.vmec import Vmec
     from simsopt.mhd.virtual_casing import VirtualCasing
 except ImportError as exc:  # pragma: no cover
-    raise SystemExit(
-        "simsopt is required. Install with `pip install simsopt`."
-    ) from exc
+    print("simsopt is required. Install with `pip install simsopt`.")
+    raise SystemExit(125) from exc
 
 
 def parse_args() -> argparse.Namespace:
@@ -36,7 +35,7 @@ def parse_args() -> argparse.Namespace:
 
 
 def compute_virtual_casing(wout: str, src_nphi: int, src_ntheta: int,
-                           digits: int) -> Tuple[np.ndarray, np.ndarray, float]:
+                           digits: int) -> Tuple[np.ndarray, np.ndarray, np.ndarray, float]:
     vmec = Vmec(wout)
     vc = VirtualCasing.from_vmec(
         vmec,
@@ -48,8 +47,14 @@ def compute_virtual_casing(wout: str, src_nphi: int, src_ntheta: int,
     )
     gamma = np.asarray(vc.gamma)
     b_total = np.asarray(vc.B_total)
-    rms = float(np.sqrt(np.mean(b_total**2)))
-    return gamma.reshape(src_nphi, src_ntheta, 3), b_total.reshape(src_nphi, src_ntheta, 3), rms
+    b_external = np.asarray(vc.B_external)
+    rms = float(np.sqrt(np.mean(b_external**2)))
+    return (
+        gamma.reshape(src_nphi, src_ntheta, 3),
+        b_total.reshape(src_nphi, src_ntheta, 3),
+        b_external.reshape(src_nphi, src_ntheta, 3),
+        rms,
+    )
 
 
 def write_csv(path: Path, header: Tuple[str, ...], data: np.ndarray) -> None:
@@ -68,15 +73,17 @@ def main() -> None:
     btotal_path = output_dir / "b_total.csv"
 
     print(f"[generate_simsopt_reference] Loading VMEC: {args.wout}")
-    gamma, b_total, rms = compute_virtual_casing(
+    gamma, b_total, b_external, rms = compute_virtual_casing(
         args.wout, args.src_nphi, args.src_ntheta, args.digits)
 
     write_csv(gamma_path, ("X", "Y", "Z"), gamma)
     write_csv(btotal_path, ("Bx", "By", "Bz"), b_total)
+    write_csv(output_dir / "b_external.csv", ("Bx", "By", "Bz"), b_external)
 
     print(f"[generate_simsopt_reference] Saved gamma -> {gamma_path}")
     print(f"[generate_simsopt_reference] Saved B_total -> {btotal_path}")
-    print(f"[generate_simsopt_reference] B_total RMS: {rms:.6f} T")
+    print(f"[generate_simsopt_reference] Saved B_external -> {output_dir / 'b_external.csv'}")
+    print(f"[generate_simsopt_reference] B_external RMS: {rms:.6f} T")
     print(f"[generate_simsopt_reference] Grid: nphi={args.src_nphi}, "
           f"ntheta={args.src_ntheta}")
 

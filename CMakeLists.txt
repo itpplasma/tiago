@@ -26,34 +26,6 @@ FetchContent_Declare(libneo
 FetchContent_MakeAvailable(libneo)
 
 if(TIAGO_ENABLE_PLASMA)
-    FetchContent_Declare(virtual_casing
-        GIT_REPOSITORY "https://github.com/hiddenSymmetries/virtual-casing.git"
-        GIT_TAG        "master"
-        GIT_SHALLOW    TRUE)
-    FetchContent_MakeAvailable(virtual_casing)
-
-    # OpenMP is already found above, add to module path for FFTW
-    list(APPEND CMAKE_MODULE_PATH ${virtual_casing_SOURCE_DIR}/cmake)
-
-    # Find dependencies for virtual-casing
-    find_package(FFTW COMPONENTS DOUBLE_LIB)
-    if(NOT FFTW_DOUBLE_LIB_FOUND)
-        message(WARNING "FFTW not found, disabling plasma response")
-        set(TIAGO_ENABLE_PLASMA OFF)
-    endif()
-    find_package(BLAS)
-    find_package(LAPACK)
-
-    # Create static library from virtual-casing source
-    add_library(vc_static STATIC EXCLUDE_FROM_ALL
-        ${virtual_casing_SOURCE_DIR}/src/virtual-casing.cpp)
-    target_include_directories(vc_static PRIVATE
-        ${virtual_casing_SOURCE_DIR}/include
-        ${virtual_casing_SOURCE_DIR}/extern/SCTL/include
-        ${virtual_casing_SOURCE_DIR}/extern/BIEST/include)
-    target_link_libraries(vc_static PRIVATE
-        FFTW::Double OpenMP::OpenMP_CXX ${BLAS_LIBRARIES} ${LAPACK_LIBRARIES})
-
     set(TIAGO_USE_PLASMA ON)
 else()
     set(TIAGO_USE_PLASMA OFF)
@@ -74,24 +46,28 @@ target_link_libraries(tiago_diagnostics PUBLIC tiago_core)
 
 add_library(tiago_solver STATIC
     src/solver/vacuum_forward.f90
-    src/solver/coil_loader.f90)
+    src/solver/coil_loader.f90
+    src/solver/surface_biot_savart.f90)
 if(TIAGO_USE_PLASMA)
     target_sources(tiago_solver PRIVATE
         src/solver/plasma_response.f90
-        src/solver/virtual_casing_bridge.cpp)
+        src/solver/plasma_support_enabled.f90)
+else()
+    target_sources(tiago_solver PRIVATE
+        src/solver/plasma_support_stub.f90)
 endif()
 set_target_properties(tiago_solver PROPERTIES
     Fortran_STANDARD 2018
     Fortran_STANDARD_REQUIRED YES)
 target_link_libraries(tiago_solver PUBLIC tiago_diagnostics)
 if(TIAGO_USE_PLASMA)
-    target_link_libraries(tiago_solver PRIVATE vc_static)
-    target_include_directories(tiago_solver PRIVATE
-        ${virtual_casing_SOURCE_DIR}/include
-        ${virtual_casing_SOURCE_DIR}/extern/BIEST/include
-        ${virtual_casing_SOURCE_DIR}/extern/SCTL/include)
     target_compile_definitions(tiago_solver PUBLIC TIAGO_PLASMA_RESPONSE)
 endif()
+
+set(TIAGO_GENERATED_DIR ${CMAKE_BINARY_DIR}/generated)
+file(MAKE_DIRECTORY ${TIAGO_GENERATED_DIR})
+configure_file(${CMAKE_SOURCE_DIR}/cmake/tiago_config.f90.in
+    ${TIAGO_GENERATED_DIR}/tiago_config.f90 @ONLY)
 
 if(TIAGO_ENABLE_OPENMP)
     find_package(OpenMP COMPONENTS Fortran)
@@ -105,6 +81,7 @@ add_executable(tiago_cli src/cli/tiago_cli.f90)
 target_link_libraries(tiago_cli PRIVATE tiago_diagnostics)
 
 add_executable(tiago_vacuum_cli src/cli/tiago_vacuum_cli.f90)
+target_sources(tiago_vacuum_cli PRIVATE ${TIAGO_GENERATED_DIR}/tiago_config.f90)
 target_link_libraries(tiago_vacuum_cli PRIVATE tiago_solver)
 
 enable_testing()
@@ -113,24 +90,31 @@ set(TIAGO_OUTPUT_DIR ${CMAKE_BINARY_DIR}/tests/output)
 file(MAKE_DIRECTORY ${TIAGO_OUTPUT_DIR})
 set(TIAGO_CASES_DIR ${CMAKE_BINARY_DIR}/tests/cases)
 file(MAKE_DIRECTORY ${TIAGO_CASES_DIR})
-
 set(TIAGO_WOUT_LI383_URL "https://raw.githubusercontent.com/hiddenSymmetries/simsopt/master/tests/test_files/wout_li383_low_res_reference.nc")
 set(TIAGO_WOUT_LI383 ${TIAGO_CASES_DIR}/wout_li383_low_res_reference.nc)
-
 set(TIAGO_SIMSOPT_DIR ${TIAGO_OUTPUT_DIR}/simsopt_li383)
 set(TIAGO_SIMSOPT_GAMMA ${TIAGO_SIMSOPT_DIR}/gamma.csv)
 set(TIAGO_SIMSOPT_BTOTAL ${TIAGO_SIMSOPT_DIR}/b_total.csv)
-
+set(TIAGO_SIMSOPT_BEXT ${TIAGO_SIMSOPT_DIR}/b_external.csv)
+set(TIAGO_WOUT_SIMSOPT_SMALL_URL
+    "https://raw.githubusercontent.com/hiddenSymmetries/simsopt/master/tests/test_files/wout_simsopt_small.nc")
+set(TIAGO_WOUT_SIMSOPT_SMALL ${CMAKE_SOURCE_DIR}/tests/cases/wout_simsopt_small.nc)
 add_executable(tiago_coil_loader_tests tests/test_coil_loader.f90)
 target_link_libraries(tiago_coil_loader_tests PRIVATE tiago_solver)
 add_test(NAME tiago_coil_loader_tests COMMAND $<TARGET_FILE:tiago_coil_loader_tests>)
 
+if(TIAGO_USE_PLASMA)
+    add_executable(test_plasma_support_sample tests/test_plasma_support_sample.f90)
+    target_link_libraries(test_plasma_support_sample PRIVATE tiago_solver)
+    add_test(NAME tiago_plasma_support_sample
+        COMMAND $<TARGET_FILE:test_plasma_support_sample> ${TIAGO_WOUT_LI383})
+    set_tests_properties(tiago_plasma_support_sample PROPERTIES
+        FIXTURES_REQUIRED wout_li383)
+endif()
+
 add_executable(tiago_plasma_response_tests tests/test_plasma_response.f90)
 target_link_libraries(tiago_plasma_response_tests PRIVATE tiago_solver)
 add_test(NAME tiago_plasma_response_tests COMMAND $<TARGET_FILE:tiago_plasma_response_tests>)
-
-add_executable(debug_tiago_virtual_casing tests/debug_tiago_virtual_casing.f90)
-target_link_libraries(debug_tiago_virtual_casing PRIVATE tiago_solver)
 
 add_executable(test_tiago_with_simsopt_grid tests/test_tiago_with_simsopt_grid.f90)
 target_link_libraries(test_tiago_with_simsopt_grid PRIVATE tiago_solver)
@@ -159,38 +143,22 @@ add_test(NAME tiago_vs_simsopt_reference
     COMMAND $<TARGET_FILE:test_tiago_with_simsopt_grid>
             ${TIAGO_SIMSOPT_GAMMA}
             ${TIAGO_SIMSOPT_BTOTAL}
-            ${TIAGO_OUTPUT_DIR}/tiago_b_ext.csv)
+            ${TIAGO_OUTPUT_DIR}/tiago_b_ext.csv
+            ${TIAGO_SIMSOPT_BEXT})
 set_tests_properties(tiago_vs_simsopt_reference PROPERTIES
-    FIXTURES_REQUIRED simsopt_li383)
-
-add_test(NAME tiago_vs_simsopt_virtualcasing
-    COMMAND ${Python3_EXECUTABLE}
-            ${CMAKE_SOURCE_DIR}/scripts/compare_with_simsopt.py
-            ${TIAGO_WOUT_LI383}
-            16 16
-            ${TIAGO_OUTPUT_DIR}/tiago_vs_simsopt_comparison.txt)
-set_tests_properties(tiago_vs_simsopt_virtualcasing PROPERTIES
-    FIXTURES_REQUIRED wout_li383)
+    FIXTURES_REQUIRED simsopt_li383
+    FIXTURES_SETUP tiago_bext_fixture)
 
 add_test(NAME tiago_vs_simsopt_plots
     COMMAND ${Python3_EXECUTABLE}
-            ${CMAKE_SOURCE_DIR}/scripts/plot_tiago_vs_simsopt.py
-            --tiago-bin $<TARGET_FILE:test_tiago_with_simsopt_grid>
-            --gamma ${TIAGO_SIMSOPT_GAMMA}
-            --b-total ${TIAGO_SIMSOPT_BTOTAL}
-            --wout ${TIAGO_WOUT_LI383}
-            --output-dir ${TIAGO_OUTPUT_DIR}
-            --src-nphi 16
-            --src-ntheta 16
-            --debug)
-set_tests_properties(tiago_vs_simsopt_plots PROPERTIES
-    FIXTURES_REQUIRED simsopt_li383)
-
-add_test(NAME tiago_plasma_response_comparison_plots
-    COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_SOURCE_DIR}/scripts/compare_plasma_vacuum.py
+            --tiago-bext ${TIAGO_OUTPUT_DIR}/tiago_b_ext.csv
+            --simsopt-btotal ${TIAGO_SIMSOPT_BTOTAL}
+            --simsopt-bexternal ${TIAGO_SIMSOPT_BEXT}
             --output-dir ${TIAGO_OUTPUT_DIR}
-            --label ncsx_nfp3)
+            --label li383)
+set_tests_properties(tiago_vs_simsopt_plots PROPERTIES
+    FIXTURES_REQUIRED tiago_bext_fixture)
 
 add_test(NAME tiago_diag_lint_flux
     COMMAND $<TARGET_FILE:tiago_cli> diag lint

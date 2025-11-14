@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Generate side-by-side TIAGO vs simsopt B_external plots on the NCSX grid."""
+"""Generate TIAGO vs simsopt plasma-response (B_total - B_external) plots."""
 
 from __future__ import annotations
 
@@ -12,7 +12,6 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import time
-import virtual_casing as vc_native
 
 try:
     from simsopt.mhd.vmec import Vmec
@@ -121,66 +120,6 @@ def save_vector_csv(path: Path, field: np.ndarray) -> None:
                 handle.write(f"{iphi+1},{itheta+1},"
                              f"{bx:.15e},{by:.15e},{bz:.15e}\n")
 
-
-def compute_normals(gamma: np.ndarray) -> np.ndarray:
-    nphi, ntheta, _ = gamma.shape
-    normals = np.zeros_like(gamma)
-
-    for iphi in range(nphi):
-        ip_next = (iphi + 1) % nphi
-        ip_prev = (iphi - 1) % nphi
-        for itheta in range(ntheta):
-            it_next = (itheta + 1) % ntheta
-            it_prev = (itheta - 1) % ntheta
-
-            dphi = gamma[ip_next, itheta, :] - gamma[ip_prev, itheta, :]
-            dtheta = gamma[iphi, it_next, :] - gamma[iphi, it_prev, :]
-            normal = np.cross(dphi, dtheta)
-            norm_mag = np.linalg.norm(normal)
-            if norm_mag > 0:
-                normals[iphi, itheta, :] = normal / norm_mag
-            else:
-                normals[iphi, itheta, :] = normal
-    return normals
-
-
-def flatten_xyz(field: np.ndarray) -> np.ndarray:
-    nphi, ntheta, _ = field.shape
-    flat = np.zeros(nphi * ntheta * 3)
-    for comp in range(3):
-        flat[comp * nphi * ntheta:(comp + 1) * nphi * ntheta] = \
-            field[:, :, comp].reshape(-1, order="C")
-    return flat
-
-
-def unflatten_xyz(flat: np.ndarray, nphi: int, ntheta: int) -> np.ndarray:
-    """Inverse of flatten_xyz for component-major virtual casing vectors."""
-    vec = np.asarray(flat, dtype=float)
-    expected = nphi * ntheta * 3
-    if vec.size != expected:
-        raise ValueError(f"unflatten_xyz size mismatch: expected {expected}, found {vec.size}")
-    field = np.zeros((nphi, ntheta, 3))
-    block = nphi * ntheta
-    for comp in range(3):
-        start = comp * block
-        field[:, :, comp] = vec[start:start + block].reshape((nphi, ntheta), order="C")
-    return field
-
-
-def build_native_vc(gamma: np.ndarray, nfp: int, src_nphi: int, src_ntheta: int,
-                    digits: int = 6, use_stellsym: bool = True,
-                    trg_nphi: int | None = None, trg_ntheta: int | None = None):
-    ctx = vc_native.VirtualCasing()
-    gamma_flat = flatten_xyz(gamma)
-    trg_nphi = trg_nphi or src_nphi
-    trg_ntheta = trg_ntheta or src_ntheta
-    ctx.setup(digits, nfp, use_stellsym,
-              src_nphi, src_ntheta, gamma_flat,
-              src_nphi, src_ntheta,
-              trg_nphi, trg_ntheta)
-    return ctx
-
-
 def make_plots(gamma: np.ndarray, tiago_field: np.ndarray, simsopt_field: np.ndarray,
                nfp: int, output_dir: Path, prefix: str,
                title: str, timing_text: str | None = None) -> None:
@@ -193,9 +132,9 @@ def make_plots(gamma: np.ndarray, tiago_field: np.ndarray, simsopt_field: np.nda
 
     fig, axes = plt.subplots(1, 3, figsize=(18, 6), constrained_layout=True)
     plots = [
-        (tiago_mag, "TIAGO |B_ext| (T)", "viridis"),
-        (simsopt_mag, "simsopt |B_ext| (T)", "viridis"),
-        (diff_mag, "TIAGO - simsopt (T)", "coolwarm"),
+        (tiago_mag, "TIAGO |B_plasma| (T)", "viridis"),
+        (simsopt_mag, "simsopt |B_plasma| (T)", "viridis"),
+        (diff_mag, "TIAGO - simsopt plasma (T)", "coolwarm"),
     ]
 
     for ax, (field, title, cmap) in zip(axes, plots):
@@ -246,7 +185,7 @@ def main() -> None:
 
     tiago_output = output_dir / "tiago_b_ext.csv"
     tiago_offset_output = output_dir / "tiago_b_ext_offset.csv"
-    simsopt_output = output_dir / "simsopt_b_ext.csv"
+    simsopt_output = output_dir / "simsopt_b_plasma.csv"
 
     print("Running TIAGO reference test to capture B_external samples...")
     t0 = time.perf_counter()
@@ -279,75 +218,42 @@ def main() -> None:
 
     print("Computing simsopt Virtual Casing reference...")
     t0 = time.perf_counter()
-    (gamma, simsopt_field, simsopt_rms, nfp,
+    (gamma, simsopt_external, simsopt_rms_ext, nfp,
      vc_obj, simsopt_b_total) = compute_simsopt_field(
         args.wout, args.src_nphi, args.src_ntheta)
-    timings["simsopt_vc"] = time.perf_counter() - t0
-    t0 = time.perf_counter()
-    native_vc = build_native_vc(gamma, nfp, args.src_nphi, args.src_ntheta,
-                                digits=6, use_stellsym=True)
-    timings["native_setup"] = time.perf_counter() - t0
-    save_vector_csv(simsopt_output, simsopt_field)
-    print(f"simsopt B_external RMS: {simsopt_rms:.6f} T "
-          f"(samples → {simsopt_output})")
-    log_field_stats("simsopt B_external", simsopt_field, args.debug)
 
-    rel_error = abs(tiago_rms - simsopt_rms) / simsopt_rms * 100.0
-    max_abs = float(np.max(np.abs(tiago_field - simsopt_field)))
-    mean_abs = float(np.mean(np.abs(tiago_field - simsopt_field)))
+    simsopt_plasma = simsopt_b_total - simsopt_external
+    simsopt_rms = float(np.sqrt(np.mean(simsopt_plasma**2)))
+    timings["simsopt_vc"] = time.perf_counter() - t0
+    save_vector_csv(simsopt_output, simsopt_plasma)
+    print(f"simsopt B_external RMS: {simsopt_rms_ext:.6f} T")
+    print(f"simsopt plasma (B_total - B_external) RMS: {simsopt_rms:.6f} T "
+          f"(samples → {simsopt_output})")
+    log_field_stats("simsopt plasma field", simsopt_plasma, args.debug)
+
+    rel_error = abs(tiago_rms - simsopt_rms) / max(simsopt_rms, 1e-12) * 100.0
+    max_abs = float(np.max(np.abs(tiago_field - simsopt_plasma)))
+    mean_abs = float(np.mean(np.abs(tiago_field - simsopt_plasma)))
     print(f"Relative RMS error: {rel_error:.3f}%")
     print(f"Max |ΔB|: {max_abs:.4e} T, Mean |ΔB|: {mean_abs:.4e} T")
     if args.debug:
-        diff = tiago_field - simsopt_field
+        diff = tiago_field - simsopt_plasma
         print(f"[DEBUG] Difference stats: min={diff.min():.6e}, "
               f"max={diff.max():.6e}, rms={np.sqrt(np.mean(diff**2)):.6e}")
         print(f"[DEBUG] Sample TIAGO B_ext[0,0,:]={tiago_field[0,0,:]}")
-        print(f"[DEBUG] Sample simsopt B_ext[0,0,:]={simsopt_field[0,0,:]}")
+        print(f"[DEBUG] Sample simsopt B_plasma[0,0,:]={simsopt_plasma[0,0,:]}")
 
     t0 = time.perf_counter()
     surf_timing_text = (f"tiago_cmd={timings['tiago_cmd']:.2f}s | "
-                        f"simsopt_vc={timings['simsopt_vc']:.2f}s | "
-                        f"native_setup={timings['native_setup']:.2f}s")
-    make_plots(gamma, tiago_field, simsopt_field, nfp, output_dir,
+                        f"simsopt_vc={timings['simsopt_vc']:.2f}s")
+    make_plots(gamma, tiago_field, simsopt_plasma, nfp, output_dir,
                prefix="tiago_vs_simsopt",
-               title="TIAGO vs simsopt plasma response on the VMEC surface",
+               title="TIAGO vs simsopt plasma response (B_total - B_external)",
                timing_text=surf_timing_text)
     timings["plot_surface"] = time.perf_counter() - t0
 
     if args.offset_distance and args.offset_distance > 0.0 and tiago_offset_field is not None:
-        normals = compute_normals(gamma)
-        off_nphi, off_ntheta = tiago_offset_dims
-        if tiago_offset_coords is None:
-            raise RuntimeError("Offset CSV missing X/Y/Z columns; rebuild helper binary.")
-        gamma_offset = tiago_offset_coords
-
-        t0 = time.perf_counter()
-        simsopt_offset_flat = native_vc.compute_external_B_offsurf(
-            flatten_xyz(simsopt_b_total),
-            flatten_xyz(gamma_offset))
-        timings["native_offsurface"] = time.perf_counter() - t0
-        simsopt_offset_field = unflatten_xyz(
-            np.asarray(simsopt_offset_flat), off_nphi, off_ntheta)
-        log_field_stats("simsopt off-surface B_external", simsopt_offset_field, args.debug)
-
-        diff_offset = tiago_offset_field - simsopt_offset_field
-        max_abs_off = float(np.max(np.abs(diff_offset)))
-        mean_abs_off = float(np.mean(np.abs(diff_offset)))
-        rms_tiago_off = float(np.sqrt(np.mean(tiago_offset_field**2)))
-        rms_simsopt_off = float(np.sqrt(np.mean(simsopt_offset_field**2)))
-        rel_error_off = abs(rms_tiago_off - rms_simsopt_off) / max(rms_simsopt_off, 1e-12) * 100.0
-        print(f"Off-surface relative RMS error: {rel_error_off:.3f}% "
-              f"(max |ΔB|={max_abs_off:.4e} T, mean |ΔB|={mean_abs_off:.4e} T)")
-
-        t0 = time.perf_counter()
-        off_timing_text = (f"tiago_cmd={timings['tiago_cmd']:.2f}s | "
-                           f"native_offsurf={timings.get('native_offsurface', 0.0):.2f}s")
-        make_plots(gamma_offset, tiago_offset_field, simsopt_offset_field,
-                   nfp, output_dir,
-                   prefix="tiago_vs_simsopt_offset",
-                   title=f"Off-surface (+{args.offset_distance:.3f} m) TIAGO vs simsopt",
-                   timing_text=off_timing_text)
-        timings["plot_offsurface"] = time.perf_counter() - t0
+        print("Skipping off-surface plasma comparison (requires simsopt B_total off-surface).")
 
     if timings:
         print("\n=== TIMINGS (s) ===")

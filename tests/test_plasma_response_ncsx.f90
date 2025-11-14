@@ -110,7 +110,7 @@ subroutine test_ncsx_real_vmec(wout_file)
 
     print *, 'Initializing plasma response...'
     call plasma_response%init(nfp=nfp, x_surf=x_surf, b_total=b_total, &
-        src_nphi=nphi, src_ntheta=ntheta, use_stellsym=.true., digits=6)
+        src_nphi=nphi, src_ntheta=ntheta)
 
     if (.not. plasma_response%is_initialized()) then
         print *, 'WARNING: Plasma response init failed'

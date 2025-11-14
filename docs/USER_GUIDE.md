@@ -38,7 +38,8 @@ make test         # rebuilds and runs ctest --output-on-failure
     --samples 8 \
     --nfp 3 \
     --flux-turns tests/cases/ncsx_nfp3/flux_turns.csv \
-    --segrog-turns tests/cases/ncsx_nfp3/segrog_turns.csv
+    --segrog-turns tests/cases/ncsx_nfp3/segrog_turns.csv \
+    --plasma-sample
 ```
 Key flags:
 - `--output-dir`: destination for CSV artifacts (defaults to `.`).
@@ -51,6 +52,16 @@ Key flags:
 - `--flux-turns` / `--segrog-turns`: optional text files (one `label value`
   pair per line, `#` comments allowed) that apply DIAGNO's turn scaling to the
   Tiago outputs before CSV emission.
+- `--plasma-wout`: VMEC equilibrium (wout) file. When present, segmented
+  Rogowski diagnostics include plasma-response `B_external` sampled from the
+  VMEC surface via the virtual-casing solver. Flux loops remain vacuum-only
+  because no vector potential is available from the plasma solver.
+- `--plasma-sample`: download (if needed) and reuse the lightweight Simsopt
+  VMEC reference bundled with the regression tests. This flag is ignored when
+  `--plasma-wout` is provided explicitly.
+- `--plasma-nphi` / `--plasma-ntheta`: resolution of the VMEC surface grid fed
+  to virtual casing (default 16×16). Increase these for higher-accuracy plasma
+  response at the cost of setup time.
 
 The CLI reuses `docs/diagnostics/registry.json`. Set
 `TIAGO_DIAG_METADATA=/path/to/registry.json` to avoid passing

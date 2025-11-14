@@ -5,6 +5,9 @@ program tiago_vacuum_cli
     use tiago_flux_loops, only: read_flux_loop_file
     use tiago_segmented_rogowski, only: read_segmented_rogowski_file
     use tiago_vacuum_forward, only: vacuum_solver_t, quadrature_rule_t
+    use tiago_plasma_support, only: tiago_plasma_available
+    use tiago_build_config, only: simsopt_sample_path, simsopt_sample_url, &
+        download_script_path
     implicit none
 
     character(len=512) :: coil_path
@@ -20,8 +23,12 @@ program tiago_vacuum_cli
     real(dp) :: seg_area
     logical :: have_flux
     logical :: have_seg
+    character(len=512) :: plasma_wout
+    integer(i32) :: plasma_nphi
+    integer(i32) :: plasma_ntheta
     integer :: argc
     character(len=512) :: coil_extcur_path
+    logical :: use_plasma_sample
 
     argc = command_argument_count()
     if (argc < 3) call usage_and_stop()
@@ -41,20 +48,28 @@ program tiago_vacuum_cli
     coil_extcur_path = ''
     have_flux = len_trim(flux_path) > 0
     have_seg = len_trim(segrog_path) > 0
+    plasma_wout = ''
+    plasma_nphi = 16_i32
+    plasma_ntheta = 16_i32
+    use_plasma_sample = .false.
 
     call parse_options(argc, output_dir, flux_out_path, segrog_out_path, &
         flux_turn_path, segrog_turn_path, samples_per_segment, seg_area, &
-        nfp_value, coil_extcur_path)
+        nfp_value, coil_extcur_path, plasma_wout, plasma_nphi, plasma_ntheta, &
+        use_plasma_sample)
+    call prepare_plasma_support(plasma_wout, use_plasma_sample)
     call ensure_paths(output_dir, flux_out_path, segrog_out_path)
     call run_solver(trim(coil_path), trim(flux_path), trim(segrog_path), &
         trim(output_dir), trim(flux_out_path), trim(segrog_out_path), &
         trim(flux_turn_path), trim(segrog_turn_path), samples_per_segment, &
-        seg_area, have_flux, have_seg, nfp_value, trim(coil_extcur_path))
+        seg_area, have_flux, have_seg, nfp_value, trim(coil_extcur_path), &
+        trim(plasma_wout), plasma_nphi, plasma_ntheta)
 contains
 
 subroutine parse_options(argc, output_dir, flux_out_path, segrog_out_path, &
         flux_turn_path, segrog_turn_path, samples_per_segment, seg_area, &
-        nfp_value, coil_extcur_path)
+        nfp_value, coil_extcur_path, plasma_wout, plasma_nphi, plasma_ntheta, &
+        use_plasma_sample)
     use, intrinsic :: iso_fortran_env, only: i32 => int32, dp => real64
     implicit none
     integer, intent(in) :: argc
@@ -67,6 +82,10 @@ subroutine parse_options(argc, output_dir, flux_out_path, segrog_out_path, &
     real(dp), intent(inout) :: seg_area
     integer(i32), intent(inout) :: nfp_value
     character(len=*), intent(inout) :: coil_extcur_path
+    character(len=*), intent(inout) :: plasma_wout
+    integer(i32), intent(inout) :: plasma_nphi
+    integer(i32), intent(inout) :: plasma_ntheta
+    logical, intent(inout) :: use_plasma_sample
 
     integer :: i
     character(len=512) :: arg
@@ -114,6 +133,22 @@ subroutine parse_options(argc, output_dir, flux_out_path, segrog_out_path, &
             i = i + 1
             call ensure_arg(argc, i, '--coil-extcur')
             call get_command_argument(i, coil_extcur_path)
+        case ('--plasma-wout')
+            i = i + 1
+            call ensure_arg(argc, i, '--plasma-wout')
+            call get_command_argument(i, plasma_wout)
+        case ('--plasma-nphi')
+            i = i + 1
+            call ensure_arg(argc, i, '--plasma-nphi')
+            call get_command_argument(i, arg)
+            read(arg, *) plasma_nphi
+        case ('--plasma-ntheta')
+            i = i + 1
+            call ensure_arg(argc, i, '--plasma-ntheta')
+            call get_command_argument(i, arg)
+            read(arg, *) plasma_ntheta
+        case ('--plasma-sample')
+            use_plasma_sample = .true.
         case ('--help', '-h')
             call usage_and_stop()
         case default
@@ -149,10 +184,81 @@ subroutine ensure_paths(output_dir, flux_out_path, segrog_out_path)
     end if
 end subroutine ensure_paths
 
+subroutine prepare_plasma_support(plasma_wout, use_plasma_sample)
+    use, intrinsic :: iso_fortran_env, only: error_unit
+    character(len=*), intent(inout) :: plasma_wout
+    logical, intent(in) :: use_plasma_sample
+
+    if (.not. use_plasma_sample) then
+        call ensure_sample_file(plasma_wout)
+        return
+    end if
+
+    if (len_trim(plasma_wout) > 0) then
+        write(error_unit, '(A)') 'WARNING: --plasma-sample ignored because '// &
+            '--plasma-wout was provided'
+        call ensure_sample_file(plasma_wout)
+        return
+    end if
+
+    plasma_wout = simsopt_sample_path
+    call ensure_sample_file(plasma_wout)
+end subroutine prepare_plasma_support
+
+subroutine ensure_sample_file(plasma_wout)
+    character(len=*), intent(in) :: plasma_wout
+    logical :: exists
+
+    if (.not. needs_sample_download(plasma_wout)) return
+
+    call ensure_parent_directory(simsopt_sample_path)
+    inquire (file=trim(simsopt_sample_path), exist=exists)
+    if (exists) return
+    call download_sample_vmec()
+end subroutine ensure_sample_file
+
+logical function needs_sample_download(plasma_wout)
+    character(len=*), intent(in) :: plasma_wout
+    character(len=:), allocatable :: trimmed
+
+    trimmed = trim(plasma_wout)
+    needs_sample_download = len_trim(trimmed) > 0 .and. &
+        trimmed == trim(simsopt_sample_path)
+end function needs_sample_download
+
+subroutine ensure_parent_directory(path)
+    character(len=*), intent(in) :: path
+    character(len=:), allocatable :: trimmed
+    character(len=:), allocatable :: directory
+    integer :: slash
+
+    trimmed = trim(path)
+    slash = scan(trimmed, '/', back=.true.)
+    if (slash <= 1) return
+    directory = trimmed(:slash - 1)
+    call ensure_directory(directory)
+end subroutine ensure_parent_directory
+
+subroutine download_sample_vmec()
+    use, intrinsic :: iso_fortran_env, only: error_unit
+    character(len=4096) :: command
+    integer :: status
+
+    write(error_unit, '(A)') 'INFO: downloading Simsopt VMEC sample to '// &
+        trim(simsopt_sample_path)
+    write(command, '(A)') 'cmake "-DURL='//trim(simsopt_sample_url)//'" '// &
+        '"-DDEST='//trim(simsopt_sample_path)//'" -P "'// &
+        trim(download_script_path)//'"'
+    call execute_command_line(trim(command), exitstat=status)
+    if (status /= 0) then
+        call die('failed to download Simsopt VMEC sample; ensure cmake is available')
+    end if
+end subroutine download_sample_vmec
+
 subroutine run_solver(coil_path, flux_path, segrog_path, output_dir, &
         flux_out_path, segrog_out_path, flux_turn_path, segrog_turn_path, &
         samples_per_segment, seg_area, have_flux, have_seg, nfp_value, &
-        coil_extcur_path)
+        coil_extcur_path, plasma_wout, plasma_nphi, plasma_ntheta)
     use, intrinsic :: iso_fortran_env, only: dp => real64, i32 => int32, &
         error_unit
     use tiago_diagnostic_types, only: flux_loop_t, segmented_rogowski_t
@@ -173,6 +279,9 @@ subroutine run_solver(coil_path, flux_path, segrog_path, output_dir, &
     logical, intent(in) :: have_seg
     integer(i32), intent(in) :: nfp_value
     character(len=*), intent(in) :: coil_extcur_path
+    character(len=*), intent(in) :: plasma_wout
+    integer(i32), intent(in) :: plasma_nphi
+    integer(i32), intent(in) :: plasma_ntheta
 
     type(vacuum_solver_t) :: solver
     type(quadrature_rule_t) :: rule
@@ -192,6 +301,16 @@ subroutine run_solver(coil_path, flux_path, segrog_path, output_dir, &
         call solver%init(coil_path)
     end if
     call solver%set_nfp(nfp_value)
+
+    if (len_trim(plasma_wout) > 0) then
+        if (.not. tiago_plasma_available) then
+            call die('binary built without plasma support; rebuild with TIAGO_ENABLE_PLASMA=ON')
+        end if
+        call solver%enable_plasma_from_vmec(plasma_wout, plasma_nphi, plasma_ntheta)
+        if (have_flux) then
+            write(error_unit, '(A)') 'WARNING: plasma response only applied to segmented Rogowski diagnostics; flux loops remain vacuum-only'
+        end if
+    end if
 
     if (have_flux) then
         call read_flux_loop_file(flux_path, loops, ierr, message)
@@ -284,6 +403,8 @@ subroutine usage_and_stop()
     write(error_unit, '(A)') '       [--seg-area value] [--nfp value]'
     write(error_unit, '(A)') '       [--coil-extcur vmec_input_or_list]'
     write(error_unit, '(A)') '       [--flux-turns file] [--segrog-turns file]'
+    write(error_unit, '(A)') '       [--plasma-wout file] [--plasma-sample]'
+    write(error_unit, '(A)') '       [--plasma-nphi value] [--plasma-ntheta value]'
     stop 1
 end subroutine usage_and_stop
 

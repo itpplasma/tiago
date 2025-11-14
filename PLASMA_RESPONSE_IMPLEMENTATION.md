@@ -145,6 +145,9 @@ PLASMA_RESPONSE_IMPLEMENTATION.md           - This file
 ### Current
 - plasma_response_t module is compiled and linked into tiago_solver
 - Available for use in any Fortran code that imports the module
+- New `plasma_support_t` helper (built on `plasma_response_t`) loads VMEC
+  equilibria and serves `B_external` samples to segmented Rogowski diagnostics
+  via `tiago_vacuum_cli --plasma-wout`.
 
 ### Future
 - Integration into plasma_forward_t solver for full diagnostic calculations
@@ -196,8 +199,9 @@ call plasma_response%finalize()
 1. Integrate with libneo VMEC reader
 2. Extract surface geometry from wout files
 3. Evaluate VMEC B-field on surface
-4. Compute plasma response via plasma_response_t
-5. Generate diagnostic signals and compare with DIAGNO
+4. Compute plasma response via plasma_response_t (done for segmented Rogowski)
+5. Generate flux-loop signals once a plasma vector potential is available and
+   compare with DIAGNO
 
 ## Known Issues and Limitations
 

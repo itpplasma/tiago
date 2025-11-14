@@ -1,414 +1,115 @@
 #!/usr/bin/env python3
-"""
-Comprehensive diagnostic signal comparison: DIAGNO vs TIAGO (vacuum, plasma, vacuum+plasma)
-Generates plots in build/tests/output/ for CTest with full Rogowski breakdown
+"""Compare TIAGO Biot–Savart plasma response against simsopt VirtualCasing output."""
+from __future__ import annotations
 
-Compares:
-1. DIAGNO reference (full field with plasma)
-2. TIAGO vacuum only
-3. TIAGO plasma response only (isolated contribution)
-4. TIAGO vacuum + plasma response
-"""
-import numpy as np
-import matplotlib.pyplot as plt
-import sys
-from pathlib import Path
 import argparse
+from pathlib import Path
 
-def main():
-    parser = argparse.ArgumentParser(
-        description='Compare TIAGO vacuum vs plasma diagnostic contributions'
-    )
-    parser.add_argument('--output-dir', type=Path, default=Path('build/tests/output'),
-                       help='Output directory for plots')
-    parser.add_argument('--label', default='ncsx_nfp3', help='Case label')
+import matplotlib.pyplot as plt
+import numpy as np
 
-    args = parser.parse_args()
-    args.output_dir.mkdir(parents=True, exist_ok=True)
 
-    # Diagnostic names - SEPARATE flux loops and Rogowski components
-    flux_labels = ['Flux-1', 'Flux-2', 'Flux-3', 'Flux-4']
-    seg_rad_labels = ['Seg-R1', 'Seg-R2', 'Seg-R3', 'Seg-R4']
-    seg_ver_labels = ['Seg-V1', 'Seg-V2', 'Seg-V3']
-    all_labels = flux_labels + seg_rad_labels + seg_ver_labels
+def load_field_csv(path: Path) -> tuple[np.ndarray, np.ndarray]:
+    data = np.loadtxt(path, delimiter=",", skiprows=1)
+    if data.shape[1] == 3:  # Bx, By, Bz only
+        points = None
+        components = data
+    elif data.shape[1] == 5:  # iphi, itheta, Bx, By, Bz
+        points = None
+        components = data[:, 2:5]
+    elif data.shape[1] >= 8:  # iphi, itheta, X, Y, Z, Bx, By, Bz
+        points = data[:, 2:5]
+        components = data[:, -3:]
+    else:
+        raise ValueError(f"Unexpected column count in {path}")
+    return components, points
 
-    # TIAGO vacuum field (baseline from vacuum solver)
-    vacuum_signals = np.array([
-        1.245e-2, 1.189e-2, 1.156e-2, 1.123e-2,      # Flux loops
-        5.234e-3, 5.012e-3, 4.890e-3, 4.756e-3,      # Seg radial
-        3.891e-3, 3.745e-3, 3.612e-3                 # Seg vertical
-    ])
 
-    # TIAGO plasma response ONLY (contribution from virtual-casing)
-    plasma_only = np.array([
-        2.456e-4, 2.234e-4, 2.089e-4, 1.945e-4,      # Flux loops
-        8.234e-5, 7.890e-5, 7.456e-5, 7.012e-5,      # Seg radial
-        5.678e-5, 5.234e-5, 4.890e-5                 # Seg vertical
-    ])
+def compare_fields(tiago_csv: Path, simsopt_total_csv: Path, simsopt_external_csv: Path,
+                   output_dir: Path, label: str) -> None:
+    tiago_field, _ = load_field_csv(tiago_csv)
+    simsopt_total, _ = load_field_csv(simsopt_total_csv)
+    simsopt_external, _ = load_field_csv(simsopt_external_csv)
 
-    # TIAGO total (vacuum + plasma)
-    total_signals = vacuum_signals + plasma_only
+    if (tiago_field.shape != simsopt_total.shape or
+            simsopt_total.shape != simsopt_external.shape):
+        raise ValueError("Field arrays have different shapes")
 
-    # DIAGNO reference (full field computation with plasma)
-    diagno_signals = np.array([
-        1.247e-2, 1.191e-2, 1.158e-2, 1.125e-2,
-        5.242e-3, 5.020e-3, 4.898e-3, 4.764e-3,
-        3.899e-3, 3.753e-3, 3.620e-3
-    ])
+    simsopt_plasma = simsopt_total - simsopt_external
 
-    # Compute relative errors
-    vacuum_error = np.abs(vacuum_signals - diagno_signals) / np.maximum(np.abs(diagno_signals), 1e-30)
-    plasma_only_error = np.abs(plasma_only - (diagno_signals - vacuum_signals)) / np.maximum(np.abs(diagno_signals - vacuum_signals), 1e-30)
-    total_error = np.abs(total_signals - diagno_signals) / np.maximum(np.abs(diagno_signals), 1e-30)
+    delta = tiago_field - simsopt_plasma
+    abs_err = np.linalg.norm(delta, axis=1)
+    rel_err = abs_err / np.maximum(np.linalg.norm(simsopt_plasma, axis=1), 1e-12)
 
-    # ==================== PLOT 1: All four signal sets ====================
-    fig = plt.figure(figsize=(18, 10))
-    gs = fig.add_gridspec(2, 2, hspace=0.3, wspace=0.3)
+    summary = {
+        "max_abs_error": float(np.max(abs_err)),
+        "rms_abs_error": float(np.sqrt(np.mean(abs_err ** 2))),
+        "max_rel_error": float(np.max(rel_err)),
+        "median_rel_error": float(np.median(rel_err)),
+    }
 
-    # Plot 1a: Absolute values - all diagnostics
-    ax1a = fig.add_subplot(gs[0, :])
-    x_pos = np.arange(len(all_labels))
-    width = 0.2
+    print("[compare_plasma_vacuum] Summary:")
+    for key, value in summary.items():
+        print(f"  {key}: {value:.6e}")
 
-    ax1a.bar(x_pos - 1.5*width, diagno_signals*1e3, width, label='DIAGNO (reference)',
-            color='#f68d40', edgecolor='black', linewidth=1.2, alpha=0.9)
-    ax1a.bar(x_pos - 0.5*width, vacuum_signals*1e3, width, label='TIAGO (vacuum only)',
-            color='#3498db', edgecolor='black', linewidth=1.2, alpha=0.9)
-    ax1a.bar(x_pos + 0.5*width, plasma_only*1e3, width, label='TIAGO (plasma only)',
-            color='#e74c3c', edgecolor='black', linewidth=1.2, alpha=0.9)
-    ax1a.bar(x_pos + 1.5*width, total_signals*1e3, width, label='TIAGO (vac+plasma)',
-            color='#18b5aa', edgecolor='black', linewidth=1.2, alpha=0.9)
+    fig, axes = plt.subplots(1, 2, figsize=(12, 5))
 
-    ax1a.set_ylabel('|Signal| (mV)', fontsize=12, fontweight='bold')
-    ax1a.set_title('Diagnostic Signal Magnitude - All Components', fontsize=13, fontweight='bold')
-    ax1a.set_xticks(x_pos)
-    ax1a.set_xticklabels(all_labels, rotation=45, ha='right', fontsize=10)
-    ax1a.legend(fontsize=11, loc='upper right', ncol=4)
-    ax1a.grid(True, linestyle='--', alpha=0.3, axis='y')
-    ax1a.set_ylim(bottom=0)
+    simsopt_mag = np.linalg.norm(simsopt_plasma, axis=1)
+    tiago_mag = np.linalg.norm(tiago_field, axis=1)
+    axes[0].scatter(simsopt_mag * 1e3, tiago_mag * 1e3, s=8, alpha=0.6, edgecolors="none")
+    axes[0].plot([0, max(simsopt_mag.max(), tiago_mag.max()) * 1e3],
+                 [0, max(simsopt_mag.max(), tiago_mag.max()) * 1e3],
+                 linestyle="--", color="black", linewidth=1)
+    axes[0].set_xlabel("|B_plasma| simsopt (mT)")
+    axes[0].set_ylabel("|B_plasma| TIAGO (mT)")
+    axes[0].set_title("Plasma Response Magnitude")
+    axes[0].grid(True, linestyle=':', alpha=0.4)
 
-    # Add vertical lines to separate diagnostic groups
-    ax1a.axvline(x=3.5, color='gray', linestyle='--', linewidth=2, alpha=0.5)
-    ax1a.axvline(x=7.5, color='gray', linestyle='--', linewidth=2, alpha=0.5)
-    ax1a.text(1.5, ax1a.get_ylim()[1]*0.95, 'FLUX LOOPS', fontsize=10, fontweight='bold', ha='center')
-    ax1a.text(5.5, ax1a.get_ylim()[1]*0.95, 'SEG RADIAL', fontsize=10, fontweight='bold', ha='center')
-    ax1a.text(9.0, ax1a.get_ylim()[1]*0.95, 'SEG VERTICAL', fontsize=10, fontweight='bold', ha='center')
+    axes[1].hist(rel_err * 100.0, bins=40, color="#3498db", alpha=0.8)
+    axes[1].set_xlabel("Relative Error (%)")
+    axes[1].set_ylabel("Count")
+    axes[1].set_title("Relative Error Distribution")
+    axes[1].axvline(1.0, color="red", linestyle="--", label="1%")
+    axes[1].legend()
 
-    # Plot 1b: Relative errors - vacuum only
-    ax1b = fig.add_subplot(gs[1, 0])
-    colors_vac = ['#2ecc71' if e < 0.005 else '#f39c12' if e < 0.02 else '#e74c3c' for e in vacuum_error]
-    ax1b.bar(range(len(all_labels)), vacuum_error*100, color=colors_vac, alpha=0.8,
-            edgecolor='black', linewidth=1.2)
-    ax1b.set_xticks(range(len(all_labels)))
-    ax1b.set_xticklabels(all_labels, rotation=45, ha='right', fontsize=9)
-    ax1b.set_ylabel('Relative Error (%)', fontsize=11, fontweight='bold')
-    ax1b.set_title('TIAGO Vacuum Only vs DIAGNO', fontsize=12, fontweight='bold')
-    ax1b.axhline(y=0.5, color='green', linestyle=':', linewidth=2, label='0.5% threshold')
-    ax1b.legend(fontsize=10)
-    ax1b.grid(True, linestyle='--', alpha=0.3, axis='y')
+    output_dir.mkdir(parents=True, exist_ok=True)
+    plot_path = output_dir / f"plasma_response_comparison_{label}.png"
+    fig.tight_layout()
+    fig.savefig(plot_path, dpi=180)
+    plt.close(fig)
+    print(f"[compare_plasma_vacuum] Saved plot to {plot_path}")
 
-    # Plot 1c: Relative errors - vacuum + plasma
-    ax1c = fig.add_subplot(gs[1, 1])
-    colors_total = ['#2ecc71' if e < 0.005 else '#f39c12' if e < 0.02 else '#e74c3c' for e in total_error]
-    ax1c.bar(range(len(all_labels)), total_error*100, color=colors_total, alpha=0.8,
-            edgecolor='black', linewidth=1.2)
-    ax1c.set_xticks(range(len(all_labels)))
-    ax1c.set_xticklabels(all_labels, rotation=45, ha='right', fontsize=9)
-    ax1c.set_ylabel('Relative Error (%)', fontsize=11, fontweight='bold')
-    ax1c.set_title('TIAGO Vacuum+Plasma vs DIAGNO', fontsize=12, fontweight='bold')
-    ax1c.axhline(y=0.5, color='green', linestyle=':', linewidth=2, label='0.5% threshold')
-    ax1c.legend(fontsize=10)
-    ax1c.grid(True, linestyle='--', alpha=0.3, axis='y')
+    summary_path = output_dir / f"plasma_response_summary_{label}.txt"
+    with summary_path.open("w") as handle:
+        handle.write("TIAGO vs simsopt plasma response comparison\n")
+        handle.write("=" * 60 + "\n")
+        handle.write(f"TIAGO CSV: {tiago_csv}\n")
+        handle.write(f"simsopt B_total CSV: {simsopt_total_csv}\n")
+        handle.write(f"simsopt B_external CSV: {simsopt_external_csv}\n\n")
+        for key, value in summary.items():
+            handle.write(f"{key}: {value:.6e}\n")
+    print(f"[compare_plasma_vacuum] Summary written to {summary_path}")
 
-    fig.suptitle(f'TIAGO Plasma Response Validation - {args.label.upper()} (All Diagnostics)',
-                fontsize=14, fontweight='bold', y=0.995)
 
-    output_file_1 = args.output_dir / f'plasma_response_comparison_all_{args.label}.png'
-    fig.savefig(output_file_1, dpi=150, bbox_inches='tight')
-    print(f'✓ Saved full comparison plot to {output_file_1}')
-    plt.close()
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="Compare TIAGO and simsopt plasma response")
+    parser.add_argument("--tiago-bext", required=True, type=Path,
+                        help="CSV produced by test_tiago_with_simsopt_grid")
+    parser.add_argument("--simsopt-btotal", required=True, type=Path,
+                        help="simsopt B_total CSV from generate_simsopt_reference.py")
+    parser.add_argument("--simsopt-bexternal", required=True, type=Path,
+                        help="simsopt B_external CSV from generate_simsopt_reference.py")
+    parser.add_argument("--output-dir", required=True, type=Path,
+                        help="Directory for plots and summaries")
+    parser.add_argument("--label", default="case", help="Label for output files")
+    return parser.parse_args()
 
-    # ==================== PLOT 2: All coil types breakdown (Flux + Rogowski) ====================
-    fig, axes = plt.subplots(1, 3, figsize=(20, 6))
 
-    # Flux loops
-    flux_diagno = diagno_signals[0:4]
-    flux_vac = vacuum_signals[0:4]
-    flux_plasma = plasma_only[0:4]
-    flux_total = total_signals[0:4]
+def main() -> None:
+    args = parse_args()
+    compare_fields(args.tiago_bext, args.simsopt_btotal, args.simsopt_bexternal,
+                   args.output_dir, args.label)
 
-    x_f = np.arange(len(flux_labels))
-    width = 0.2
 
-    axes[0].bar(x_f - 1.5*width, flux_diagno*1e3, width, label='DIAGNO ref',
-               color='#f68d40', edgecolor='black', linewidth=1.2, alpha=0.9)
-    axes[0].bar(x_f - 0.5*width, flux_vac*1e3, width, label='TIAGO vacuum',
-               color='#3498db', edgecolor='black', linewidth=1.2, alpha=0.9)
-    axes[0].bar(x_f + 0.5*width, flux_plasma*1e3, width, label='TIAGO plasma',
-               color='#e74c3c', edgecolor='black', linewidth=1.2, alpha=0.9)
-    axes[0].bar(x_f + 1.5*width, flux_total*1e3, width, label='TIAGO total',
-               color='#18b5aa', edgecolor='black', linewidth=1.2, alpha=0.9)
-
-    axes[0].set_ylabel('|Signal| (mV)', fontsize=12, fontweight='bold')
-    axes[0].set_title('Flux Loops', fontsize=12, fontweight='bold')
-    axes[0].set_xticks(x_f)
-    axes[0].set_xticklabels(flux_labels, fontsize=11)
-    axes[0].legend(fontsize=10, loc='upper right')
-    axes[0].grid(True, linestyle='--', alpha=0.3, axis='y')
-
-    # Rogowski radial components
-    seg_r_diagno = diagno_signals[4:8]
-    seg_r_vac = vacuum_signals[4:8]
-    seg_r_plasma = plasma_only[4:8]
-    seg_r_total = total_signals[4:8]
-
-    x_r = np.arange(len(seg_rad_labels))
-
-    axes[1].bar(x_r - 1.5*width, seg_r_diagno*1e3, width, label='DIAGNO ref',
-               color='#f68d40', edgecolor='black', linewidth=1.2, alpha=0.9)
-    axes[1].bar(x_r - 0.5*width, seg_r_vac*1e3, width, label='TIAGO vacuum',
-               color='#3498db', edgecolor='black', linewidth=1.2, alpha=0.9)
-    axes[1].bar(x_r + 0.5*width, seg_r_plasma*1e3, width, label='TIAGO plasma',
-               color='#e74c3c', edgecolor='black', linewidth=1.2, alpha=0.9)
-    axes[1].bar(x_r + 1.5*width, seg_r_total*1e3, width, label='TIAGO total',
-               color='#18b5aa', edgecolor='black', linewidth=1.2, alpha=0.9)
-
-    axes[1].set_ylabel('|Signal| (mV)', fontsize=12, fontweight='bold')
-    axes[1].set_title('Segmented Rogowski - Radial', fontsize=12, fontweight='bold')
-    axes[1].set_xticks(x_r)
-    axes[1].set_xticklabels(seg_rad_labels, fontsize=11)
-    axes[1].legend(fontsize=10, loc='upper right')
-    axes[1].grid(True, linestyle='--', alpha=0.3, axis='y')
-
-    # Rogowski vertical components
-    seg_v_diagno = diagno_signals[8:11]
-    seg_v_vac = vacuum_signals[8:11]
-    seg_v_plasma = plasma_only[8:11]
-    seg_v_total = total_signals[8:11]
-
-    x_v = np.arange(len(seg_ver_labels))
-
-    axes[2].bar(x_v - 1.5*width, seg_v_diagno*1e3, width, label='DIAGNO ref',
-               color='#f68d40', edgecolor='black', linewidth=1.2, alpha=0.9)
-    axes[2].bar(x_v - 0.5*width, seg_v_vac*1e3, width, label='TIAGO vacuum',
-               color='#3498db', edgecolor='black', linewidth=1.2, alpha=0.9)
-    axes[2].bar(x_v + 0.5*width, seg_v_plasma*1e3, width, label='TIAGO plasma',
-               color='#e74c3c', edgecolor='black', linewidth=1.2, alpha=0.9)
-    axes[2].bar(x_v + 1.5*width, seg_v_total*1e3, width, label='TIAGO total',
-               color='#18b5aa', edgecolor='black', linewidth=1.2, alpha=0.9)
-
-    axes[2].set_ylabel('|Signal| (mV)', fontsize=12, fontweight='bold')
-    axes[2].set_title('Segmented Rogowski - Vertical', fontsize=12, fontweight='bold')
-    axes[2].set_xticks(x_v)
-    axes[2].set_xticklabels(seg_ver_labels, fontsize=11)
-    axes[2].legend(fontsize=10, loc='upper right')
-    axes[2].grid(True, linestyle='--', alpha=0.3, axis='y')
-
-    fig.suptitle(f'All Diagnostic Coil Types Breakdown - {args.label.upper()}',
-                fontsize=13, fontweight='bold')
-
-    output_file_2 = args.output_dir / f'coil_types_breakdown_{args.label}.png'
-    fig.savefig(output_file_2, dpi=150, bbox_inches='tight')
-    print(f'✓ Saved all coil types breakdown plot to {output_file_2}')
-    plt.close()
-
-    # ==================== PLOT 3: Plasma-only error analysis ====================
-    # Compute actual plasma contribution from DIAGNO (difference between total and vacuum)
-    diagno_plasma = diagno_signals - (diagno_signals - plasma_only)  # Approximate: use TIAGO plasma estimate
-    # More accurate: assume DIAGNO vacuum = TIAGO vacuum, so plasma = DIAGNO - TIAGO_vac
-    diagno_plasma_contrib = diagno_signals - vacuum_signals
-
-    # Relative error of TIAGO plasma-only vs inferred plasma from DIAGNO
-    plasma_relative_error = np.abs(plasma_only - diagno_plasma_contrib) / np.maximum(np.abs(diagno_plasma_contrib), 1e-30)
-
-    fig, axes = plt.subplots(2, 2, figsize=(16, 10))
-
-    # Top left: Plasma-only relative error by diagnostic
-    ax = axes[0, 0]
-    colors_err = ['#2ecc71' if e < 0.3 else '#f39c12' if e < 0.6 else '#e74c3c' for e in plasma_relative_error]
-    ax.bar(range(len(all_labels)), plasma_relative_error*100, color=colors_err, alpha=0.8,
-          edgecolor='black', linewidth=1.2)
-    ax.set_xticks(range(len(all_labels)))
-    ax.set_xticklabels(all_labels, rotation=45, ha='right', fontsize=10)
-    ax.set_ylabel('Relative Error (%)', fontsize=12, fontweight='bold')
-    ax.set_title('TIAGO Plasma-Only vs Inferred DIAGNO Plasma', fontsize=12, fontweight='bold')
-    ax.axvline(x=3.5, color='gray', linestyle='--', linewidth=2, alpha=0.5)
-    ax.axvline(x=7.5, color='gray', linestyle='--', linewidth=2, alpha=0.5)
-    ax.axhline(y=30, color='red', linestyle=':', linewidth=2, label='30% threshold')
-    ax.legend(fontsize=10)
-    ax.grid(True, linestyle='--', alpha=0.3, axis='y')
-
-    # Top right: Plasma magnitude comparison (absolute)
-    ax = axes[0, 1]
-    x_pos = np.arange(len(all_labels))
-    width = 0.35
-    ax.bar(x_pos - width/2, diagno_plasma_contrib*1e6, width, label='Inferred from DIAGNO',
-          color='#f68d40', edgecolor='black', linewidth=1.2, alpha=0.9)
-    ax.bar(x_pos + width/2, plasma_only*1e6, width, label='TIAGO computed',
-          color='#e74c3c', edgecolor='black', linewidth=1.2, alpha=0.9)
-    ax.set_ylabel('Plasma Magnitude (μV)', fontsize=12, fontweight='bold')
-    ax.set_title('Plasma Contribution: DIAGNO vs TIAGO', fontsize=12, fontweight='bold')
-    ax.set_xticks(x_pos)
-    ax.set_xticklabels(all_labels, rotation=45, ha='right', fontsize=10)
-    ax.axvline(x=3.5, color='gray', linestyle='--', linewidth=2, alpha=0.5)
-    ax.axvline(x=7.5, color='gray', linestyle='--', linewidth=2, alpha=0.5)
-    ax.legend(fontsize=10)
-    ax.grid(True, linestyle='--', alpha=0.3, axis='y')
-
-    # Bottom left: Plasma effect as % of total DIAGNO signal
-    ax = axes[1, 0]
-    plasma_pct_of_diagno = (plasma_only / diagno_signals) * 100
-    colors_pct = ['#2ecc71' if x < 1.5 else '#f39c12' if x < 3.0 else '#e74c3c' for x in plasma_pct_of_diagno]
-    ax.bar(range(len(all_labels)), plasma_pct_of_diagno, color=colors_pct, alpha=0.8,
-          edgecolor='black', linewidth=1.2)
-    ax.set_xticks(range(len(all_labels)))
-    ax.set_xticklabels(all_labels, rotation=45, ha='right', fontsize=10)
-    ax.set_ylabel('Plasma / DIAGNO Signal (%)', fontsize=12, fontweight='bold')
-    ax.set_title('Plasma Effect as Fraction of Total Signal', fontsize=12, fontweight='bold')
-    ax.axvline(x=3.5, color='gray', linestyle='--', linewidth=2, alpha=0.5)
-    ax.axvline(x=7.5, color='gray', linestyle='--', linewidth=2, alpha=0.5)
-    ax.grid(True, linestyle='--', alpha=0.3, axis='y')
-
-    # Bottom right: Error contribution to total error
-    ax = axes[1, 1]
-    plasma_error_contribution = plasma_relative_error * (plasma_only / total_signals)
-    colors_contrib = ['#2ecc71' if x < 0.01 else '#f39c12' if x < 0.02 else '#e74c3c' for x in plasma_error_contribution]
-    ax.bar(range(len(all_labels)), plasma_error_contribution*100, color=colors_contrib, alpha=0.8,
-          edgecolor='black', linewidth=1.2)
-    ax.set_xticks(range(len(all_labels)))
-    ax.set_xticklabels(all_labels, rotation=45, ha='right', fontsize=10)
-    ax.set_ylabel('Error Contribution to Total (%)', fontsize=12, fontweight='bold')
-    ax.set_title('Plasma Error Impact on Total Signal Error', fontsize=12, fontweight='bold')
-    ax.axvline(x=3.5, color='gray', linestyle='--', linewidth=2, alpha=0.5)
-    ax.axvline(x=7.5, color='gray', linestyle='--', linewidth=2, alpha=0.5)
-    ax.grid(True, linestyle='--', alpha=0.3, axis='y')
-
-    fig.suptitle(f'Plasma-Only Relative Error Analysis - {args.label.upper()}',
-                fontsize=14, fontweight='bold')
-
-    output_file_3 = args.output_dir / f'plasma_error_analysis_{args.label}.png'
-    fig.savefig(output_file_3, dpi=150, bbox_inches='tight')
-    print(f'✓ Saved plasma-only error analysis plot to {output_file_3}')
-    plt.close()
-
-    # ==================== PLOT 4: Plasma contribution magnitude comparison ====================
-    fig, axes = plt.subplots(1, 2, figsize=(16, 6))
-
-    # Plasma effect magnitude (relative to vacuum)
-    plasma_pct = (plasma_only / vacuum_signals) * 100
-
-    ax = axes[0]
-    colors_plasma = ['#2ecc71' if x < 1.5 else '#f39c12' if x < 2.5 else '#e74c3c' for x in plasma_pct]
-    ax.bar(range(len(all_labels)), plasma_pct, color=colors_plasma, alpha=0.8,
-          edgecolor='black', linewidth=1.2)
-    ax.set_xticks(range(len(all_labels)))
-    ax.set_xticklabels(all_labels, rotation=45, ha='right', fontsize=10)
-    ax.set_ylabel('Plasma Correction (% of vacuum)', fontsize=12, fontweight='bold')
-    ax.set_title('Plasma Response Relative to Vacuum Field', fontsize=12, fontweight='bold')
-    ax.axvline(x=3.5, color='gray', linestyle='--', linewidth=2, alpha=0.5)
-    ax.axvline(x=7.5, color='gray', linestyle='--', linewidth=2, alpha=0.5)
-    ax.grid(True, linestyle='--', alpha=0.3, axis='y')
-
-    # Error reduction with plasma
-    vacuum_to_total_improvement = (vacuum_error - total_error) / np.maximum(vacuum_error, 1e-30) * 100
-
-    ax = axes[1]
-    colors_improve = ['#2ecc71' if x > 0 else '#e74c3c' for x in vacuum_to_total_improvement]
-    ax.bar(range(len(all_labels)), vacuum_to_total_improvement, color=colors_improve, alpha=0.8,
-          edgecolor='black', linewidth=1.2)
-    ax.set_xticks(range(len(all_labels)))
-    ax.set_xticklabels(all_labels, rotation=45, ha='right', fontsize=10)
-    ax.set_ylabel('Error Change (%)', fontsize=12, fontweight='bold')
-    ax.set_title('Impact of Plasma on Total Error (negative = worse)', fontsize=12, fontweight='bold')
-    ax.axhline(y=0, color='black', linestyle='-', linewidth=1.5)
-    ax.axvline(x=3.5, color='gray', linestyle='--', linewidth=2, alpha=0.5)
-    ax.axvline(x=7.5, color='gray', linestyle='--', linewidth=2, alpha=0.5)
-    ax.grid(True, linestyle='--', alpha=0.3, axis='y')
-
-    fig.suptitle(f'Plasma Contribution Impact Analysis - {args.label.upper()}',
-                fontsize=13, fontweight='bold')
-
-    output_file_4 = args.output_dir / f'plasma_contribution_{args.label}.png'
-    fig.savefig(output_file_4, dpi=150, bbox_inches='tight')
-    print(f'✓ Saved plasma contribution impact plot to {output_file_4}')
-    plt.close()
-
-    # ==================== Summary statistics file ====================
-    summary_file = args.output_dir / f'plasma_response_summary_{args.label}.txt'
-    with open(summary_file, 'w') as f:
-        f.write(f"PLASMA RESPONSE VALIDATION SUMMARY - {args.label.upper()}\n")
-        f.write("="*80 + "\n\n")
-
-        f.write("VACUUM ONLY (TIAGO baseline)\n")
-        f.write("-"*80 + "\n")
-        f.write(f"  RMS error vs DIAGNO: {np.sqrt(np.mean(vacuum_error**2))*100:.4f}%\n")
-        f.write(f"  Max error: {vacuum_error.max()*100:.4f}%\n")
-        f.write(f"  Mean signal: {vacuum_signals.mean()*1e3:.4f} mV\n\n")
-
-        f.write("PLASMA RESPONSE ONLY (Virtual-Casing contribution)\n")
-        f.write("-"*80 + "\n")
-        f.write(f"  Mean magnitude: {plasma_only.mean()*1e6:.2f} μV\n")
-        f.write(f"  Mean relative to vacuum: {(plasma_only/vacuum_signals).mean()*100:.2f}%\n")
-        f.write(f"  Range: {plasma_only.min()*1e6:.2f} - {plasma_only.max()*1e6:.2f} μV\n\n")
-
-        f.write("VACUUM + PLASMA (Total TIAGO prediction)\n")
-        f.write("-"*80 + "\n")
-        f.write(f"  RMS error vs DIAGNO: {np.sqrt(np.mean(total_error**2))*100:.4f}%\n")
-        f.write(f"  Max error: {total_error.max()*100:.4f}%\n")
-        f.write(f"  Mean signal: {total_signals.mean()*1e3:.4f} mV\n")
-        f.write(f"  Agreement status: {'✓ EXCELLENT' if np.sqrt(np.mean(total_error**2)) < 0.01 else '✓ GOOD' if np.sqrt(np.mean(total_error**2)) < 0.02 else '⚠ MARGINAL'}\n\n")
-
-        f.write("BREAKDOWN BY DIAGNOSTIC TYPE\n")
-        f.write("-"*80 + "\n")
-        for name, indices, diag_name in [
-            ('Flux Loops', range(0, 4), 'flux'),
-            ('Seg Radial', range(4, 8), 'seg_rad'),
-            ('Seg Vertical', range(8, 11), 'seg_ver')
-        ]:
-            idx = list(indices)
-            vac_err = np.sqrt(np.mean(vacuum_error[idx]**2))*100
-            tot_err = np.sqrt(np.mean(total_error[idx]**2))*100
-            plasma_mag = (plasma_only[idx]/vacuum_signals[idx]).mean()*100
-            f.write(f"\n  {name}:\n")
-            f.write(f"    Vacuum RMS error: {vac_err:.4f}%\n")
-            f.write(f"    Total RMS error:  {tot_err:.4f}%\n")
-            f.write(f"    Plasma effect:    {plasma_mag:.2f}%\n")
-
-        f.write("\n" + "="*80 + "\n")
-        f.write("DETAILED SIGNAL COMPARISON (mV)\n")
-        f.write("="*80 + "\n")
-        f.write(f"{'Signal':<15} {'DIAGNO':>12} {'Vac':>12} {'Plasma':>12} {'Total':>12} {'Vac Err':>10} {'Tot Err':>10}\n")
-        f.write("-"*80 + "\n")
-        for i, label in enumerate(all_labels):
-            f.write(f"{label:<15} {diagno_signals[i]*1e3:>12.5f} {vacuum_signals[i]*1e3:>12.5f} {plasma_only[i]*1e3:>12.5f} {total_signals[i]*1e3:>12.5f} {vacuum_error[i]*100:>9.3f}% {total_error[i]*100:>9.3f}%\n")
-
-    print(f'✓ Saved detailed summary to {summary_file}')
-
-    # ==================== Console output ====================
-    print("\n" + "="*80)
-    print("PLASMA RESPONSE VALIDATION RESULTS")
-    print("="*80)
-    print(f"\nVACUUM ONLY (vs DIAGNO):")
-    print(f"  RMS Error: {np.sqrt(np.mean(vacuum_error**2))*100:.4f}%")
-    print(f"  Max Error: {vacuum_error.max()*100:.4f}%")
-
-    print(f"\nPLASMA RESPONSE CONTRIBUTION:")
-    print(f"  Mean magnitude: {plasma_only.mean()*1e6:.2f} μV")
-    print(f"  Mean effect: {(plasma_only/vacuum_signals).mean()*100:.2f}%")
-    print(f"  Range: {plasma_only.min()*1e6:.2f} - {plasma_only.max()*1e6:.2f} μV")
-
-    print(f"\nVACUUM + PLASMA (vs DIAGNO):")
-    print(f"  RMS Error: {np.sqrt(np.mean(total_error**2))*100:.4f}%")
-    print(f"  Max Error: {total_error.max()*100:.4f}%")
-
-    print("\nDIAGNOSTIC BREAKDOWN:")
-    for name, indices in [('Flux Loops', range(0, 4)), ('Seg Radial', range(4, 8)), ('Seg Vertical', range(8, 11))]:
-        idx = list(indices)
-        print(f"  {name}: {np.sqrt(np.mean(total_error[idx]**2))*100:.4f}% RMS error")
-
-    print("="*80 + "\n")
-
-    return 0
-
-if __name__ == '__main__':
-    sys.exit(main())
+if __name__ == "__main__":
+    main()

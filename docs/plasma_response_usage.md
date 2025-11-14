@@ -94,11 +94,30 @@ where:
 
 ## Integration with Diagnostics
 
-To compute diagnostic signals including plasma response:
+Tiago now exposes a `plasma_support_t` helper (built on `plasma_response_t`) that
+loads a VMEC `wout` file, constructs the surface grid, and keeps the total
+surface field in memory so that off-surface `B_external` samples can be queried
+on demand. The segmented Rogowski solver uses this context to add plasma
+currents to the Biot–Savart coil field whenever `tiago_vacuum_cli` is invoked
+with a VMEC file:
 
-1. Get VMEC surface geometry and total B-field from libneo
-2. Use `plasma_response_t` to compute B_external
-3. Pass (B_coil + B_external) to diagnostic solvers for flux loop and Rogowski signals
+```bash
+./build/tiago_vacuum_cli coils.NCSX fluxloop.diagno segrog.diagno \
+    --seg-area 3.4e-4 --plasma-sample --plasma-nphi 16 --plasma-ntheta 16
+```
+
+Only segmented Rogowski diagnostics currently benefit from plasma response,
+because the HiddenSymmetries virtual-casing API does not provide a vector
+potential. Flux-loop signals therefore remain vacuum-only even when plasma
+support is enabled; the CLI prints a warning in that case. The `--plasma-sample`
+flag automatically downloads the lightweight Simsopt equilibrium from GitHub
+raw (via the same CMake helper used in the tests) and points the solver at it
+when `--plasma-wout` is omitted. The pipeline is:
+
+1. Load VMEC geometry and total B-field (`tiago_plasma_support`).
+2. Initialize `plasma_response_t` with the surface grid.
+3. Sample `B_external` at every segmented Rogowski quadrature point and add it
+   to the coil-field integrand.
 
 ## Dependencies
 
