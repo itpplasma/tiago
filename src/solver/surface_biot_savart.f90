@@ -64,6 +64,8 @@ contains
         integer :: j
         real(dp) :: phi_step
         real(dp) :: theta_step
+        real(dp) :: phi_period
+        real(dp) :: theta_period
         integer :: ip
         integer :: im
         integer :: jp
@@ -98,8 +100,10 @@ contains
         allocate(bn(phi_count, theta_count))
         allocate(jac(phi_count, theta_count))
 
-        phi_step = two_pi / real(phi_count, dp)
-        theta_step = two_pi / real(theta_count, dp)
+        phi_period = two_pi / real(2 * nfp, dp)
+        theta_period = two_pi
+        phi_step = phi_period / real(phi_count, dp)
+        theta_step = theta_period / real(theta_count, dp)
 
         do i = 1, phi_count
             ip = i + 1
@@ -128,7 +132,7 @@ contains
         end do
 
         limits_min = [0.0_dp, 0.0_dp]
-        limits_max = [two_pi, two_pi]
+        limits_max = [phi_period, theta_period]
         periodic = [.true., .true.]
         spline_order = [3, 3]
 
@@ -146,15 +150,25 @@ contains
             spline_order, periodic, self%jacobian_spline)
 
         self%phi_min = 0.0_dp
-        self%phi_max = two_pi
+        self%phi_max = phi_period
         self%theta_min = 0.0_dp
-        self%theta_max = two_pi
+        self%theta_max = theta_period
         self%nphi = phi_count
         self%ntheta = theta_count
         self%dphi = phi_step
         self%dtheta = theta_step
-        self%norm_const = 0.25_dp / pi
+        nfp_real = real(nfp, dp)
+        self%norm_const = 1.0_dp / (2.0_dp * pi * nfp_real)
         self%initialized = .true.
+
+        print '(A,I0)', '[biot_savart_init] nfp = ', nfp
+        print '(A,I0,A,I0)', '[biot_savart_init] grid: ', phi_count, ' x ', theta_count
+        print '(A,1pe12.5,A,1pe12.5)', '[biot_savart_init] phi range: ', self%phi_min, ' to ', self%phi_max
+        print '(A,1pe12.5,A,1pe12.5)', '[biot_savart_init] theta range: ', self%theta_min, ' to ', self%theta_max
+        print '(A,1pe12.5)', '[biot_savart_init] norm_const = nfp/(2pi) = ', self%norm_const
+        print '(A,1pe12.5)', '[biot_savart_init] Sample K(1,1) = ', sqrt(sum(k(1, 1, :)**2))
+        print '(A,1pe12.5)', '[biot_savart_init] Sample bn(1,1) = ', bn(1, 1)
+        print '(A,1pe12.5)', '[biot_savart_init] Sample jac(1,1) = ', jac(1, 1)
 
         deallocate(normals, k, bn, jac)
     end subroutine biot_savart_init

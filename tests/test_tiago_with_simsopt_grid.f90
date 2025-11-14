@@ -64,10 +64,14 @@ program test_tiago_with_simsopt_grid
         rel_error = rms_diff / max(1.0e-12_dp, sqrt(sum(ref_ext**2) / real(size(ref_ext), dp)))
         print '(A,1pe12.5)', 'RMS absolute error (TIAGO vs simsopt plasma) = ', rms_diff
         print '(A,1pe12.5)', 'Relative RMS error                         = ', rel_error
+        print '(A,1pe12.5)', 'TIAGO RMS                                  = ', sqrt(sum(b_ext**2) / real(size(b_ext), dp))
+        print '(A,1pe12.5)', 'Simsopt plasma RMS                         = ', sqrt(sum(ref_ext**2) / real(size(ref_ext), dp))
         if (rel_error > 0.02_dp) then
-            print *, 'WARNING: Plasma Biot-Savart deviates more than 2% from simsopt plasma reference'
+            print *, 'ERROR: Plasma Biot-Savart deviates more than 2% from simsopt plasma reference'
+            print *, 'STRICT TEST FAILED - FIX THE IMPLEMENTATION!'
+            error stop 1
         else
-            print *, 'Plasma Biot-Savart matches simsopt plasma reference within tolerance'
+            print *, 'SUCCESS: Plasma Biot-Savart matches simsopt plasma reference within 2% tolerance'
         end if
         deallocate(ref_ext)
     end if
