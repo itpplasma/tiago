@@ -1,307 +1,228 @@
 module tiago_plasma_response
-    !! Plasma response contribution to magnetic field from VMEC equilibrium
-    !! using virtual casing principle via the virtual_casing C library
+    !! Plasma response contribution computed via surface Biot-Savart integrals
     use, intrinsic :: iso_fortran_env, only: dp => real64
-    use, intrinsic :: iso_c_binding, only: c_int, c_double, c_ptr, &
-                                            c_bool, c_long, c_null_ptr, c_associated, c_loc
+    use tiago_surface_biot_savart, only: surface_biot_savart_t
     implicit none
 
     private
     public :: plasma_response_t
 
-    ! C interface to virtual_casing library (double precision)
-    interface
-        ! Create context
-        function VirtualCasingCreateContextD() bind(C, name='VirtualCasingCreateContextD')
-            use iso_c_binding
-            type(c_ptr) :: VirtualCasingCreateContextD
-        end function
-
-        ! Destroy context - takes pointer-to-pointer (void**)
-        subroutine VirtualCasingDestroyContextD(ctx_ptr) &
-                bind(C, name='VirtualCasingDestroyContextD')
-            use iso_c_binding
-            type(c_ptr), value :: ctx_ptr
-        end subroutine
-
-        ! Setup from surface geometry and B-field
-        subroutine VirtualCasingSetupD(digits, nfp, half_period, &
-                                       nt, np, x, &
-                                       src_nt, src_np, trg_nt, trg_np, ctx) &
-                 bind(C, name='VirtualCasingSetupD')
-            use iso_c_binding
-            integer(c_int), value :: digits, nfp
-            logical(c_bool), value :: half_period
-            integer(c_long), value :: nt, np
-            real(c_double), intent(in) :: x(*)
-            integer(c_long), value :: src_nt, src_np, trg_nt, trg_np
-            type(c_ptr), value :: ctx
-        end subroutine
-
-        ! Compute B_external from total B field
-        subroutine VirtualCasingComputeBextD(bext, b, nt, np, ctx) &
-                 bind(C, name='VirtualCasingComputeBextD')
-            use iso_c_binding
-            real(c_double), intent(out) :: bext(*)
-            real(c_double), intent(in) :: b(*)
-            integer(c_long), value :: nt, np
-            type(c_ptr), value :: ctx
-        end subroutine
-
-        ! Compute B_external at off-surface target points
-        subroutine VirtualCasingComputeBextOffSurfD(bext, b, xt, src_nt, src_np, &
-                                                   trg_nt, trg_np, ctx) &
-                 bind(C, name='VirtualCasingComputeBextOffSurfD')
-            use iso_c_binding
-            real(c_double), intent(out) :: bext(*)
-            real(c_double), intent(in) :: b(*)
-            real(c_double), intent(in) :: xt(*)
-            integer(c_long), value :: src_nt, src_np, trg_nt, trg_np
-            type(c_ptr), value :: ctx
-        end subroutine
-    end interface
-
-    ! Fortran wrapper type for virtual casing plasma response
     type :: plasma_response_t
-        private
-        type(c_ptr) :: ctx = c_null_ptr
-        logical :: initialized = .false.
+        type(surface_biot_savart_t) :: evaluator
+        real(dp), allocatable :: surface_nodes(:, :, :)
+        integer :: src_nphi = 0
+        integer :: src_ntheta = 0
         integer :: nfp = 0
-        integer :: src_nphi = 0, src_ntheta = 0
-        integer :: trg_nphi = 0, trg_ntheta = 0
+        logical :: initialized = .false.
     contains
         procedure :: init => plasma_response_init
         procedure :: compute_bext => plasma_response_compute_bext
         procedure :: compute_bext_at => plasma_response_compute_bext_at
+        procedure :: compute_bext_points => plasma_response_compute_bext_points
+        procedure :: compute_surface_bext_points => plasma_response_compute_surface
+        procedure :: compute_vector_potential_points => plasma_response_compute_vector_potential
         procedure :: finalize => plasma_response_finalize
         procedure :: is_initialized => plasma_response_is_initialized
     end type plasma_response_t
 
 contains
 
-    ! Initialize virtual casing from VMEC surface and B-field
-    subroutine plasma_response_init(self, nfp, x_surf, b_total, &
-                                     src_nphi, src_ntheta, &
-                                     trg_nphi, trg_ntheta, &
-                                     use_stellsym, digits)
+    subroutine plasma_response_init(self, nfp, x_surf, b_total, src_nphi, src_ntheta)
         class(plasma_response_t), intent(inout) :: self
         integer, intent(in) :: nfp
-        real(dp), intent(in) :: x_surf(:,:,:)  ! (nphi, ntheta, 3)
-        real(dp), intent(in) :: b_total(:,:,:)  ! (src_nphi, src_ntheta, 3)
-        integer, intent(in) :: src_nphi, src_ntheta
-        integer, intent(in), optional :: trg_nphi, trg_ntheta, digits
-        logical, intent(in), optional :: use_stellsym
+        real(dp), intent(in) :: x_surf(:, :, :)
+        real(dp), intent(in) :: b_total(:, :, :)
+        integer, intent(in) :: src_nphi
+        integer, intent(in) :: src_ntheta
 
-        integer :: nphi, ntheta, trg_nphi_val, trg_ntheta_val, digits_val
-        logical(c_bool) :: stellsym_c
-        real(c_double), allocatable :: x_flat(:), b_flat(:)
-        integer :: i, j, k, idx
+        call self%finalize()
 
-        ! Surface grid dimensions
-        nphi = size(x_surf, 1)
-        ntheta = size(x_surf, 2)
-
-        ! Set defaults
-        trg_nphi_val = nphi
-        if (present(trg_nphi)) trg_nphi_val = trg_nphi
-
-        trg_ntheta_val = ntheta
-        if (present(trg_ntheta)) trg_ntheta_val = trg_ntheta
-
-        digits_val = 6
-        if (present(digits)) digits_val = digits
-
-        stellsym_c = .true.
-        if (present(use_stellsym)) stellsym_c = use_stellsym
-
-        ! Create context
-        self%ctx = VirtualCasingCreateContextD()
-        if (.not. c_associated(self%ctx)) then
-            return
+        if (src_nphi < 2 .or. src_ntheta < 2) then
+            error stop 'plasma_response requires at least a 2x2 surface grid'
+        end if
+        if (size(x_surf, 1) /= src_nphi .or. size(x_surf, 2) /= src_ntheta) then
+            error stop 'plasma_response: surface grid mismatch'
+        end if
+        if (size(b_total, 1) /= src_nphi .or. size(b_total, 2) /= src_ntheta) then
+            error stop 'plasma_response: B_total grid mismatch'
         end if
 
-        ! Flatten to 1D matching simsopt: phi OUTER (slowest), theta INNER (fastest)
-        ! Virtual-casing expects: {x[0,0], x[0,1], ..., x[0,Np-1], x[1,0], ...}
-        ! Index formula: jphi * ntheta + jtheta (with 0-based indexing)
-        allocate(x_flat(nphi * ntheta * 3))
-        do k = 1, 3
-            do i = 1, nphi  ! Phi OUTER (slowest in 1D array index)
-                do j = 1, ntheta  ! Theta INNER (fastest in 1D array index)
-                    idx = (k-1) * nphi * ntheta + (i-1) * ntheta + j
-                    x_flat(idx) = real(x_surf(i, j, k), c_double)
-                end do
-            end do
-        end do
+        allocate(self%surface_nodes(src_nphi, src_ntheta, 3))
+        self%surface_nodes = x_surf
+        call self%evaluator%init(x_surf, b_total, nfp)
 
-        ! Flatten B-field with same convention: phi outer, theta inner
-        allocate(b_flat(src_nphi * src_ntheta * 3))
-        do k = 1, 3
-            do i = 1, src_nphi  ! Phi OUTER
-                do j = 1, src_ntheta  ! Theta INNER
-                    idx = (k-1) * src_nphi * src_ntheta + (i-1) * src_ntheta + j
-                    b_flat(idx) = real(b_total(i, j, k), c_double)
-                end do
-            end do
-        end do
-
-        ! Call setup
-        print *, 'DEBUG: VirtualCasingSetupD:'
-        print *, '  nphi=', nphi, ' ntheta=', ntheta
-        print *, '  src_nphi=', src_nphi, ' src_ntheta=', src_ntheta
-        print *, '  x_flat[1:10]:', x_flat(1:min(10, size(x_flat)))
-
-        call VirtualCasingSetupD(int(digits_val, c_int), int(nfp, c_int), stellsym_c, &
-                                int(nphi, c_long), int(ntheta, c_long), x_flat, &
-                                int(src_nphi, c_long), int(src_ntheta, c_long), &
-                                int(trg_nphi_val, c_long), int(trg_ntheta_val, c_long), &
-                                self%ctx)
-
-        self%initialized = .true.
-        self%nfp = nfp
         self%src_nphi = src_nphi
         self%src_ntheta = src_ntheta
-        self%trg_nphi = trg_nphi_val
-        self%trg_ntheta = trg_ntheta_val
-
-        deallocate(x_flat, b_flat)
+        self%nfp = nfp
+        self%initialized = .true.
     end subroutine plasma_response_init
 
-    ! Compute B_external (plasma contribution) from total B-field
     subroutine plasma_response_compute_bext(self, b_total, b_external)
         class(plasma_response_t), intent(in) :: self
-        real(dp), intent(in) :: b_total(:,:,:)  ! (src_nphi, src_ntheta, 3)
-        real(dp), intent(out) :: b_external(:,:,:)  ! (src_nphi, src_ntheta, 3)
-
-        real(c_double), allocatable :: b_total_flat(:), b_ext_flat(:)
-        integer :: i, j, k, idx
+        real(dp), intent(in) :: b_total(:, :, :)
+        real(dp), intent(out) :: b_external(:, :, :)
 
         if (.not. self%initialized) then
             b_external = 0.0_dp
             return
         end if
+        if (size(b_total, 1) /= self%src_nphi .or. size(b_total, 2) /= self%src_ntheta) then
+            error stop 'compute_bext: input grid mismatch'
+        end if
+        if (size(b_external, 1) /= self%src_nphi .or. size(b_external, 2) /= self%src_ntheta) then
+            error stop 'compute_bext: output shape mismatch'
+        end if
 
-        ! Flatten input B-field matching simsopt: phi OUTER, theta INNER
-        allocate(b_total_flat(self%src_nphi * self%src_ntheta * 3))
-        allocate(b_ext_flat(self%src_nphi * self%src_ntheta * 3))
-
-        do k = 1, 3
-            do i = 1, self%src_nphi  ! Phi OUTER (slowest in 1D)
-                do j = 1, self%src_ntheta  ! Theta INNER (fastest in 1D)
-                    idx = (k-1) * self%src_nphi * self%src_ntheta + &
-                          (i-1) * self%src_ntheta + j
-                    b_total_flat(idx) = real(b_total(i, j, k), c_double)
-                end do
-            end do
-        end do
-
-        ! Call virtual casing computation
-        print *, 'DEBUG: VirtualCasingComputeBextD:'
-        print *, '  b_total_flat[1:10]:', b_total_flat(1:min(10, &
-                                                     size(b_total_flat)))
-
-        call VirtualCasingComputeBextD(b_ext_flat, b_total_flat, &
-                                      int(self%src_nphi, c_long), &
-                                      int(self%src_ntheta, c_long), &
-                                      self%ctx)
-
-        print *, '  b_ext_flat[1:10]:', b_ext_flat(1:min(10, &
-                                                  size(b_ext_flat)))
-        print *, '  Max b_ext:', maxval(abs(b_ext_flat))
-
-        ! Unflatten result: phi outer, theta inner
-        do k = 1, 3
-            do i = 1, self%src_nphi  ! Phi OUTER
-                do j = 1, self%src_ntheta  ! Theta INNER
-                    idx = (k-1) * self%src_nphi * self%src_ntheta + &
-                          (i-1) * self%src_ntheta + j
-                    b_external(i, j, k) = real(b_ext_flat(idx), dp)
-                end do
-            end do
-        end do
-
-        deallocate(b_total_flat, b_ext_flat)
+        call sample_on_surface(self, self%surface_nodes, b_external)
     end subroutine plasma_response_compute_bext
 
     subroutine plasma_response_compute_bext_at(self, b_total, x_eval, b_external)
         class(plasma_response_t), intent(in) :: self
-        real(dp), intent(in) :: b_total(:,:,:)  ! (src_nphi, src_ntheta, 3)
-        real(dp), intent(in) :: x_eval(:,:,:)   ! (eval_nphi, eval_ntheta, 3)
-        real(dp), intent(out) :: b_external(:,:,:)  ! (eval_nphi, eval_ntheta, 3)
+        real(dp), intent(in) :: b_total(:, :, :)
+        real(dp), intent(in) :: x_eval(:, :, :)
+        real(dp), intent(out) :: b_external(:, :, :)
 
-        integer :: eval_nphi, eval_ntheta
-        real(c_double), allocatable :: b_total_flat(:), x_eval_flat(:), b_ext_flat(:)
-        integer :: i, j, k, idx
-
-        if (.not. self%initialized) then
-            b_external = 0.0_dp
-            return
+        if (size(b_total, 1) /= self%src_nphi .or. size(b_total, 2) /= self%src_ntheta) then
+            error stop 'compute_bext_at: input grid mismatch'
         end if
-
-        eval_nphi = size(x_eval, 1)
-        eval_ntheta = size(x_eval, 2)
-
-        if (size(b_external, 1) /= eval_nphi .or. size(b_external, 2) /= eval_ntheta) then
-            error stop 'compute_bext_at: output array shape mismatch'
-        end if
-
-        allocate(b_total_flat(self%src_nphi * self%src_ntheta * 3))
-        allocate(x_eval_flat(eval_nphi * eval_ntheta * 3))
-        allocate(b_ext_flat(eval_nphi * eval_ntheta * 3))
-
-        ! Flatten surface B field (phi outer, theta inner)
-        do k = 1, 3
-            do i = 1, self%src_nphi
-                do j = 1, self%src_ntheta
-                    idx = (k-1) * self%src_nphi * self%src_ntheta + &
-                          (i-1) * self%src_ntheta + j
-                    b_total_flat(idx) = real(b_total(i, j, k), c_double)
-                end do
-            end do
-        end do
-
-        ! Flatten evaluation coordinates (phi outer, theta inner)
-        do k = 1, 3
-            do i = 1, eval_nphi
-                do j = 1, eval_ntheta
-                    idx = (k-1) * eval_nphi * eval_ntheta + (i-1) * eval_ntheta + j
-                    x_eval_flat(idx) = real(x_eval(i, j, k), c_double)
-                end do
-            end do
-        end do
-
-        call VirtualCasingComputeBextOffSurfD(b_ext_flat, b_total_flat, x_eval_flat, &
-            int(self%src_nphi, c_long), int(self%src_ntheta, c_long), &
-            int(eval_nphi, c_long), int(eval_ntheta, c_long), self%ctx)
-
-        ! Unflatten result
-        do k = 1, 3
-            do i = 1, eval_nphi
-                do j = 1, eval_ntheta
-                    idx = (k-1) * eval_nphi * eval_ntheta + (i-1) * eval_ntheta + j
-                    b_external(i, j, k) = real(b_ext_flat(idx), dp)
-                end do
-            end do
-        end do
-
-        deallocate(b_total_flat, x_eval_flat, b_ext_flat)
+        call sample_grid(self, x_eval, b_external)
     end subroutine plasma_response_compute_bext_at
 
-    ! Finalize and free resources
+    subroutine plasma_response_compute_bext_points(self, b_total, points, b_external)
+        class(plasma_response_t), intent(in) :: self
+        real(dp), intent(in) :: b_total(:, :, :)
+        real(dp), intent(in) :: points(:, :)
+        real(dp), intent(out) :: b_external(:, :)
+
+        if (size(b_total, 1) /= self%src_nphi .or. size(b_total, 2) /= self%src_ntheta) then
+            error stop 'compute_bext_points: input grid mismatch'
+        end if
+        call sample_points(self, points, b_external)
+    end subroutine plasma_response_compute_bext_points
+
+    subroutine plasma_response_compute_surface(self, points, b_external)
+        class(plasma_response_t), intent(in) :: self
+        real(dp), intent(in) :: points(:, :)
+        real(dp), intent(out) :: b_external(:, :)
+        call sample_points(self, points, b_external)
+    end subroutine plasma_response_compute_surface
+
+    subroutine plasma_response_compute_vector_potential(self, points, avec)
+        class(plasma_response_t), intent(in) :: self
+        real(dp), intent(in) :: points(:, :)
+        real(dp), intent(out) :: avec(:, :)
+
+        if (.not. self%initialized) then
+            avec = 0.0_dp
+            return
+        end if
+        if (size(points, 2) /= 3) error stop 'vector potential expects 3D points'
+        if (size(avec, 1) /= size(points, 1) .or. size(avec, 2) /= 3) then
+            error stop 'vector potential output mismatch'
+        end if
+
+        call self%evaluator%sample_vector_potential(points, avec)
+    end subroutine plasma_response_compute_vector_potential
+
     subroutine plasma_response_finalize(self)
         class(plasma_response_t), intent(inout) :: self
-        type(c_ptr), target :: ctx_tmp
-        if (c_associated(self%ctx)) then
-            ctx_tmp = self%ctx
-            call VirtualCasingDestroyContextD(c_loc(ctx_tmp))
-            self%ctx = c_null_ptr
-            self%initialized = .false.
-        end if
+        if (allocated(self%surface_nodes)) deallocate(self%surface_nodes)
+        call self%evaluator%finalize()
+        self%initialized = .false.
+        self%src_nphi = 0
+        self%src_ntheta = 0
+        self%nfp = 0
     end subroutine plasma_response_finalize
 
-    ! Check if initialized
     pure logical function plasma_response_is_initialized(self)
         class(plasma_response_t), intent(in) :: self
         plasma_response_is_initialized = self%initialized
     end function plasma_response_is_initialized
+
+    subroutine sample_on_surface(self, points, field)
+        class(plasma_response_t), intent(in) :: self
+        real(dp), intent(in) :: points(:, :, :)
+        real(dp), intent(out) :: field(:, :, :)
+
+        real(dp), allocatable :: flat_points(:, :)
+        real(dp), allocatable :: flat_field(:, :)
+        integer :: npts
+
+        npts = size(points, 1) * size(points, 2)
+        allocate(flat_points(npts, 3))
+        allocate(flat_field(npts, 3))
+        call reshape_points(points, flat_points)
+        call self%evaluator%sample_b_field(flat_points, flat_field)
+        call reshape_field(flat_field, field)
+        deallocate(flat_points, flat_field)
+    end subroutine sample_on_surface
+
+    subroutine sample_grid(self, x_eval, field)
+        class(plasma_response_t), intent(in) :: self
+        real(dp), intent(in) :: x_eval(:, :, :)
+        real(dp), intent(out) :: field(:, :, :)
+
+        real(dp), allocatable :: flat_points(:, :)
+        real(dp), allocatable :: flat_field(:, :)
+        integer :: npts
+
+        if (.not. self%initialized) then
+            field = 0.0_dp
+            return
+        end if
+
+        npts = size(x_eval, 1) * size(x_eval, 2)
+        allocate(flat_points(npts, 3))
+        allocate(flat_field(npts, 3))
+        call reshape_points(x_eval, flat_points)
+        call self%evaluator%sample_b_field(flat_points, flat_field)
+        call reshape_field(flat_field, field)
+        deallocate(flat_points, flat_field)
+    end subroutine sample_grid
+
+    subroutine sample_points(self, points, field)
+        class(plasma_response_t), intent(in) :: self
+        real(dp), intent(in) :: points(:, :)
+        real(dp), intent(out) :: field(:, :)
+
+        if (.not. self%initialized) then
+            field = 0.0_dp
+            return
+        end if
+        if (size(points, 2) /= 3) error stop 'sample_points expects Cartesian inputs'
+        if (size(field, 1) /= size(points, 1) .or. size(field, 2) /= 3) then
+            error stop 'sample_points output mismatch'
+        end if
+
+        call self%evaluator%sample_b_field(points, field)
+    end subroutine sample_points
+
+    subroutine reshape_points(grid_points, flat_points)
+        real(dp), intent(in) :: grid_points(:, :, :)
+        real(dp), intent(out) :: flat_points(:, :)
+        integer :: iphi, itheta, idx
+
+        idx = 0
+        do iphi = 1, size(grid_points, 1)
+            do itheta = 1, size(grid_points, 2)
+                idx = idx + 1
+                flat_points(idx, :) = grid_points(iphi, itheta, :)
+            end do
+        end do
+    end subroutine reshape_points
+
+    subroutine reshape_field(flat_field, grid_field)
+        real(dp), intent(in) :: flat_field(:, :)
+        real(dp), intent(out) :: grid_field(:, :, :)
+        integer :: iphi, itheta, idx
+
+        idx = 0
+        do iphi = 1, size(grid_field, 1)
+            do itheta = 1, size(grid_field, 2)
+                idx = idx + 1
+                grid_field(iphi, itheta, :) = flat_field(idx, :)
+            end do
+        end do
+    end subroutine reshape_field
 
 end module tiago_plasma_response
