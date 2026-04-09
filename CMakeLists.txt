@@ -2,13 +2,33 @@ cmake_minimum_required(VERSION 3.24)
 project(TIAGO LANGUAGES Fortran CXX)
 
 # Enable native CPU optimizations
-add_compile_options(-march=native -mtune=native)
+if(CMAKE_HOST_SYSTEM_PROCESSOR MATCHES "aarch64|arm64|ARM64")
+    add_compile_options(-mcpu=native)
+else()
+    add_compile_options(-march=native -mtune=native)
+endif()
 
 include(FetchContent)
 find_package(Python3 COMPONENTS Interpreter REQUIRED)
 
 set(TIAGO_LIBNEO_GIT "git@github.com:itpplasma/libneo.git" CACHE STRING "libneo upstream to fetch")
-set(TIAGO_LIBNEO_TAG "main" CACHE STRING "libneo branch/tag used by Tiago")
+
+# Default libneo tag: use matching branch name if it exists, otherwise main
+execute_process(
+    COMMAND git rev-parse --abbrev-ref HEAD
+    WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+    OUTPUT_VARIABLE _tiago_branch
+    OUTPUT_STRIP_TRAILING_WHITESPACE)
+execute_process(
+    COMMAND git ls-remote --heads ${TIAGO_LIBNEO_GIT} ${_tiago_branch}
+    OUTPUT_VARIABLE _libneo_branch_exists
+    OUTPUT_STRIP_TRAILING_WHITESPACE)
+if(_libneo_branch_exists)
+    set(_tiago_libneo_default "${_tiago_branch}")
+else()
+    set(_tiago_libneo_default "main")
+endif()
+set(TIAGO_LIBNEO_TAG "${_tiago_libneo_default}" CACHE STRING "libneo branch/tag used by Tiago")
 set(LIBNEO_ENABLE_TESTS OFF CACHE BOOL "Disable libneo's own tests when vendored" FORCE)
 set(ENABLE_OPENMP OFF CACHE BOOL "Disable libneo OpenMP flags unless explicitly requested" FORCE)
 
