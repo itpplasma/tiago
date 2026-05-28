@@ -9,6 +9,13 @@ find_package(Python3 COMPONENTS Interpreter REQUIRED)
 
 set(TIAGO_LIBNEO_GIT "git@github.com:itpplasma/libneo.git" CACHE STRING "libneo upstream to fetch")
 set(TIAGO_LIBNEO_TAG "main" CACHE STRING "libneo branch/tag used by Tiago")
+# Honor the standard LIBNEO_BRANCH override (cache or env) so an upstream release
+# can build Tiago against a candidate. Unset keeps TIAGO_LIBNEO_TAG above.
+if(DEFINED LIBNEO_BRANCH AND NOT "${LIBNEO_BRANCH}" STREQUAL "")
+    set(TIAGO_LIBNEO_TAG "${LIBNEO_BRANCH}" CACHE STRING "libneo branch/tag used by Tiago" FORCE)
+elseif(DEFINED ENV{LIBNEO_BRANCH} AND NOT "$ENV{LIBNEO_BRANCH}" STREQUAL "")
+    set(TIAGO_LIBNEO_TAG "$ENV{LIBNEO_BRANCH}" CACHE STRING "libneo branch/tag used by Tiago" FORCE)
+endif()
 set(LIBNEO_ENABLE_TESTS OFF CACHE BOOL "Disable libneo's own tests when vendored" FORCE)
 set(ENABLE_OPENMP OFF CACHE BOOL "Disable libneo OpenMP flags unless explicitly requested" FORCE)
 
