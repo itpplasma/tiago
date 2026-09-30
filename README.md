@@ -75,11 +75,17 @@ files are absent), runs Tiago and `xdiagno` with matching `nfp` values and turn
 scalars, and stores artifacts in `build/tests/output/<case>/diagnostics_<case>.png`
 and `geometry_<case>.png`.
 
+## Benchmark against STELLOPT xdiagno
+A manual, reproducible accuracy and performance comparison with the reference
+code lives in [`benchmarks/xdiagno/`](benchmarks/xdiagno/README.md). It is not
+part of `ctest`.
+
 ## Directory layout
 ```
 cmake/                     # Toolchain helpers
 CMakeLists.txt             # FetchContent bridge + targets
 scripts/run_xdiagno.py     # Cross-code harness + PNG generator
+benchmarks/xdiagno/        # Manual benchmark vs STELLOPT xdiagno
 src/                       # Fortran diagnostics, solver, CLI
 tests/                     # Sample inputs + regression drivers
 ```

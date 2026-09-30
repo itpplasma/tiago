@@ -1,0 +1,25 @@
+diff --git a/DIAGNO/Sources/diagno.f90 b/DIAGNO/Sources/diagno.f90
+index 5049322..f256cef 100644
+--- a/DIAGNO/Sources/diagno.f90
++++ b/DIAGNO/Sources/diagno.f90
+@@ -26,6 +26,8 @@
+       USE mpi_params
+       USE mpi_inc
+       USE virtual_casing_mod, ONLY: free_virtual_casing
++      USE read_wout_mod, ONLY: nfp_wout => nfp
++      USE biotsavart, ONLY: nfp_bs
+ !-----------------------------------------------------------------------
+ !     Local Variables
+ !          numargs      Number of input arguments
+@@ -177,6 +179,11 @@
+       
+          ! Read the Coils file
+          IF (lcoil) CALL diagno_init_coil
++         ! Test-only: -vac leaves nfp=0 (iflflg=1 -> NaN); use coil periodicity
++         IF (lvac .and. lcoil) THEN
++            nfp_wout = nfp_bs
++            nfp_diagno = nfp_bs
++         END IF
+       
+          ! Calculate diagnostic response
+          if(lverb) write(6,*)' - Calculating diagnostic responses'
