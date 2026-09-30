@@ -132,9 +132,13 @@ class Runner:
                   turn_files=None, gauss=False):
         out = d / "tiago"
         shutil.rmtree(out, ignore_errors=True)
-        cmd = [self.tiago, str(coil), str(flux or ""), str(seg or ""),
-               "--coil-extcur", str(d / "input."), "--seg-area", str(SEG_AREA),
+        cmd = [self.tiago, "--coils", str(coil), "--coil-extcur", str(d / "input."),
+               "--seg-area", str(SEG_AREA),
                "--samples", str(ns), "--nfp", str(nfp), "--output-dir", str(out)]
+        if flux:
+            cmd += ["--flux", str(flux)]
+        if seg:
+            cmd += ["--segrog", str(seg)]
         for option, path in (turn_files or {}).items():
             cmd += [option, str(path)]
         if gauss:
@@ -435,7 +439,8 @@ def suite_features(r: Runner):
               **{("segrog", *k): v for k, v in read_mut(d / "seg.mut", [l for l, _ in seg]).items()}}
 
     out = d / "tiago"
-    subprocess.run([r.tiago, str(coil), str(d / "flux.diagno"), str(d / "seg.diagno"),
+    subprocess.run([r.tiago, "--coils", str(coil), "--flux", str(d / "flux.diagno"),
+                    "--segrog", str(d / "seg.diagno"),
                     "--coil-extcur", str(d / "input."), "--samples", "6",
                     "--bprobes", str(d / "probes.diagno"), "--response-out", "response.csv",
                     "--output-dir", str(out)], env=ENV, check=True,
@@ -502,7 +507,7 @@ def suite_plasma(r: Runner):
     for grid in (32, 64):
         out = d / f"tiago_{grid}"
         t0 = time.perf_counter()
-        subprocess.run([r.tiago, "", str(d / "flux.diagno"), str(d / "seg.diagno"),
+        subprocess.run([r.tiago, "--flux", str(d / "flux.diagno"), "--segrog", str(d / "seg.diagno"),
                         "--plasma-wout", str(d / "wout_ncsx.nc"), "--plasma-nphi", str(grid),
                         "--plasma-ntheta", str(grid), "--samples", "4",
                         "--bprobes", str(d / "probes.diagno"), "--output-dir", str(out)],
@@ -530,7 +535,7 @@ def plasma_jacobian_check(r: Runner, d: Path, x_probe) -> dict:
     import netCDF4
 
     def run(wout, out, extra=()):
-        subprocess.run([r.tiago, "", str(d / "flux.diagno"), str(d / "seg.diagno"),
+        subprocess.run([r.tiago, "--flux", str(d / "flux.diagno"), "--segrog", str(d / "seg.diagno"),
                         "--plasma-wout", str(wout), "--plasma-nphi", "32", "--plasma-ntheta", "32",
                         "--samples", "4", "--bprobes", str(d / "probes.diagno"),
                         "--output-dir", str(d / out), *extra], env=ENV, check=True,

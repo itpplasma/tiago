@@ -91,6 +91,26 @@ target_link_libraries(test_plasma_support PRIVATE tiago_solver)
 add_test(NAME tiago_plasma_support COMMAND $<TARGET_FILE:test_plasma_support> ${TIAGO_WOUT_SIMSOPT_SMALL})
 set_tests_properties(tiago_plasma_support PROPERTIES FIXTURES_REQUIRED wout_li383)
 
+# CLI: the README example and argument errors (message, exit status 1)
+add_test(NAME tiago_cli_sample
+    COMMAND $<TARGET_FILE:tiago_vacuum_cli>
+            --coils ${CMAKE_SOURCE_DIR}/tests/data/coil_sample.neo
+            --flux ${CMAKE_SOURCE_DIR}/tests/data/fluxloop_sample.diagno
+            --segrog ${CMAKE_SOURCE_DIR}/tests/data/segrog_sample.diagno
+            --seg-area 3.40e-4 --samples 8 --output-dir ${CMAKE_BINARY_DIR}/tests/cli_sample)
+foreach(bad IN ITEMS
+        "no_diagnostics|nothing to evaluate|--coils;x.coils"
+        "no_source|no field source|--flux;x.diagno"
+        "positional|unknown option|x.coils;x.diagno;y.diagno"
+        "bad_samples|--samples expects an integer|--flux;x;--coils;y;--samples;6x"
+        "missing_value|--flux requires an argument|--coils;y;--flux")
+    string(REPLACE "|" ";" parts "${bad}")
+    list(POP_FRONT parts name regex)
+    add_test(NAME tiago_cli_rejects_${name} COMMAND $<TARGET_FILE:tiago_vacuum_cli> ${parts})
+    set_tests_properties(tiago_cli_rejects_${name} PROPERTIES
+        PASS_REGULAR_EXPRESSION "${regex}" WILL_FAIL FALSE)
+endforeach()
+
 add_test(NAME tiago_diag_lint_flux
     COMMAND $<TARGET_FILE:tiago_cli> diag lint
             ${CMAKE_SOURCE_DIR}/tests/data/fluxloop_sample.diagno

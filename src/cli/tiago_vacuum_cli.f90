@@ -38,12 +38,11 @@ program tiago_vacuum_cli
 
     argc = command_argument_count()
     call check_help(argc)
-    if (argc < 3) call usage_and_stop(1)
+    if (argc < 1) call usage_and_stop(1)
 
-    call get_command_argument(1, coil_path)
-    call get_command_argument(2, flux_path)
-    call get_command_argument(3, segrog_path)
-
+    coil_path = ''
+    flux_path = ''
+    segrog_path = ''
     output_dir = '.'
     flux_out_path = 'tiago_flux.csv'
     segrog_out_path = 'tiago_segrog.csv'
@@ -53,8 +52,6 @@ program tiago_vacuum_cli
     nfp_value = 1_i32
     seg_area = 0.0_dp   ! 0: not given (areas from the file)
     coil_extcur_path = ''
-    have_flux = len_trim(flux_path) > 0
-    have_seg = len_trim(segrog_path) > 0
     plasma_wout = ''
     plasma_nphi = 64_i32
     plasma_ntheta = 64_i32
@@ -64,6 +61,15 @@ program tiago_vacuum_cli
         flux_turn_path, segrog_turn_path, samples_per_segment, seg_area, &
         nfp_value, coil_extcur_path, plasma_wout, plasma_nphi, plasma_ntheta, &
         use_plasma_sample)
+    have_flux = len_trim(flux_path) > 0
+    have_seg = len_trim(segrog_path) > 0
+    if (.not. (have_flux .or. have_seg .or. len_trim(bprobe_path) > 0)) then
+        call die('nothing to evaluate: pass --flux, --segrog and/or --bprobes')
+    end if
+    if (len_trim(coil_path) == 0 .and. len_trim(plasma_wout) == 0 .and. &
+        .not. use_plasma_sample) then
+        call die('no field source: pass --coils and/or --plasma-wout')
+    end if
     call validate_options(samples_per_segment, nfp_value, seg_area, plasma_nphi, plasma_ntheta)
     call prepare_plasma_support(plasma_wout, use_plasma_sample)
     call ensure_paths(output_dir, flux_out_path, segrog_out_path)
@@ -98,10 +104,22 @@ subroutine parse_options(argc, output_dir, flux_out_path, segrog_out_path, &
     integer :: i
     character(len=512) :: arg
 
-    i = 4
+    i = 1
     do while (i <= argc)
         call get_command_argument(i, arg)
         select case (trim(arg))
+        case ('--coils')
+            i = i + 1
+            call ensure_arg(argc, i, '--coils')
+            call get_command_argument(i, coil_path)
+        case ('--flux')
+            i = i + 1
+            call ensure_arg(argc, i, '--flux')
+            call get_command_argument(i, flux_path)
+        case ('--segrog')
+            i = i + 1
+            call ensure_arg(argc, i, '--segrog')
+            call get_command_argument(i, segrog_path)
         case ('--output-dir')
             i = i + 1
             call ensure_arg(argc, i, '--output-dir')
@@ -665,7 +683,8 @@ end subroutine validate_options
 subroutine usage_and_stop(status)
     use, intrinsic :: iso_fortran_env, only: error_unit
     integer, intent(in) :: status
-    write(error_unit, '(A)') 'Usage: tiago_vacuum_cli <coil> <flux> <segrog>   (pass "" to omit one)'
+    write(error_unit, '(A)') 'Usage: tiago_vacuum_cli [--coils file] [--flux file] [--segrog file]'
+    write(error_unit, '(A)') '       (at least one field source: --coils and/or --plasma-wout)'
     write(error_unit, '(A)') '       [--output-dir dir] [--flux-out file]'
     write(error_unit, '(A)') '       [--segrog-out file] [--samples N] [--gauss]'
     write(error_unit, '(A)') '       [--seg-area value] [--nfp value]'

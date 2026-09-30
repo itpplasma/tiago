@@ -34,12 +34,13 @@ Pass extra cache entries through `CMAKE_ARGS`, e.g.
 ## Vacuum CLI usage
 ```
 ./build/tiago_vacuum_cli \
-    tests/data/coil_sample.neo \
-    tests/data/fluxloop_sample.diagno \
-    tests/data/segrog_sample.diagno \
+    --coils tests/data/coil_sample.neo \
+    --flux tests/data/fluxloop_sample.diagno \
+    --segrog tests/data/segrog_sample.diagno \
     --output-dir build/tests/output --seg-area 3.40e-4 --samples 8
 ```
-This command emits `tiago_flux.csv` and `tiago_segrog.csv` in the output
+Each of `--flux`, `--segrog` and `--bprobes` is optional (at least one is
+needed). This command emits `tiago_flux.csv` and `tiago_segrog.csv` in the output
 directory (names via `--flux-out`, `--segrog-out`). `--samples` sets the points
 per segment (midpoint rule, as DIAGNO's `int_type='midpoint'`); `--gauss` uses
 Gauss-Legendre points instead, which converge far faster (8 Gauss points are
@@ -51,9 +52,9 @@ their coil sets are fetched by `benchmarks/xdiagno/fetch_data.sh`:
 ```
 benchmarks/xdiagno/fetch_data.sh
 ./build/tiago_vacuum_cli \
-    benchmarks/xdiagno/_work/data/coils.NCSX \
-    tests/cases/ncsx_nfp3/fluxloop.diagno \
-    tests/cases/ncsx_nfp3/segrog.diagno \
+    --coils benchmarks/xdiagno/_work/data/coils.NCSX \
+    --flux tests/cases/ncsx_nfp3/fluxloop.diagno \
+    --segrog tests/cases/ncsx_nfp3/segrog.diagno \
     --output-dir build/ncsx --seg-area 3.40e-4 --gauss --samples 8 --nfp 3 \
     --flux-turns tests/cases/ncsx_nfp3/flux_turns.csv \
     --segrog-turns tests/cases/ncsx_nfp3/segrog_turns.csv
@@ -77,7 +78,7 @@ potential and field directly on a `--plasma-nphi` (per field period) by
 `--plasma-ntheta` grid, default 64 x 64. A warning is printed when a sensor is
 closer to the boundary than two grid spacings. As in DIAGNO, loops that link
 the plasma poloidally must be flagged `idia = 1`, which adds the plasma
-toroidal flux `phiedge`. Pass `""` as coil file for plasma-only signals.
+toroidal flux `phiedge`. Leave out `--coils` for plasma-only signals.
 
 `--plasma-response-out file` writes the derivative of every signal's plasma
 part with respect to the VMEC boundary field coefficients (`bsupumnc`,
