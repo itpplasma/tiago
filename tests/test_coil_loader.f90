@@ -11,6 +11,7 @@ program test_coil_loader
     call test_stellopt_input(field)
     call test_stellopt_with_extcur(field)
     call test_more_points(field)
+    call test_extcur_forms(field)
 
     print *, 'tiago_coil_loader tests passed'
 end program test_coil_loader
@@ -83,6 +84,48 @@ subroutine test_more_points(field)
     end if
     call coils_deinit(field%coils)
 end subroutine test_more_points
+
+subroutine test_extcur_forms(field)
+    !! Group A starts at 1 A, group B at 2 A. current(1) belongs to A, current(6) to B.
+    use, intrinsic :: iso_fortran_env, only: dp => real64
+    use neo_biotsavart_field, only: biotsavart_field_t
+    use neo_biotsavart, only: coils_deinit
+    use tiago_coil_loader, only: load_coils_into_field
+    implicit none
+    type(biotsavart_field_t), intent(inout) :: field
+    real(dp), parameter :: tol = 1.0e-12_dp
+    integer :: unit
+
+    open(newunit=unit, file='extcur_two_groups.coils', status='replace', action='write')
+    write(unit, '(A)') 'periods 1', 'begin filament', 'mirror NIL', &
+        ' 0 0 0 1', ' 1 0 0 1', ' 1 1 0 1', ' 0 1 0 1', ' 0 0 0 0 1 A', &
+        ' 0 0 1 2', ' 1 0 1 2', ' 1 1 1 2', ' 0 1 1 2', ' 0 0 1 0 2 B', 'end'
+    close(unit)
+
+    call check('&INDATA'//new_line('a')//' EXTCUR(1) = 3.0'//new_line('a')//' EXTCUR(2) = 0.0'// &
+        new_line('a')//'/', 3.0_dp, 0.0_dp, 'zero switches a group off')
+    call check('&INDATA  EXTCUR = 3.0, 5.0 /', 3.0_dp, 5.0_dp, 'namelist array')
+    call check('&INDATA  EXTCUR(1) = 3.0  EXTCUR(2) = 5.0D0 /', 3.0_dp, 5.0_dp, 'several per line')
+    call check('&INDATA  EXTCUR = 2*4.0 /', 4.0_dp, 4.0_dp, 'repeat count')
+    call check('&INDATA  LEXTCUR = 9  EXTCUR(2) = 5.0 ! EXTCUR(1)=7'//new_line('a')//'/', &
+        1.0_dp, 5.0_dp, 'only EXTCUR(2) given; comments and LEXTCUR ignored')
+    call check('3.0'//new_line('a')//'5.0', 3.0_dp, 5.0_dp, 'plain list')
+
+contains
+
+    subroutine check(text, expect_a, expect_b, label)
+        character(len=*), intent(in) :: text, label
+        real(dp), intent(in) :: expect_a, expect_b
+
+        open(newunit=unit, file='extcur_case.input', status='replace', action='write')
+        write(unit, '(A)') text
+        close(unit)
+        call load_coils_into_field(field, 'extcur_two_groups.coils', extcur_path='extcur_case.input')
+        call assert_close(field%coils%current(1), expect_a, tol, 'extcur '//label//' (A)')
+        call assert_close(field%coils%current(6), expect_b, tol, 'extcur '//label//' (B)')
+        call coils_deinit(field%coils)
+    end subroutine check
+end subroutine test_extcur_forms
 
 subroutine assert_equal(actual, expected, label)
     use, intrinsic :: iso_fortran_env, only: error_unit

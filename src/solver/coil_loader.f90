@@ -99,6 +99,7 @@ contains
         logical :: has_group
         real(dp), allocatable :: ref_current(:)
         real(dp), allocatable :: target_extcur(:)
+        logical, allocatable :: given(:)
         integer :: i
 
         capacity = 0
@@ -157,26 +158,20 @@ contains
             end if
         end do
 
+        allocate(target_extcur(max_group), given(max_group))
+        target_extcur = 0.0_dp
+        given = .false.
         if (present(extcur_path)) then
             if (allocated(extcur_path)) then
-                call load_extcur_values(extcur_path, max_group, target_extcur)
-            else
-                allocate(target_extcur(max_group))
-                target_extcur = 0.0_dp
+                call load_extcur_values(extcur_path, target_extcur, given)
             end if
-        else
-            allocate(target_extcur(max_group))
-            target_extcur = 0.0_dp
         end if
 
-        do i = 1, max_group
-            if (target_extcur(i) == 0.0_dp) then
-                target_extcur(i) = ref_current(i)
-            end if
-        end do
-
+        ! EXTCUR(g) replaces the file current of group g, keeping relative
+        ! currents within the group; groups without EXTCUR keep the file currents.
         do i = 1, n_points
             if (group_ids(i) < 1) cycle
+            if (.not. given(group_ids(i))) cycle
             if (ref_current(group_ids(i)) /= 0.0_dp) then
                 tmp_current(i) = tmp_current(i) * target_extcur(group_ids(i)) / &
                     ref_current(group_ids(i))
@@ -187,7 +182,7 @@ contains
         call move_alloc(tmp_y, y)
         call move_alloc(tmp_z, z)
         call move_alloc(tmp_current, current)
-        deallocate(group_ids, ref_current, target_extcur)
+        deallocate(group_ids, ref_current, target_extcur, given)
     end subroutine read_stellopt_coils
 
     subroutine parse_coil_line(line, x, y, z, current, has_group, group_id)
@@ -328,61 +323,191 @@ contains
         if (allocated(tmp)) deallocate(tmp)
     end subroutine shrink_int_array
 
-    subroutine load_extcur_values(path, max_group, values)
+    subroutine load_extcur_values(path, values, given)
+        !! EXTCUR from a VMEC &INDATA file (EXTCUR(i) = v, EXTCUR = a, b, ...,
+        !! EXTCUR(i) = a b, repeat counts n*v, D exponents, ! comments) or,
+        !! without any EXTCUR keyword, a plain list of numbers.
         character(len=*), intent(in) :: path
-        integer, intent(in) :: max_group
-        real(dp), allocatable, intent(out) :: values(:)
+        real(dp), intent(inout) :: values(:)
+        logical, intent(inout) :: given(:)
 
-        character(len=512) :: line
+        character(len=:), allocatable :: text
+        integer :: pos, start_idx, found
+
+        text = read_lowercase_without_comments(path)
+        found = 0
+        pos = 1
+        do
+            pos = find_keyword(text, 'extcur', pos)
+            if (pos == 0) exit
+            found = found + 1
+            pos = pos + len('extcur')
+            start_idx = 1
+            call skip_blanks(text, pos)
+            if (pos <= len(text)) then
+                if (text(pos:pos) == '(') then
+                    call read_index(text, pos, start_idx, path)
+                    call skip_blanks(text, pos)
+                end if
+            end if
+            if (pos > len(text)) call extcur_error(path, 'missing "=" after EXTCUR')
+            if (text(pos:pos) /= '=') call extcur_error(path, 'missing "=" after EXTCUR')
+            pos = pos + 1
+            call read_value_list(text, pos, start_idx, values, given, path)
+        end do
+
+        if (found == 0) call read_plain_list(text, values, given, path)
+    end subroutine load_extcur_values
+
+    function read_lowercase_without_comments(path) result(text)
+        character(len=*), intent(in) :: path
+        character(len=:), allocatable :: text
+        character(len=1024) :: line
         character(len=:), allocatable :: lowered
-        integer :: unit, ios, idx, start_pos, end_pos
-        logical :: found_keyword
-        real(dp) :: value
+        integer :: unit, ios, bang
 
-        allocate(values(max_group))
-        values = 0.0_dp
-        if (len_trim(path) == 0) return
         open(newunit=unit, file=path, status='old', action='read', iostat=ios)
         if (ios /= 0) then
             write(error_unit, '(A)') 'failed to open EXTCUR file: '//trim(path)
             stop 1
         end if
-        found_keyword = .false.
+        text = ''
         do
             read(unit, '(A)', iostat=ios) line
             if (ios /= 0) exit
-            lowered = adjustl(line)
+            lowered = trim(line)
+            bang = index(lowered, '!')
+            if (bang > 0) lowered = lowered(:bang - 1)
             call to_lower_inplace(lowered)
-            if (index(lowered, 'extcur') > 0) then
-                found_keyword = .true.
-                start_pos = index(lowered, '(')
-                end_pos = index(lowered, ')')
-                if (start_pos > 0 .and. end_pos > start_pos) then
-                    read(lowered(start_pos+1:end_pos-1), *, iostat=ios) idx
-                else
-                    idx = -1
-                end if
-                start_pos = index(line, '=')
-                if (start_pos > 0) then
-                    read(line(start_pos+1:), *, iostat=ios) value
-                else
-                    ios = -1
-                end if
-                if (ios == 0 .and. idx >= 1 .and. idx <= max_group) then
-                    values(idx) = value
-                end if
-            end if
+            text = text // ' ' // lowered
         end do
-        rewind(unit)
-        if (.not. found_keyword) then
-            do idx = 1, max_group
-                read(unit, *, iostat=ios) value
-                if (ios /= 0) exit
-                values(idx) = value
-            end do
-        end if
         close(unit)
-    end subroutine load_extcur_values
+        text = text // ' '
+    end function read_lowercase_without_comments
+
+    integer function find_keyword(text, key, from) result(pos)
+        !! Next occurrence of key as a whole identifier (so LEXTCUR does not match).
+        character(len=*), intent(in) :: text, key
+        integer, intent(in) :: from
+        integer :: k, after
+
+        pos = from
+        do
+            k = index(text(pos:), key)
+            if (k == 0) then
+                pos = 0
+                return
+            end if
+            pos = pos + k - 1
+            after = pos + len(key)
+            if (.not. is_ident_char(text, pos - 1) .and. .not. is_ident_char(text, after)) return
+            pos = pos + 1
+        end do
+    end function find_keyword
+
+    logical function is_ident_char(text, i)
+        character(len=*), intent(in) :: text
+        integer, intent(in) :: i
+
+        is_ident_char = .false.
+        if (i < 1 .or. i > len(text)) return
+        is_ident_char = verify(text(i:i), 'abcdefghijklmnopqrstuvwxyz0123456789_') == 0
+    end function is_ident_char
+
+    subroutine skip_blanks(text, pos)
+        character(len=*), intent(in) :: text
+        integer, intent(inout) :: pos
+
+        do while (pos <= len(text))
+            if (text(pos:pos) /= ' ' .and. text(pos:pos) /= achar(9)) exit
+            pos = pos + 1
+        end do
+    end subroutine skip_blanks
+
+    subroutine read_index(text, pos, idx, path)
+        character(len=*), intent(in) :: text, path
+        integer, intent(inout) :: pos
+        integer, intent(out) :: idx
+        integer :: close_pos, ios
+
+        close_pos = index(text(pos:), ')')
+        if (close_pos == 0) call extcur_error(path, 'unterminated EXTCUR(')
+        read(text(pos + 1:pos + close_pos - 2), *, iostat=ios) idx
+        if (ios /= 0 .or. idx < 1) call extcur_error(path, 'invalid EXTCUR index')
+        pos = pos + close_pos
+    end subroutine read_index
+
+    subroutine read_value_list(text, pos, start_idx, values, given, path)
+        !! Values after "=" up to the next identifier, "/" or "&".
+        character(len=*), intent(in) :: text, path
+        integer, intent(inout) :: pos
+        integer, intent(in) :: start_idx
+        real(dp), intent(inout) :: values(:)
+        logical, intent(inout) :: given(:)
+        integer :: idx, tok_end, star, repeat, ios, k
+        real(dp) :: v
+        character(len=:), allocatable :: token
+
+        idx = start_idx
+        do
+            do while (pos <= len(text))
+                if (index(' ,'//achar(9), text(pos:pos)) == 0) exit
+                pos = pos + 1
+            end do
+            if (pos > len(text)) exit
+            if (index('/&', text(pos:pos)) > 0) exit
+            if (verify(text(pos:pos), 'abcdefghijklmnopqrstuvwxyz_') == 0) exit
+            tok_end = scan(text(pos:), ' ,/&'//achar(9)) + pos - 2
+            token = text(pos:tok_end)
+            pos = tok_end + 1
+            repeat = 1
+            star = index(token, '*')
+            if (star > 0) then
+                read(token(:star - 1), *, iostat=ios) repeat
+                if (ios /= 0) call extcur_error(path, 'invalid repeat count: '//token)
+                token = token(star + 1:)
+            end if
+            read(token, *, iostat=ios) v
+            if (ios /= 0) call extcur_error(path, 'invalid EXTCUR value: '//token)
+            do k = 1, repeat
+                call store(idx, v, values, given, path)
+                idx = idx + 1
+            end do
+        end do
+        if (idx == start_idx) call extcur_error(path, 'EXTCUR without values')
+    end subroutine read_value_list
+
+    subroutine read_plain_list(text, values, given, path)
+        character(len=*), intent(in) :: text, path
+        real(dp), intent(inout) :: values(:)
+        logical, intent(inout) :: given(:)
+        integer :: pos
+
+        pos = 1
+        call read_value_list(text, pos, 1, values, given, path)
+    end subroutine read_plain_list
+
+    subroutine store(idx, v, values, given, path)
+        integer, intent(in) :: idx
+        real(dp), intent(in) :: v
+        real(dp), intent(inout) :: values(:)
+        logical, intent(inout) :: given(:)
+        character(len=*), intent(in) :: path
+
+        if (idx > size(values)) then
+            write(error_unit, '(A,I0,A,I0,A)') 'WARNING: EXTCUR(', idx, ') ignored; coil file has ', &
+                size(values), ' groups ('//trim(path)//')'
+            return
+        end if
+        values(idx) = v
+        given(idx) = .true.
+    end subroutine store
+
+    subroutine extcur_error(path, message)
+        character(len=*), intent(in) :: path, message
+        write(error_unit, '(A)') trim(path)//': '//message
+        stop 1
+    end subroutine extcur_error
 
     subroutine to_lower_inplace(text)
         character(len=:), allocatable, intent(inout) :: text
