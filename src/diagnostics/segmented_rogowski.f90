@@ -1,5 +1,6 @@
 module tiago_segmented_rogowski
     use, intrinsic :: iso_fortran_env, only: dp => real64, i32 => int32
+    use, intrinsic :: ieee_arithmetic, only: ieee_is_finite
     use tiago_diagnostic_types, only: loop_point_t, segmented_rogowski_t
     use tiago_flux_loops, only: parse_diag_header, check_no_trailing_data
     implicit none
@@ -55,7 +56,6 @@ contains
                 return
             end if
             diagnostics(i)%label = label
-            diagnostics(i)%segments = npts - 1
             allocate(diagnostics(i)%path(npts), diagnostics(i)%segment_area(npts - 1))
             diagnostics(i)%segment_area = 0.0_dp
             if (present(default_area)) diagnostics(i)%segment_area = default_area / real(npts - 1, dp)
@@ -92,7 +92,7 @@ contains
         type(segmented_rogowski_t), allocatable, intent(in) :: diagnostics(:)
         character(len=:), allocatable, intent(out) :: report
 
-        integer :: i
+        integer :: i, j
 
         ok = .true.
         report = ''
@@ -110,21 +110,23 @@ contains
         end if
 
         do i = 1, size(diagnostics)
-            if (diagnostics(i)%segments <= 0) then
-                call append_line(report, build_issue(i, &
-                    'segment count must be positive'))
-                ok = .false.
-            end if
             if (.not. allocated(diagnostics(i)%path)) then
                 call append_line(report, build_issue(i, 'path coordinates missing'))
                 ok = .false.
             end if
-            if (.not. allocated(diagnostics(i)%segment_area)) then
-                call append_line(report, build_issue(i, 'segment areas missing'))
+            if (.not. all(ieee_is_finite([diagnostics(i)%path%x, diagnostics(i)%path%y, &
+                    diagnostics(i)%path%z]))) then
+                call append_line(report, build_issue(i, 'coordinates contain NaN or Inf'))
                 ok = .false.
-            else if (any(diagnostics(i)%segment_area <= 0.0_dp)) then
-                call append_line(report, build_issue(i, &
-                    'effective area must be provided and positive'))
+            end if
+            ! Files without an eff_area column get the area from --seg-area at run time.
+            if (any(diagnostics(i)%segment_area < 0.0_dp)) then
+                call append_line(report, build_issue(i, 'negative effective area'))
+                ok = .false.
+            end if
+            if (any([(diagnostics(j)%label == diagnostics(i)%label, j = 1, i - 1)])) then
+                call append_line(report, build_issue(i, 'duplicate label '// &
+                    diagnostics(i)%label))
                 ok = .false.
             end if
         end do

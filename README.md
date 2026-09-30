@@ -7,8 +7,8 @@ plasma currents of a VMEC equilibrium. Results are benchmarked against
 STELLOPT's `xdiagno`.
 
 ## Highlights
-- **Drop-in DIAGNO ingestion** – Load STELLOPT-compatible flux loops, segmented
-  Rogowski files, and registry metadata without altering the on-disk format.
+- **Drop-in DIAGNO ingestion** – Load STELLOPT-compatible flux loops and
+  segmented Rogowski files (including per-point effective areas) unchanged.
 - **Vacuum solver + CLI** – Batch evaluation with `tiago_vacuum_cli` using
   libneo's Biot-Savart solver; comprehensive CMake test suite.
 - **Cross-code validation** – `benchmarks/xdiagno/` builds STELLOPT's `xdiagno`
@@ -40,9 +40,7 @@ Pass extra cache entries through `CMAKE_ARGS`, e.g.
     --segrog-turns tests/cases/ncsx_nfp3/segrog_turns.csv
 ```
 This command emits `tiago_flux.csv` and `tiago_segrog.csv` in the output
-directory. Override sample metadata via
-`--flux-out`, `--segrog-out`, `--kind`, or the registry file referenced by
-`docs/diagnostics/registry.json`. `--nfp` matches the field-period geometry,
+directory (names via `--flux-out`, `--segrog-out`). `--nfp` matches the field-period geometry,
 while `--flux-turns` / `--segrog-turns` accept text files of `label scale`
 pairs so Tiago mirrors DIAGNO's namelist-based `flux_turns` and
 `segrog_turns` arrays.

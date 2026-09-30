@@ -25,8 +25,7 @@ target_link_libraries(tiago_core INTERFACE LIBNEO::neo)
 add_library(tiago_diagnostics STATIC
     src/diagnostics/diagnostic_types.f90
     src/diagnostics/flux_loops.f90
-    src/diagnostics/segmented_rogowski.f90
-    src/diagnostics/metadata_registry.f90)
+    src/diagnostics/segmented_rogowski.f90)
 set_target_properties(tiago_diagnostics PROPERTIES
     Fortran_STANDARD 2018
     Fortran_STANDARD_REQUIRED YES)
@@ -100,8 +99,7 @@ add_test(NAME tiago_diag_lint_flux
 add_test(NAME tiago_diag_lint_segrog
     COMMAND $<TARGET_FILE:tiago_cli> diag lint
             ${CMAKE_SOURCE_DIR}/tests/data/segrog_sample.diagno
-            --metadata ${CMAKE_SOURCE_DIR}/docs/diagnostics/registry.json
-            --family w7x_segrog_core)
+            --kind segrog)
 
 add_test(NAME tiago_diag_lint_invalid
     COMMAND $<TARGET_FILE:tiago_cli> diag lint
