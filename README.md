@@ -94,6 +94,11 @@ the plasma part is linear in them, so the Jacobian is exact and
 `sum(value * coefficient)` reproduces it; together with `--response-out` for
 the coil currents this is the linear part of an equilibrium reconstruction.
 
+Derivatives with respect to equilibrium parameters (`PHIEDGE`, `CURTOR`,
+`PRES_SCALE`, ...) need new equilibria. The `equilibrium` suite of the
+benchmark computes them by central finite differences over VMEC runs and
+checks them against this chain rule.
+
 ## Benchmark against STELLOPT xdiagno
 A manual, reproducible accuracy and performance comparison with the reference
 code lives in [`benchmarks/xdiagno/`](benchmarks/xdiagno/README.md). It is not

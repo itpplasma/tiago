@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Download the public coil sets used by the benchmark (pinned commits).
+# Download the public coil sets, equilibria and VMEC inputs used by the benchmark
+# (pinned commits).
 set -euo pipefail
 here=$(cd "$(dirname "$0")" && pwd)
 data="$here/_work/data"
@@ -18,3 +19,4 @@ fetch "$STELLOPT_RAW/BENCHMARKS/FIELDLINES_TEST/coils.NCSX_nfp1"  coils.NCSX_nfp
 fetch "$SIMSOPT_RAW/tests/test_files/coils.M16N08"                coils.M16N08
 fetch "$STELLOPT_RAW/BENCHMARKS/DIAGNO_TEST/wout_ncsx.nc"        wout_ncsx.nc
 fetch "$STELLOPT_RAW/BENCHMARKS/DIAGNO_TEST/input.ncsx"          input.ncsx
+fetch "$SIMSOPT_RAW/tests/test_files/input.li383_low_res"      input.li383_low_res

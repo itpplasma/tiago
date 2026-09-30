@@ -8,6 +8,8 @@ Suites
   plasma     plasma response of the NCSX VMEC equilibrium (xdiagno -vmec), plus an
              Ampere check against the VMEC toroidal current
   features   magnetic probes and per-coil-group response matrices (xdiagno -mutual)
+  equilibrium  derivatives of plasma signals with respect to VMEC input parameters
+             (finite differences over xvmec2000 runs; needs build_xdiagno.sh --vmec)
 
 Both codes always receive identical coil, EXTCUR and diagnostic files. Results
 are printed as Markdown and written to _work/results/.
@@ -32,6 +34,7 @@ ROOT = HERE.parents[1]
 WORK = HERE / "_work"
 DATA = WORK / "data"
 SEG_AREA = 3.4e-4
+EQ_STEP = 1.0e-4   # relative finite-difference step of the equilibrium suite
 AGREE = 1.0e-5          # relative tolerance for "codes agree"
 ENV = dict(os.environ, OMPI_ALLOW_RUN_AS_ROOT="1", OMPI_ALLOW_RUN_AS_ROOT_CONFIRM="1")
 
@@ -102,6 +105,7 @@ class Runner:
         self.xdiagno = str(Path(args.xdiagno).resolve())
         self.xdiagno_patched = args.xdiagno_patched if Path(args.xdiagno_patched).exists() else None
         self.ncpu = args.ncpu
+        self.xvmec = str(Path(args.xvmec).resolve())
 
     def xdiagno_run(self, d: Path, coil: Path, flux, seg, ns: int, nproc: int = 1, binary=None,
                     turns=None):
@@ -564,6 +568,147 @@ def plasma_jacobian_check(r: Runner, d: Path, x_probe) -> dict:
     return dict(n=len(jac), fd=compare(fd, jac))
 
 
+def set_indata(text: str, name: str, value) -> str:
+    """Set a one-line &INDATA entry, adding it if absent."""
+    line = f"  {name} = {value}"
+    pattern = rf"^[ \t]*{name}[ \t]*=.*$"
+    if re.search(pattern, text, flags=re.M | re.I):
+        return re.sub(pattern, line, text, count=1, flags=re.M | re.I)
+    return re.sub(r"&INDATA", "&INDATA\n" + line, text, count=1, flags=re.I)
+
+
+def boundary_coefficients(wout: Path) -> dict:
+    """(coefficient, m, n) -> boundary value 1.5 b(ns) - 0.5 b(ns-1), as Tiago's Jacobian columns."""
+    import netCDF4
+    w = netCDF4.Dataset(wout)
+    xm, xn = w["xm_nyq"][:], w["xn_nyq"][:]
+    out = {}
+    for name in ("bsupumnc", "bsupvmnc", "bsupumns", "bsupvmns"):
+        if name in w.variables:
+            b = w[name][:]
+            for k in range(len(xm)):
+                out[(name, int(round(xm[k])), int(round(xn[k])))] = 1.5 * b[-1, k] - 0.5 * b[-2, k]
+    ctor, signgs = float(w["ctor"][:]), int(w["signgs"][:])
+    w.close()
+    return out, ctor, signgs
+
+
+def suite_equilibrium(r: Runner):
+    """Derivatives of plasma signals with respect to VMEC input parameters (#24).
+
+    Central finite differences over fixed-boundary VMEC runs of the LI383
+    low-resolution case (0.8 s per run). Checks: step independence (h vs h/2),
+    the chain rule through the boundary-field Jacobian (exact at fixed boundary
+    shape, plus d phiedge for idia = 1 loops) and Ampere (d signal / d p =
+    mu0 * eff_area * d I_tor / d p).
+    """
+    if not Path(r.xvmec).is_file():
+        return dict(skipped=f"{r.xvmec} not found; build it with ./build_xdiagno.sh --vmec")
+    d = prepare("equilibrium_li383")
+    base_text = (DATA / "input.li383_low_res").read_text()
+    base_text = re.sub(r"^\s*LWOUTTXT.*$\n?", "", base_text, flags=re.M | re.I)
+    base_text = set_indata(base_text, "FTOL_ARRAY", "1.0E-14")
+    base_text = set_indata(base_text, "NITER", "20000")
+
+    R0, rs = 1.42, 0.85
+    flux, seg = sensor_set(R0, rs, 6, 4)
+    t = np.linspace(0.0, 2.0 * np.pi, 101)
+    seg.append(("AMPERE", [[R0 + 0.9 * np.cos(x), 0.0, 0.9 * np.sin(x)] for x in t]))
+    flags = [(0, 1) if label.startswith("DIA") else (0, 0) for label, _ in flux]
+    write_diag(d / "flux.diagno", flux, False, flags)
+    write_diag(d / "seg.diagno", seg, True)
+    write_probes(d / "probes.diagno", probe_set(R0, rs, 20))
+    dia = {f"flux:{label}" for label, _ in flux if label.startswith("DIA")}
+
+    def vmec(tag: str, text: str) -> Path:
+        (d / f"input.{tag}").write_text(text)
+        subprocess.run(["mpirun", "-np", "1", r.xvmec, tag], cwd=d, env=ENV, check=True,
+                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        return d / f"wout_{tag}.nc"
+
+    def signals(wout: Path, tag: str, extra=()) -> dict:
+        out = d / f"tiago_{tag}"
+        p = subprocess.run([r.tiago, "--flux", str(d / "flux.diagno"), "--segrog", str(d / "seg.diagno"),
+                            "--bprobes", str(d / "probes.diagno"), "--plasma-wout", str(wout),
+                            "--samples", "4", "--gauss", "--output-dir", str(out), *extra],
+                           env=ENV, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE,
+                           text=True)
+        if "WARNING" in p.stderr:
+            raise RuntimeError(f"sensor too close to the plasma: {p.stderr.strip()}")
+        return {**merged(read_tiago_csv(out / "tiago_flux.csv"), read_tiago_csv(out / "tiago_segrog.csv")),
+                **{"probe:" + k: v for k, v in read_tiago_csv(out / "tiago_bprobes.csv").items()}}
+
+    t0 = time.perf_counter()
+    base_wout = vmec("base", base_text)
+    t_vmec = time.perf_counter() - t0
+    base = signals(base_wout, "base", ("--plasma-response-out", "jacobian.csv"))
+    prefix = {"flux": "flux:", "segrog": "seg:", "bprobe": "probe:"}
+    jac = {}
+    with (d / "tiago_base" / "jacobian.csv").open() as f:
+        for row in csv.DictReader(f):
+            jac.setdefault(prefix[row["kind"]] + row["label"], {})[
+                (row["coefficient"], int(row["m"]), int(row["n"]))] = float(row["value"])
+    _, ctor0, signgs = boundary_coefficients(base_wout)
+    area = SEG_AREA / 100   # AMPERE: 101 points, eff_area per segment
+    orient = np.sign(base["seg:AMPERE"] / (4e-7 * np.pi * ctor0 * area))
+    to_current = orient * 4e-7 * np.pi * area   # AMPERE signal per ampere enclosed
+
+    values = {name: float(re.search(rf"^\s*{name}\s*=\s*([-+.\dEeDd]+)", base_text, re.M | re.I)
+                          .group(1).replace("D", "E").replace("d", "e"))
+              if re.search(rf"^\s*{name}\s*=", base_text, re.M | re.I) else 1.0
+              for name in ("PHIEDGE", "CURTOR", "PRES_SCALE")}
+    rows, derivative = [], {}
+    for name, v0 in values.items():
+        h = EQ_STEP * abs(v0)
+        fd, coef_fd, ctor_fd = {}, {}, {}
+        for step in (h, h / 2):
+            runs = {}
+            for sgn in (1, -1):
+                tag = f"{name.lower()}_{'p' if sgn > 0 else 'm'}{step:.3e}"
+                wout = vmec(tag, set_indata(base_text, name, f"{v0 + sgn * step:.16E}"))
+                runs[sgn] = (signals(wout, tag), *boundary_coefficients(wout)[:2])
+            fd[step] = {k: (runs[1][0][k] - runs[-1][0][k]) / (2 * step) for k in base}
+            coef_fd[step] = {c: (runs[1][1][c] - runs[-1][1][c]) / (2 * step) for c in runs[1][1]}
+            ctor_fd[step] = (runs[1][2] - runs[-1][2]) / (2 * step)
+        dS = fd[h / 2]
+        chain = {k: sum(jac[k][c] * coef_fd[h / 2][c] for c in jac[k])
+                 + (signgs if (name == "PHIEDGE" and k in dia) else 0.0) for k in dS}
+        rows.append(dict(parameter=name, value=v0, step=h, steps=compare(fd[h], dS),
+                         chain=compare(chain, dS), dI_tiago=dS["seg:AMPERE"] / to_current,
+                         dI_vmec=ctor_fd[h / 2]))
+        derivative[name] = dS
+
+    # Resolution study: the plasma current seen by the Ampere loop vs VMEC's ctor.
+    curtor = values["CURTOR"]
+    convergence = []
+    for ns in (16, 32, 64, 128):
+        wout = vmec(f"ns{ns}", set_indata(base_text, "NS_ARRAY", str(ns)))
+        s = signals(wout, f"ns{ns}")
+        convergence.append(dict(ns=ns, vmec=boundary_coefficients(wout)[1] - curtor,
+                                tiago=s["seg:AMPERE"] / to_current - curtor))
+    angular = []
+    for mpol, ntor in ((4, 3), (6, 4), (8, 6)):
+        text = set_indata(set_indata(set_indata(base_text, "NS_ARRAY", "64"), "MPOL", mpol), "NTOR", ntor)
+        wout = vmec(f"mpol{mpol}", text)
+        s = signals(wout, f"mpol{mpol}")
+        angular.append(dict(mpol=mpol, ntor=ntor,
+                            tiago=s["seg:AMPERE"] / to_current - boundary_coefficients(wout)[1]))
+
+    res_dir = WORK / "results"
+    res_dir.mkdir(parents=True, exist_ok=True)
+    with (res_dir / "equilibrium_jacobian.csv").open("w") as f:
+        f.write("signal,parameter,value\n")
+        for name, dS in derivative.items():
+            for k, v in dS.items():
+                f.write(f"{k},{name},{v:.16e}\n")
+    show = ["flux:DIA_00", "flux:TOR_02", "flux:SAD_00_00", "seg:SEG_00_00", "seg:AMPERE", "probe:PROBE_001"]
+    show = [k for k in show if k in base] or list(base)[:6]
+    sensitivity = {k: {n: values[n] * derivative[n][k] / base[k] for n in values} for k in show}
+    return dict(case="li383_low_res", nsignals=len(base), t_vmec=t_vmec, nruns=1 + 4 * len(values),
+                rows=rows, sensitivity=sensitivity, ctor=ctor0, curtor=curtor, convergence=convergence,
+                angular=angular)
+
+
 # ----------------------------------------------------------------- report
 def fmt(x):
     return "n/a" if x is None or (isinstance(x, float) and np.isnan(x)) else f"{x:.1e}"
@@ -636,6 +781,44 @@ def report(results, ncpu) -> str:
                 f"Boundary-field Jacobian (`--plasma-response-out`) vs a finite difference in "
                 f"`bsupvmnc(0,0)` over all {p['jacobian']['n']} signals: median "
                 f"{fmt(p['jacobian']['fd']['med'])}, max {fmt(p['jacobian']['fd']['max'])}.", ""]
+    if "equilibrium" in results:
+        e = results["equilibrium"]
+        if "skipped" in e:
+            out += ["### Equilibrium-parameter derivatives", "", f"Skipped: {e['skipped']}", ""]
+        else:
+            out += ["### Equilibrium-parameter derivatives (LI383 low resolution, plasma only)", "",
+                    f"{e['nsignals']} signals; {e['nruns']} fixed-boundary VMEC runs of "
+                    f"{e['t_vmec']:.1f} s each. Central differences with step h and h/2; *chain rule* "
+                    "is the boundary-field Jacobian (`--plasma-response-out`) times the finite "
+                    "difference of the boundary coefficients (plus d phiedge on idia = 1 loops); "
+                    "*dI/dp* is the change of the current enclosed by the AMPERE loop (signal / "
+                    "(mu0 eff_area)) next to that of VMEC's `ctor`.", "",
+                    "| parameter | value | h | h vs h/2 median / max | chain rule median / max "
+                    "| dI/dp Tiago / VMEC ctor |", "|---|---:|---:|---|---|---|"]
+            for row in e["rows"]:
+                out.append(f"| {row['parameter']} | {row['value']:.6g} | {row['step']:.2e} "
+                           f"| {fmt(row['steps']['med'])} / {fmt(row['steps']['max'])} "
+                           f"| {fmt(row['chain']['med'])} / {fmt(row['chain']['max'])} "
+                           f"| {row['dI_tiago']:.5g} / {row['dI_vmec']:.5g} |")
+            out += ["", f"Radial resolution: enclosed current minus CURTOR = {e['curtor']:.6g} A "
+                    "(the converged value). VMEC's `ctor` extrapolates the covariant B_u to the "
+                    "boundary; Tiago's sheet uses the extrapolated contravariant B^u, B^v.", "",
+                    "| ns | VMEC ctor - CURTOR [A] | Tiago Ampere loop - CURTOR [A] |", "|---:|---:|---:|"]
+            for c in e["convergence"]:
+                out.append(f"| {c['ns']} | {c['vmec']:+.1f} | {c['tiago']:+.1f} |")
+            out += ["", "The remaining difference between the two is angular truncation: the "
+                    "extrapolated contravariant field does not conserve the sheet current exactly "
+                    "(the current through a poloidal cross-section varies with phi), which "
+                    "vanishes with MPOL/NTOR:", "",
+                    "| MPOL / NTOR (ns 64) | Tiago Ampere loop - VMEC ctor [A] |", "|---|---:|"]
+            for c in e["angular"]:
+                out.append(f"| {c['mpol']} / {c['ntor']} | {c['tiago']:+.1f} |")
+            params = [row["parameter"] for row in e["rows"]]
+            out += ["", "Relative sensitivity (p / S) dS/dp of some signals:", "",
+                    "| signal | " + " | ".join(params) + " |", "|---|" + "---:|" * len(params)]
+            for k, s in e["sensitivity"].items():
+                out.append(f"| {k} | " + " | ".join(f"{s[p]:+.3f}" for p in params) + " |")
+            out.append("")
     if "semantics" in results:
         out += ["### DIAGNO-format semantics", "",
                 "| check | issue | what | xdiagno | Tiago | verdict |", "|---|---|---|---|---|---|"]
@@ -653,15 +836,17 @@ def report(results, ncpu) -> str:
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("suites", nargs="*",
-                    help="repo, geometry, semantics, features, plasma (default: all)")
+                    help="repo, geometry, semantics, features, plasma, equilibrium (default: all)")
     ap.add_argument("--tiago", default=str(ROOT / "build/tiago_vacuum_cli"))
     ap.add_argument("--xdiagno", default=str(WORK / "bin/xdiagno"))
     ap.add_argument("--xdiagno-patched", default=str(WORK / "bin/xdiagno_patched"))
+    ap.add_argument("--xvmec", default=str(WORK / "bin/xvmec2000"))
     ap.add_argument("--ncpu", type=int, default=os.cpu_count() or 1)
     ap.add_argument("--quick", action="store_true", help="one sample count (6) instead of 2/6/16")
     args = ap.parse_args()
-    args.suites = args.suites or ["repo", "geometry", "semantics", "features", "plasma"]
-    unknown = set(args.suites) - {"repo", "geometry", "semantics", "features", "plasma"}
+    suites = ["repo", "geometry", "semantics", "features", "plasma", "equilibrium"]
+    args.suites = args.suites or suites
+    unknown = set(args.suites) - set(suites)
     if unknown:
         ap.error(f"unknown suite(s): {', '.join(sorted(unknown))}")
 
@@ -677,6 +862,8 @@ def main() -> None:
         results["plasma"] = suite_plasma(r)
     if "features" in args.suites:
         results["features"] = suite_features(r)
+    if "equilibrium" in args.suites:
+        results["equilibrium"] = suite_equilibrium(r)
 
     md = report(results, args.ncpu)
     res_dir = WORK / "results"

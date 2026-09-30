@@ -16,10 +16,12 @@ sudo apt-get install gfortran libopenmpi-dev openmpi-bin libscalapack-openmpi-de
      libhdf5-openmpi-dev libnetcdf-dev libnetcdff-dev libopenblas-dev
 # 2. Build xdiagno at a pinned STELLOPT commit      -> _work/bin/xdiagno
 #    --patched also builds it with patches/*.patch  -> _work/bin/xdiagno_patched
-./build_xdiagno.sh --patched
-# 3. Download the public coil sets (pinned commits) -> _work/data/
+#    --vmec also builds VMEC2000                    -> _work/bin/xvmec2000
+./build_xdiagno.sh --patched --vmec
+# 3. Download coil sets, equilibria, VMEC input (pinned commits) -> _work/data/
 ./fetch_data.sh
-# 4. Run everything, or pick suites: repo geometry semantics features plasma
+# 4. Run everything, or pick suites:
+#    repo geometry semantics features plasma equilibrium
 python3 bench.py                 # add --quick for one sample count only
 ```
 
@@ -44,6 +46,7 @@ xdiagno runs with `-vac -coil <file>`, `int_type='midpoint'`, and
 | `semantics` | one small input per DIAGNO-format feature. Checks marked "DIFFER" are open Tiago issues |
 | `features` | 40 magnetic probes and the per-coil-group response matrix (350 entries, `xdiagno -mutual`) on the NCSX coils |
 | `plasma` | plasma-only signals of the NCSX equilibrium from STELLOPT's `DIAGNO_TEST` (`xdiagno -vmec`, adaptive virtual casing): 35 flux loops (diamagnetic loops with `idia=1`), 25 Rogowskis, and a closed loop checked against Ampère's law with the VMEC toroidal current. xdiagno needs about 6 minutes on 4 ranks here |
+| `equilibrium` | derivatives of 80 plasma signals with respect to VMEC input parameters (`PHIEDGE`, `CURTOR`, `PRES_SCALE`) by central finite differences over fixed-boundary `xvmec2000` runs of the LI383 low-resolution case (simsopt test file, 0.7 s per run, about 1 minute in total). Not a comparison with xdiagno; skipped when `xvmec2000` is missing |
 
 Metrics:
 - **Tiago vs xdiagno:** relative difference per signal, normalised by
@@ -184,3 +187,13 @@ Boundary-field Jacobian (`--plasma-response-out`) vs a finite difference in `bsu
   after a 0.5 Wb `phiedge` cancels. Tiago's Ampère loop agrees with μ0·I_tor
   to 4e-6 relative (limited by VMEC's half-mesh B), and it runs in 0.2 s
   instead of 6 minutes.
+- **Equilibrium derivatives.** Finite differences over VMEC runs give the
+  sensitivity of every plasma signal to the VMEC inputs. With a relative step
+  of 1e-4 they are step-independent to 1e-7 (1e-3 already shows 2e-4
+  truncation error for `PHIEDGE`). At fixed boundary shape the chain rule
+  through `--plasma-response-out` reproduces them to 1e-10, so for
+  fixed-boundary reconstructions only the boundary field has to come from VMEC.
+  The Ampère loop shows the limit of the boundary field itself: Tiago (like
+  DIAGNO) extrapolates the contravariant B^u, B^v, whose sheet current is not
+  exactly conserved at finite angular resolution. For LI383 at ns = 64 that is
+  a 1.3e-3 offset from VMEC's `ctor` at MPOL = 4, falling to 1.4e-4 at MPOL = 8.
