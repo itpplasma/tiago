@@ -93,6 +93,10 @@ part with respect to the VMEC boundary field coefficients (`bsupumnc`,
 the plasma part is linear in them, so the Jacobian is exact and
 `sum(value * coefficient)` reproduces it; together with `--response-out` for
 the coil currents this is the linear part of an equilibrium reconstruction.
+`--plasma-shape-response-out file` writes the derivatives with respect to the
+boundary geometry coefficients (`rmnc`, `zmns`, and `rmns`, `zmnc` for
+`lasym`) at fixed field coefficients, computed in reverse mode through the
+sheet current and the Biot–Savart kernel.
 
 Derivatives with respect to equilibrium parameters (`PHIEDGE`, `CURTOR`,
 `PRES_SCALE`, ...) need new equilibria. The `equilibrium` suite of the

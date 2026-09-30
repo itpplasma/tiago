@@ -201,45 +201,70 @@ contains
     end subroutine vacuum_solver_response
 
     subroutine vacuum_solver_plasma_response(self, loops, segs, probes, flux_resp, seg_resp, &
-            probe_resp, rule)
+            probe_resp, rule, flux_shape, seg_shape, probe_shape)
         !! Derivatives of the plasma part of every signal with respect to the VMEC
         !! boundary field coefficients (columns: plasma%mode_column_name). Exact,
         !! since the plasma part is linear in them at fixed boundary shape.
+        !! Optionally also with respect to the boundary geometry coefficients
+        !! (*_shape, columns: plasma%shape_column_name) at fixed field coefficients.
         class(vacuum_solver_t), intent(in) :: self
         type(flux_loop_t), allocatable, intent(in) :: loops(:)
         type(segmented_rogowski_t), allocatable, intent(in) :: segs(:)
         type(bprobe_t), allocatable, intent(in) :: probes(:)
         real(dp), allocatable, intent(out) :: flux_resp(:, :), seg_resp(:, :), probe_resp(:, :)
         type(quadrature_rule_t), intent(in), optional :: rule
-        real(dp), allocatable :: points(:, :), dls(:, :), w(:, :, :)
+        real(dp), allocatable, intent(out), optional :: flux_shape(:, :), seg_shape(:, :), &
+            probe_shape(:, :)
+        real(dp), allocatable :: points(:, :), dls(:, :), w(:, :, :), gx(:, :, :)
         integer, allocatable :: owner(:)
-        integer :: j, nc
+        integer :: j, nc, ng
+        logical :: shape
 
         if (.not. self%plasma%has_data()) error stop 'plasma response needs --plasma-wout'
+        shape = present(flux_shape)
         nc = self%plasma%n_mode_columns()
+        ng = self%plasma%n_shape_columns()
         allocate(flux_resp(0, nc), seg_resp(0, nc), probe_resp(0, nc))
+        if (shape) allocate(flux_shape(0, ng), seg_shape(0, ng), probe_shape(0, ng))
         if (allocated(loops)) then
             call sample_loops(loops, self%nfp, rule_or_default(rule), points, dls, owner)
-            call self%plasma%potential_weights(points, dls, owner, size(loops), w)
+            if (shape) then
+                call self%plasma%potential_weights(points, dls, owner, size(loops), w, gx)
+                call self%plasma%shape_response(w, gx, flux_shape)
+            else
+                call self%plasma%potential_weights(points, dls, owner, size(loops), w)
+            end if
             call self%plasma%mode_response(w, flux_resp)
             do j = 1, size(loops)
-                if (loops(j)%one_period) flux_resp(j, :) = flux_resp(j, :) * real(self%nfp, dp)
+                if (.not. loops(j)%one_period) cycle
+                flux_resp(j, :) = flux_resp(j, :) * real(self%nfp, dp)
+                if (shape) flux_shape(j, :) = flux_shape(j, :) * real(self%nfp, dp)
             end do
         end if
         if (allocated(segs)) then
             call sample_segrogs(segs, rule_or_default(rule), points, dls, owner)
-            call self%plasma%field_weights(points, dls, owner, size(segs), w)
+            if (shape) then
+                call self%plasma%field_weights(points, dls, owner, size(segs), w, gx)
+                call self%plasma%shape_response(w, gx, seg_shape)
+            else
+                call self%plasma%field_weights(points, dls, owner, size(segs), w)
+            end if
             call self%plasma%mode_response(w, seg_resp)
         end if
         if (allocated(probes)) then
-            deallocate(points, dls, owner)
+            if (allocated(points)) deallocate(points, dls, owner)
             allocate(points(3, size(probes)), dls(3, size(probes)), owner(size(probes)))
             do j = 1, size(probes)
                 points(:, j) = probes(j)%position
                 dls(:, j) = probes(j)%eff_area * probes(j)%normal
                 owner(j) = j
             end do
-            call self%plasma%field_weights(points, dls, owner, size(probes), w)
+            if (shape) then
+                call self%plasma%field_weights(points, dls, owner, size(probes), w, gx)
+                call self%plasma%shape_response(w, gx, probe_shape)
+            else
+                call self%plasma%field_weights(points, dls, owner, size(probes), w)
+            end if
             call self%plasma%mode_response(w, probe_resp)
         end if
     end subroutine vacuum_solver_plasma_response

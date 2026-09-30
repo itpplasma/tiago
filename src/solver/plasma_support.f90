@@ -21,13 +21,15 @@ module tiago_plasma_support
         nf90_inquire_dimension, nf90_inq_dimid, nf90_noerr, nf90_nowrite
     implicit none
     private
+    public :: read_vmec_boundary
 
     real(dp), parameter :: pi = acos(-1.0_dp)
     real(dp), parameter :: inv_four_pi = 0.25_dp / pi
     !> Warn when a sensor point is closer to the boundary than this many grid spacings.
     real(dp), parameter :: min_distance_in_spacings = 2.0_dp
 
-    type :: vmec_boundary_t
+    type, public :: vmec_boundary_t
+        !! Last-surface Fourier data of a VMEC equilibrium (wout conventions).
         integer :: nfp = 1, signgs = 1
         logical :: lasym = .false.
         real(dp) :: phiedge = 0.0_dp
@@ -48,8 +50,17 @@ module tiago_plasma_support
         real(dp), allocatable :: xm_nyq(:), xn_nyq(:)
         real(dp), allocatable :: coefficients(:)     !! boundary values in mode-column order
         logical :: lasym = .false.
+        ! Shape Jacobian: geometry modes and the per-point data the sheet depends on.
+        real(dp), allocatable :: xm(:), xn(:)            !! geometry modes (wout xm, xn)
+        real(dp), allocatable :: xt(:, :), xp(:, :)      !! (3, n) d x / d theta, d x / d phi
+        real(dp), allocatable :: bu(:), bv(:)            !! (n) B^u, B^v on the boundary
+        real(dp) :: sheet_scale = 0.0_dp                 !! +-dtheta dphi / (4 pi), outward
     contains
         procedure :: init_from_vmec => plasma_init_from_vmec
+        procedure :: init_from_boundary => plasma_init_from_boundary
+        procedure :: shape_response => plasma_shape_response
+        procedure :: n_shape_columns => plasma_n_shape_columns
+        procedure :: shape_column_name => plasma_shape_column_name
         procedure :: finalize => plasma_finalize
         procedure :: sample_bfield => plasma_sample_bfield
         procedure :: sample_vector_potential => plasma_sample_vector_potential
@@ -65,21 +76,30 @@ contains
 
     subroutine plasma_init_from_vmec(self, wout_file, nphi, ntheta)
         !! nphi: toroidal grid points per field period; ntheta: poloidal points.
-        !! Geometry and field come straight from the wout Fourier coefficients of
-        !! the last flux surface; B = B^u x_u + B^v x_v, so B.n = 0 exactly.
         class(plasma_support_t), intent(inout) :: self
         character(len=*), intent(in) :: wout_file
         integer(i32), intent(in) :: nphi
         integer(i32), intent(in) :: ntheta
-
         type(vmec_boundary_t) :: vb
+
+        call read_vmec_boundary(wout_file, vb)
+        call self%init_from_boundary(vb, nphi, ntheta)
+    end subroutine plasma_init_from_vmec
+
+    subroutine plasma_init_from_boundary(self, vb, nphi, ntheta)
+        !! Geometry and field come straight from the Fourier coefficients of the
+        !! last flux surface; B = B^u x_u + B^v x_v, so B.n = 0 exactly.
+        class(plasma_support_t), intent(inout) :: self
+        type(vmec_boundary_t), intent(in) :: vb
+        integer(i32), intent(in) :: nphi
+        integer(i32), intent(in) :: ntheta
+
         integer :: nphi_total, iphi, itheta, k
         real(dp) :: theta, phi, dtheta, dphi, volume
         real(dp) :: x(3), x_t(3), x_p(3), ds(3), b(3)
 
         call self%finalize()
         if (nphi < 4 .or. ntheta < 4) error stop 'plasma grid needs at least 4x4 points'
-        call read_vmec_boundary(wout_file, vb)
         self%diamagnetic_flux = vb%phiedge * real(vb%signgs, dp)
 
         nphi_total = vb%nfp * nphi
@@ -88,6 +108,10 @@ contains
         allocate(self%xs(3, nphi_total * ntheta), self%sheet(3, nphi_total * ntheta))
         allocate(self%jt(3, nphi_total * ntheta), self%jp(3, nphi_total * ntheta))
         allocate(self%theta(nphi_total * ntheta), self%phi(nphi_total * ntheta))
+        allocate(self%xt(3, nphi_total * ntheta), self%xp(3, nphi_total * ntheta))
+        allocate(self%bu(nphi_total * ntheta), self%bv(nphi_total * ntheta))
+        self%xm = vb%xm
+        self%xn = vb%xn
         self%xm_nyq = vb%xm_nyq
         self%xn_nyq = vb%xn_nyq
         self%lasym = vb%lasym
@@ -104,7 +128,8 @@ contains
             do itheta = 1, ntheta
                 theta = dtheta * real(itheta - 1, dp)
                 k = k + 1
-                call boundary_point(vb, theta, phi, x, x_t, x_p, b)
+                call boundary_point(vb, theta, phi, x, x_t, x_p, b, &
+                    self%bu(k), self%bv(k))
                 ds = cross(x_t, x_p) * (dtheta * dphi)
                 self%xs(:, k) = x
                 self%sheet(:, k) = cross(ds, b) * inv_four_pi
@@ -112,25 +137,30 @@ contains
                 self%jp(:, k) = cross(ds, x_p) * inv_four_pi
                 self%theta(k) = theta
                 self%phi(k) = phi
+                self%xt(:, k) = x_t
+                self%xp(:, k) = x_p
                 volume = volume + dot_product(x, ds) / 3.0_dp
                 self%spacing = max(self%spacing, norm2(x_t) * dtheta, norm2(x_p) * dphi)
             end do
         end do
         ! (theta, phi) orientation decides whether x_t x x_p points outward.
+        self%sheet_scale = dtheta * dphi * inv_four_pi
         if (volume < 0.0_dp) then
             self%sheet = -self%sheet
             self%jt = -self%jt
             self%jp = -self%jp
+            self%sheet_scale = -self%sheet_scale
         end if
         self%enabled = .true.
-    end subroutine plasma_init_from_vmec
+    end subroutine plasma_init_from_boundary
 
-    subroutine boundary_point(vb, theta, phi, x, x_t, x_p, b)
-        !! Position, tangents d/dtheta, d/dphi [m] and total field [T] at s = 1.
+    subroutine boundary_point(vb, theta, phi, x, x_t, x_p, b, bu, bv)
+        !! Position, tangents d/dtheta, d/dphi [m], total field [T] and its
+        !! contravariant components B^u, B^v at s = 1.
         type(vmec_boundary_t), intent(in) :: vb
         real(dp), intent(in) :: theta, phi
-        real(dp), intent(out) :: x(3), x_t(3), x_p(3), b(3)
-        real(dp) :: r, z, r_t, r_p, z_t, z_p, bu, bv, c, s
+        real(dp), intent(out) :: x(3), x_t(3), x_p(3), b(3), bu, bv
+        real(dp) :: r, z, r_t, r_p, z_t, z_p, c, s
         real(dp) :: arg(size(vb%xm)), arg_nyq(size(vb%xm_nyq))
 
         arg = vb%xm * theta - vb%xn * phi
@@ -249,6 +279,7 @@ contains
         if (allocated(self%xs)) deallocate(self%xs)
         if (allocated(self%sheet)) deallocate(self%sheet)
         if (allocated(self%jt)) deallocate(self%jt, self%jp, self%theta, self%phi)
+        if (allocated(self%xt)) deallocate(self%xt, self%xp, self%bu, self%bv)
         self%spacing = 0.0_dp
         self%diamagnetic_flux = 0.0_dp
         self%enabled = .false.
@@ -307,50 +338,168 @@ contains
         call warn_if_close(self, rmin)
     end subroutine plasma_sample_vector_potential
 
-    subroutine plasma_potential_weights(self, points, dls, owner, nsig, w)
+    subroutine plasma_potential_weights(self, points, dls, owner, nsig, w, gx)
         !! A-based signals s = sum_j A(x_j) . dl_j = sum_k sheet_k . w(:, k, s),
         !! w(:, k, s) = sum_{j in s} dl_j / |x_j - x_k|.
+        !! gx(:, k, s) = d s / d x_k at fixed sheet (for the shape Jacobian).
         class(plasma_support_t), intent(in) :: self
         real(dp), intent(in) :: points(:, :), dls(:, :)
         integer, intent(in) :: owner(:), nsig
         real(dp), allocatable, intent(out) :: w(:, :, :)
-        integer :: j, k
-        real(dp) :: d(3)
-
-        allocate(w(3, size(self%xs, 2), nsig))
-        w = 0.0_dp
-!$omp parallel do schedule(static) private(j, k, d)
-        do k = 1, size(self%xs, 2)
-            do j = 1, size(owner)
-                d = points(:, j) - self%xs(:, k)
-                w(:, k, owner(j)) = w(:, k, owner(j)) + dls(:, j) / norm2(d)
-            end do
-        end do
-!$omp end parallel do
-    end subroutine plasma_potential_weights
-
-    subroutine plasma_field_weights(self, points, dls, owner, nsig, w)
-        !! B-based signals s = sum_j B(x_j) . dl_j = sum_k sheet_k . w(:, k, s),
-        !! w(:, k, s) = sum_{j in s} (x_j - x_k) x dl_j / |x_j - x_k|^3.
-        class(plasma_support_t), intent(in) :: self
-        real(dp), intent(in) :: points(:, :), dls(:, :)
-        integer, intent(in) :: owner(:), nsig
-        real(dp), allocatable, intent(out) :: w(:, :, :)
+        real(dp), allocatable, intent(out), optional :: gx(:, :, :)
         integer :: j, k
         real(dp) :: d(3), r
 
         allocate(w(3, size(self%xs, 2), nsig))
         w = 0.0_dp
+        if (present(gx)) then
+            allocate(gx(3, size(self%xs, 2), nsig))
+            gx = 0.0_dp
+        end if
 !$omp parallel do schedule(static) private(j, k, d, r)
         do k = 1, size(self%xs, 2)
             do j = 1, size(owner)
                 d = points(:, j) - self%xs(:, k)
                 r = norm2(d)
+                w(:, k, owner(j)) = w(:, k, owner(j)) + dls(:, j) / r
+                if (present(gx)) gx(:, k, owner(j)) = gx(:, k, owner(j)) + &
+                    dot_product(self%sheet(:, k), dls(:, j)) * d / (r * r * r)
+            end do
+        end do
+!$omp end parallel do
+    end subroutine plasma_potential_weights
+
+    subroutine plasma_field_weights(self, points, dls, owner, nsig, w, gx)
+        !! B-based signals s = sum_j B(x_j) . dl_j = sum_k sheet_k . w(:, k, s),
+        !! w(:, k, s) = sum_{j in s} (x_j - x_k) x dl_j / |x_j - x_k|^3.
+        !! gx(:, k, s) = d s / d x_k at fixed sheet (for the shape Jacobian).
+        class(plasma_support_t), intent(in) :: self
+        real(dp), intent(in) :: points(:, :), dls(:, :)
+        integer, intent(in) :: owner(:), nsig
+        real(dp), allocatable, intent(out) :: w(:, :, :)
+        real(dp), allocatable, intent(out), optional :: gx(:, :, :)
+        integer :: j, k
+        real(dp) :: d(3), r, v(3)
+
+        allocate(w(3, size(self%xs, 2), nsig))
+        w = 0.0_dp
+        if (present(gx)) then
+            allocate(gx(3, size(self%xs, 2), nsig))
+            gx = 0.0_dp
+        end if
+!$omp parallel do schedule(static) private(j, k, d, r, v)
+        do k = 1, size(self%xs, 2)
+            do j = 1, size(owner)
+                d = points(:, j) - self%xs(:, k)
+                r = norm2(d)
                 w(:, k, owner(j)) = w(:, k, owner(j)) + cross(d, dls(:, j)) / (r * r * r)
+                if (present(gx)) then
+                    ! s = d . (dl x sheet) / r^3 with d = x_j - x_k
+                    v = cross(dls(:, j), self%sheet(:, k))
+                    gx(:, k, owner(j)) = gx(:, k, owner(j)) - v / r**3 + &
+                        3.0_dp * dot_product(d, v) * d / r**5
+                end if
             end do
         end do
 !$omp end parallel do
     end subroutine plasma_field_weights
+
+    integer function plasma_n_shape_columns(self)
+        class(plasma_support_t), intent(in) :: self
+        plasma_n_shape_columns = merge(4, 2, self%lasym) * size(self%xm)
+    end function plasma_n_shape_columns
+
+    subroutine plasma_shape_column_name(self, column, coefficient, m, n)
+        !! Column c -> VMEC boundary geometry coefficient name and mode numbers.
+        class(plasma_support_t), intent(in) :: self
+        integer, intent(in) :: column
+        character(len=:), allocatable, intent(out) :: coefficient
+        integer, intent(out) :: m, n
+        character(len=4), parameter :: names(4) = [character(len=4) :: 'rmnc', 'zmns', 'rmns', 'zmnc']
+        integer :: nm
+
+        nm = size(self%xm)
+        coefficient = trim(names((column - 1) / nm + 1))
+        m = nint(self%xm(mod(column - 1, nm) + 1))
+        n = nint(self%xn(mod(column - 1, nm) + 1))
+    end subroutine plasma_shape_column_name
+
+    subroutine plasma_shape_response(self, w, gx, resp)
+        !! resp(s, c): derivative of the plasma part of signal s with respect to
+        !! the boundary geometry coefficient c (rmnc, zmns[, rmns, zmnc] at s = 1),
+        !! at fixed contravariant field coefficients B^u_mn, B^v_mn. w and gx are
+        !! the weights and kernel-position cotangents of the signals.
+        !! Reverse mode through sheet = c (alpha x_p - beta x_t),
+        !! alpha = x_t . b, beta = x_p . b, b = B^u x_t + B^v x_p.
+        class(plasma_support_t), intent(in) :: self
+        real(dp), intent(in) :: w(:, :, :), gx(:, :, :)
+        real(dp), allocatable, intent(out) :: resp(:, :)
+        real(dp), allocatable :: rb(:, :), rtb(:, :), rpb(:, :), zb(:, :), ztb(:, :), zpb(:, :)
+        real(dp) :: xtb(3), xpb(3), xb(3), alpha, beta, abar, bbar, c, cp, sp
+        real(dp) :: xt(3), xp(3), bu, bv, arg, co, si, m, n
+        integer :: k, s, mode, nm, npts, nsig
+
+        npts = size(self%xs, 2)
+        nsig = size(w, 3)
+        nm = size(self%xm)
+        c = self%sheet_scale
+        allocate(rb(nsig, npts), rtb(nsig, npts), rpb(nsig, npts))
+        allocate(zb(nsig, npts), ztb(nsig, npts), zpb(nsig, npts))
+!$omp parallel do schedule(static) private(k, s, xt, xp, bu, bv, alpha, beta, xtb, xpb, xb, &
+!$omp abar, bbar, cp, sp)
+        do k = 1, npts
+            xt = self%xt(:, k)
+            xp = self%xp(:, k)
+            bu = self%bu(k)
+            bv = self%bv(k)
+            alpha = bu * dot_product(xt, xt) + bv * dot_product(xt, xp)
+            beta = bu * dot_product(xt, xp) + bv * dot_product(xp, xp)
+            cp = cos(self%phi(k))
+            sp = sin(self%phi(k))
+            do s = 1, nsig
+                xpb = c * alpha * w(:, k, s)
+                xtb = -c * beta * w(:, k, s)
+                abar = c * dot_product(w(:, k, s), xp)
+                bbar = -c * dot_product(w(:, k, s), xt)
+                xtb = xtb + abar * (2.0_dp * bu * xt + bv * xp) + bbar * bu * xp
+                xpb = xpb + abar * bv * xt + bbar * (bu * xt + 2.0_dp * bv * xp)
+                xb = gx(:, k, s)
+                ! x = (R c, R s, Z), x_t = (R_t c, R_t s, Z_t),
+                ! x_p = (R_p c - R s, R_p s + R c, Z_p)
+                rb(s, k) = xb(1) * cp + xb(2) * sp - xpb(1) * sp + xpb(2) * cp
+                rtb(s, k) = xtb(1) * cp + xtb(2) * sp
+                rpb(s, k) = xpb(1) * cp + xpb(2) * sp
+                zb(s, k) = xb(3)
+                ztb(s, k) = xtb(3)
+                zpb(s, k) = xpb(3)
+            end do
+        end do
+!$omp end parallel do
+        allocate(resp(nsig, self%n_shape_columns()))
+        resp = 0.0_dp
+!$omp parallel do schedule(static) private(mode, k, m, n, arg, co, si)
+        do mode = 1, nm
+            m = self%xm(mode)
+            n = self%xn(mode)
+            do k = 1, npts
+                arg = m * self%theta(k) - n * self%phi(k)
+                co = cos(arg)
+                si = sin(arg)
+                ! R = sum rmnc cos, Z = sum zmns sin (and rmns sin, zmnc cos)
+                resp(:, mode) = resp(:, mode) + rb(:, k) * co - m * rtb(:, k) * si &
+                    + n * rpb(:, k) * si
+                resp(:, nm + mode) = resp(:, nm + mode) + zb(:, k) * si + m * ztb(:, k) * co &
+                    - n * zpb(:, k) * co
+                if (self%lasym) then
+                    resp(:, 2 * nm + mode) = resp(:, 2 * nm + mode) + rb(:, k) * si &
+                        + m * rtb(:, k) * co - n * rpb(:, k) * co
+                    resp(:, 3 * nm + mode) = resp(:, 3 * nm + mode) + zb(:, k) * co &
+                        - m * ztb(:, k) * si + n * zpb(:, k) * si
+                end if
+            end do
+        end do
+!$omp end parallel do
+    end subroutine plasma_shape_response
 
     integer function plasma_n_mode_columns(self)
         class(plasma_support_t), intent(in) :: self
