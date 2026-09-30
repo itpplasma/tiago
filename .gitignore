@@ -1,51 +1,18 @@
-# Build tree
+# Build trees
 /build/
-/build-*//
-/.cmake/
-CMakeFiles/
-CMakeCache.txt
-cmake_install.cmake
-install_manifest.txt
-Testing/
-Meson-
+/build-*/
 
-# Compilers
+# Compiler output
 *.o
-*.obj
 *.mod
 *.smod
 *.a
 *.so
-*.dll
-*.dylib
 
-# Python helpers
+# Python bytecode of the benchmark script
 __pycache__/
-*.pyc
-*.pyo
 
-# Tooling
+# Editors
 /.idea/
 /.vscode/
 .DS_Store
-# Case assets generated at runtime or downloaded
-tests/cases/**/coils.*
-tests/cases/**/wout_*.nc
-
-# Debug and test artifacts
-*.dat
-*.npy
-*_output*.txt
-debug_*
-healaxis.dat
-compile_commands.json
-CTestTestfile.cmake
-Makefile
-_deps/
-tests/debug/output/
-tests/debug/*.csv
-tests/debug/*.dat
-tests/debug/*.png
-tiago_*.csv
-diagno_*.csv
-*_diff.csv

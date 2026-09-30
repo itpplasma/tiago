@@ -5,10 +5,11 @@ module tiago_flux_loops
     implicit none
     private
 
-    real(dp), parameter :: closure_tolerance = 1.0e-4_dp
-
     public :: read_flux_loop_file
     public :: lint_flux_loops
+    public :: finalize_flux_signals
+    public :: parse_diag_header
+    public :: check_no_trailing_data
 
 contains
     subroutine read_flux_loop_file(path, loops, ierr, message)
@@ -35,8 +36,133 @@ contains
 
         allocate(loops(loop_count))
         call populate_loops(unit, loops, ierr, message)
+        if (ierr == 0_i32) call check_no_trailing_data(unit, loop_count, ierr, message)
         call close_file(unit)
+        if (ierr /= 0_i32) return
+        call check_idia_references(loops, ierr, message)
     end subroutine read_flux_loop_file
+
+    subroutine parse_diag_header(line, npts, flag1, flag2, label, ios, message)
+        !! DIAGNO header: nseg, iflflg, idia, title. DIAGNO reads it as
+        !! (3I6,A48); free-format "n f d label" is accepted too. The label is
+        !! the rest of the line, so it may contain blanks, "/" or ",".
+        character(len=*), intent(in) :: line
+        integer(i32), intent(out) :: npts, flag1, flag2
+        character(len=:), allocatable, intent(out) :: label
+        integer, intent(out) :: ios
+        character(len=:), allocatable, intent(out) :: message
+
+        integer(i32) :: values(3)
+        integer :: pos, k, first, last
+
+        message = ''
+        ios = 0
+        if (is_fixed_header(line)) then
+            read(line(1:18), '(3I6)', iostat=ios) values
+            pos = 19
+        else
+            pos = 1
+            do k = 1, 3
+                first = verify(line(pos:), ' '//achar(9))
+                if (first == 0) then
+                    ios = -1
+                    exit
+                end if
+                first = pos + first - 1
+                last = scan(line(first:), ' '//achar(9))
+                last = merge(len(line), first + last - 2, last == 0)
+                read(line(first:last), *, iostat=ios) values(k)
+                if (ios /= 0) exit
+                pos = last + 1
+            end do
+        end if
+        if (ios /= 0) then
+            message = 'failed to parse diagnostic header: '//trim(line)
+            label = ''
+            return
+        end if
+        npts = values(1)
+        flag1 = values(2)
+        flag2 = values(3)
+        label = ''
+        if (pos <= len(line)) label = trim(adjustl(line(pos:)))
+    end subroutine parse_diag_header
+
+    logical function is_fixed_header(line)
+        !! Three right-aligned integers in columns 1-6, 7-12, 13-18.
+        character(len=*), intent(in) :: line
+        integer :: k, first
+
+        is_fixed_header = .false.
+        if (len_trim(line) < 18) return
+        do k = 0, 2
+            first = verify(line(6 * k + 1:6 * k + 6), ' ')
+            if (first == 0) return
+            if (verify(line(6 * k + first:6 * k + 6), '+-0123456789') /= 0) return
+            if (verify(line(6 * k + first + 1:6 * k + 6), '0123456789') /= 0) return
+        end do
+        is_fixed_header = .true.
+    end function is_fixed_header
+
+    subroutine check_no_trailing_data(unit, count, ierr, message)
+        !! Data after the last announced diagnostic usually means a wrong count.
+        integer, intent(in) :: unit
+        integer(i32), intent(in) :: count
+        integer(i32), intent(out) :: ierr
+        character(len=:), allocatable, intent(out) :: message
+        character(len=256) :: line
+        integer :: ios
+
+        ierr = 0_i32
+        message = ''
+        do
+            read(unit, '(A)', iostat=ios) line
+            if (ios /= 0) return
+            if (len_trim(line) > 0) then
+                ierr = 7_i32
+                message = 'data after the '//trim(int_to_string(count))// &
+                    ' diagnostics announced in the header: '//trim(line)
+                return
+            end if
+        end do
+    end subroutine check_no_trailing_data
+
+    subroutine check_idia_references(loops, ierr, message)
+        type(flux_loop_t), intent(in) :: loops(:)
+        integer(i32), intent(out) :: ierr
+        character(len=:), allocatable, intent(out) :: message
+        integer :: i
+
+        ierr = 0_i32
+        message = ''
+        do i = 1, size(loops)
+            if (-loops(i)%idia > size(loops) .or. -loops(i)%idia == i) then
+                ierr = 6_i32
+                message = 'loop '//trim(loops(i)%label)// &
+                    ': idia refers to a non-existent loop or to itself'
+                return
+            end if
+        end do
+    end subroutine check_idia_references
+
+    subroutine finalize_flux_signals(loops, fluxes, diamagnetic_flux)
+        !! DIAGNO post-processing, applied in DIAGNO's order (diagno_flux.f90):
+        !! for each loop in turn, add the plasma toroidal flux (phiedge * signgs)
+        !! if idia = 1, subtract loop |idia| if idia < 0 (its value as already
+        !! processed when |idia| < i), then apply the turn scale.
+        type(flux_loop_t), intent(in) :: loops(:)
+        real(dp), intent(inout) :: fluxes(:)
+        real(dp), intent(in), optional :: diamagnetic_flux
+        integer :: i
+
+        do i = 1, size(loops)
+            if (loops(i)%idia == 1_i32 .and. present(diamagnetic_flux)) then
+                fluxes(i) = fluxes(i) + diamagnetic_flux
+            end if
+            if (loops(i)%idia < 0_i32) fluxes(i) = fluxes(i) - fluxes(-loops(i)%idia)
+            fluxes(i) = fluxes(i) * loops(i)%turn_scale
+        end do
+    end subroutine finalize_flux_signals
 
     subroutine open_flux_unit(path, unit, ierr, message)
         character(len=*), intent(in) :: path
@@ -111,7 +237,7 @@ contains
         type(flux_loop_t), allocatable, intent(in) :: loops(:)
         character(len=:), allocatable, intent(out) :: report
 
-        integer :: i
+        integer :: i, j
         logical :: local_ok
         character(len=:), allocatable :: local_report
 
@@ -136,6 +262,11 @@ contains
                 ok = .false.
                 call append_line(report, trim(local_report))
             end if
+            if (any([(loops(j)%label == loops(i)%label, j = 1, i - 1)])) then
+                ok = .false.
+                call append_line(report, format_issue(i, 'duplicate label '// &
+                    loops(i)%label//' (turn files and outputs are keyed by label)'))
+            end if
         end do
     end function lint_flux_loops
 
@@ -146,16 +277,12 @@ contains
         character(len=:), allocatable, intent(out) :: message
 
         integer(i32) :: npts
-        integer(i32) :: repeat_flag
-        integer(i32) :: subtract_flag
-        character(len=128) :: label_buffer
+        integer(i32) :: repeat_flag    ! DIAGNO iflflg column
+        integer(i32) :: subtract_flag  ! DIAGNO idia column
+        character(len=:), allocatable :: label
 
-        message = ''
-        read(line, *, iostat=ios) npts, repeat_flag, subtract_flag, label_buffer
-        if (ios /= 0) then
-            message = 'failed to parse loop header: '//trim(line)
-            return
-        end if
+        call parse_diag_header(line, npts, repeat_flag, subtract_flag, label, ios, message)
+        if (ios /= 0) return
 
         if (npts <= 1_i32) then
             ios = -1
@@ -163,9 +290,15 @@ contains
             return
         end if
 
-        loop%subtract_toroidal_flux = (subtract_flag /= 0_i32)
-        loop%repeat_count = max(0_i32, repeat_flag)
-        loop%label = trim(label_buffer)
+        if (repeat_flag > 1_i32) then
+            ios = -1
+            message = 'unsupported iflflg > 1 (only 0 and 1 are defined): '//trim(line)
+            return
+        end if
+
+        loop%idia = subtract_flag
+        loop%one_period = (repeat_flag == 1_i32)
+        loop%label = label
         if (len_trim(loop%label) == 0) then
             loop%label = 'loop_' // trim(adjustl(int_to_string(npts)))
         end if
@@ -193,11 +326,6 @@ contains
             loop%points(j)%y = y
             loop%points(j)%z = z
         end do
-        if (size(loop%points) >= 2) then
-            loop%is_open = .not. points_match(loop%points(1), loop%points(size(loop%points)))
-        else
-            loop%is_open = .false.
-        end if
     end subroutine load_loop_points
 
     subroutine lint_single_loop(loop, index, ok, report)
@@ -208,7 +336,6 @@ contains
 
         integer :: npts
         logical :: has_issue
-        real(dp) :: closure
 
         ok = .true.
         report = ''
@@ -226,17 +353,6 @@ contains
         if (.not. verify_point_coordinates(loop, index, report)) then
             ok = .false.
             has_issue = .true.
-        end if
-
-        if (.not. loop%is_open .and. npts >= 2) then
-            closure = closure_distance(loop%points(1), loop%points(npts))
-            if (closure > closure_tolerance) then
-                call append_line(report, format_issue(index, &
-                    'closed loop endpoints differ by ' // &
-                    trim(real_to_string(closure))))
-                ok = .false.
-                has_issue = .true.
-            end if
         end if
 
         if (.not. has_issue .and. len_trim(loop%label) == 0) then
@@ -268,31 +384,7 @@ contains
             ieee_is_finite(point%z)
     end function coordinates_are_finite
 
-    pure real(dp) function closure_distance(a, b) result(dist)
-        type(loop_point_t), intent(in) :: a
-        type(loop_point_t), intent(in) :: b
-        real(dp) :: dx
-        real(dp) :: dy
-        real(dp) :: dz
 
-        dx = a%x - b%x
-        dy = a%y - b%y
-        dz = a%z - b%z
-        dist = sqrt(dx * dx + dy * dy + dz * dz)
-    end function closure_distance
-
-    logical function points_match(a, b)
-        type(loop_point_t), intent(in) :: a
-        type(loop_point_t), intent(in) :: b
-        real(dp) :: dx
-        real(dp) :: dy
-        real(dp) :: dz
-
-        dx = a%x - b%x
-        dy = a%y - b%y
-        dz = a%z - b%z
-        points_match = sqrt(dx * dx + dy * dy + dz * dz) < closure_tolerance
-    end function points_match
 
     subroutine append_line(buffer, line)
         character(len=:), allocatable, intent(inout) :: buffer
@@ -322,13 +414,6 @@ contains
         text = trim(buffer)
     end function int_to_string
 
-    pure function real_to_string(value) result(text)
-        real(dp), intent(in) :: value
-        character(len=:), allocatable :: text
-        character(len=64) :: buffer
-        write(buffer, '(ES12.4)') value
-        text = adjustl(buffer)
-    end function real_to_string
 
     subroutine close_file(unit)
         integer, intent(in) :: unit

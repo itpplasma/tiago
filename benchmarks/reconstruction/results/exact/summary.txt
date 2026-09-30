@@ -1,0 +1,12 @@
+Tiago equilibrium reconstruction
+residuals: 80 (measurements 80, consistency 0, priors 0
+chi^2 start   7.4133E+03  fitted   1.0331E-04  dof 76  chi^2/dof    0.000
+LM steps 3, residual evaluations 4, VMEC++ solves 5, adjoint right-hand sides 320
+time: VMEC++ solves       0.8 s, Jacobians       2.0 s, total       6.0 s
+optimizer: converged (predicted chi^2 decrease below the solver noise floor)
+
+   parameter           start          fitted           sigma           truth (fit-truth)/sig
+  PRES_SCALE   7.0000000E-01   9.9983205E-01   5.3967611E-02   1.0000000E+00           -0.00
+      CURTOR  -1.5000000E+05  -1.7425007E+05   4.1671539E+02  -1.7425000E+05           -0.00
+       AC(1)   1.2000000E+06   1.4356351E+06   5.5665572E+04   1.4360356E+06           -0.01
+     PHIEDGE   5.0000000E-01   5.1428899E-01   3.1158694E-02   5.1438600E-01           -0.00
