@@ -30,7 +30,8 @@ program tiago_vacuum_cli
     logical :: use_plasma_sample
 
     argc = command_argument_count()
-    if (argc < 3) call usage_and_stop()
+    call check_help(argc)
+    if (argc < 3) call usage_and_stop(1)
 
     call get_command_argument(1, coil_path)
     call get_command_argument(2, flux_path)
@@ -43,7 +44,7 @@ program tiago_vacuum_cli
     segrog_turn_path = ''
     samples_per_segment = 6_i32
     nfp_value = 1_i32
-    seg_area = -1.0_dp
+    seg_area = 0.0_dp   ! 0: not given (areas from the file)
     coil_extcur_path = ''
     have_flux = len_trim(flux_path) > 0
     have_seg = len_trim(segrog_path) > 0
@@ -56,6 +57,7 @@ program tiago_vacuum_cli
         flux_turn_path, segrog_turn_path, samples_per_segment, seg_area, &
         nfp_value, coil_extcur_path, plasma_wout, plasma_nphi, plasma_ntheta, &
         use_plasma_sample)
+    call validate_options(samples_per_segment, nfp_value, seg_area, plasma_nphi, plasma_ntheta)
     call prepare_plasma_support(plasma_wout, use_plasma_sample)
     call ensure_paths(output_dir, flux_out_path, segrog_out_path)
     call run_solver(trim(coil_path), trim(flux_path), trim(segrog_path), &
@@ -117,17 +119,17 @@ subroutine parse_options(argc, output_dir, flux_out_path, segrog_out_path, &
             i = i + 1
             call ensure_arg(argc, i, '--samples')
             call get_command_argument(i, arg)
-            read(arg, *) samples_per_segment
+            samples_per_segment = parse_int(arg, '--samples')
         case ('--nfp')
             i = i + 1
             call ensure_arg(argc, i, '--nfp')
             call get_command_argument(i, arg)
-            read(arg, *) nfp_value
+            nfp_value = parse_int(arg, '--nfp')
         case ('--seg-area')
             i = i + 1
             call ensure_arg(argc, i, '--seg-area')
             call get_command_argument(i, arg)
-            read(arg, *) seg_area
+            seg_area = parse_real(arg, '--seg-area')
         case ('--coil-extcur')
             i = i + 1
             call ensure_arg(argc, i, '--coil-extcur')
@@ -140,16 +142,14 @@ subroutine parse_options(argc, output_dir, flux_out_path, segrog_out_path, &
             i = i + 1
             call ensure_arg(argc, i, '--plasma-nphi')
             call get_command_argument(i, arg)
-            read(arg, *) plasma_nphi
+            plasma_nphi = parse_int(arg, '--plasma-nphi')
         case ('--plasma-ntheta')
             i = i + 1
             call ensure_arg(argc, i, '--plasma-ntheta')
             call get_command_argument(i, arg)
-            read(arg, *) plasma_ntheta
+            plasma_ntheta = parse_int(arg, '--plasma-ntheta')
         case ('--plasma-sample')
             use_plasma_sample = .true.
-        case ('--help', '-h')
-            call usage_and_stop()
         case default
             call die('unknown option: '//trim(arg))
         end select
@@ -405,7 +405,7 @@ subroutine ensure_directory(path)
     character(len=1024) :: cmd
     integer :: status
     if (len_trim(path) == 0) return
-    write(cmd, '(A)') 'mkdir -p '//trim(path)
+    write(cmd, '(A)') 'mkdir -p "'//trim(path)//'"'
     call execute_command_line(trim(cmd), exitstat=status)
     if (status /= 0) then
         write(error_unit, '(A)') 'failed to create directory: '//trim(path)
@@ -447,8 +447,48 @@ subroutine write_segrog(path, diagnostics, values)
     close(unit)
 end subroutine write_segrog
 
-subroutine usage_and_stop()
+subroutine check_help(argc)
+    integer, intent(in) :: argc
+    character(len=64) :: arg
+    integer :: i
+
+    do i = 1, argc
+        call get_command_argument(i, arg)
+        if (trim(arg) == '--help' .or. trim(arg) == '-h') call usage_and_stop(0)
+    end do
+end subroutine check_help
+
+integer(i32) function parse_int(text, flag) result(value)
+    character(len=*), intent(in) :: text, flag
+    integer :: ios
+    read(text, *, iostat=ios) value
+    if (ios /= 0 .or. verify(trim(adjustl(text)), '+-0123456789') /= 0) then
+        call die(flag//' expects an integer, got: '//trim(text))
+    end if
+end function parse_int
+
+real(dp) function parse_real(text, flag) result(value)
+    character(len=*), intent(in) :: text, flag
+    integer :: ios
+    read(text, *, iostat=ios) value
+    if (ios /= 0) call die(flag//' expects a number, got: '//trim(text))
+end function parse_real
+
+subroutine validate_options(samples_per_segment, nfp_value, seg_area, plasma_nphi, plasma_ntheta)
+    integer(i32), intent(in) :: samples_per_segment, nfp_value, plasma_nphi, plasma_ntheta
+    real(dp), intent(in) :: seg_area
+
+    if (samples_per_segment < 1) call die('--samples must be at least 1')
+    if (nfp_value < 1) call die('--nfp must be at least 1')
+    if (seg_area < 0.0_dp) call die('--seg-area must be positive')
+    if (plasma_nphi < 4 .or. plasma_ntheta < 4) then
+        call die('--plasma-nphi and --plasma-ntheta must be at least 4')
+    end if
+end subroutine validate_options
+
+subroutine usage_and_stop(status)
     use, intrinsic :: iso_fortran_env, only: error_unit
+    integer, intent(in) :: status
     write(error_unit, '(A)') 'Usage: tiago_vacuum_cli <coil> <flux> <segrog>   (pass "" to omit one)'
     write(error_unit, '(A)') '       [--output-dir dir] [--flux-out file]'
     write(error_unit, '(A)') '       [--segrog-out file] [--samples N]'
@@ -457,6 +497,7 @@ subroutine usage_and_stop()
     write(error_unit, '(A)') '       [--flux-turns file] [--segrog-turns file]'
     write(error_unit, '(A)') '       [--plasma-wout file] [--plasma-sample]'
     write(error_unit, '(A)') '       [--plasma-nphi N_per_period] [--plasma-ntheta N] (default 64 64)'
+    if (status == 0) stop
     stop 1
 end subroutine usage_and_stop
 
@@ -468,120 +509,75 @@ subroutine die(message)
 end subroutine die
 
 subroutine apply_flux_turns(path, loops)
-    use, intrinsic :: iso_fortran_env, only: dp => real64, error_unit
     character(len=*), intent(in) :: path
     type(flux_loop_t), allocatable, intent(inout) :: loops(:)
+    real(dp), allocatable :: scales(:)
+    integer :: i
 
-    if (len_trim(path) == 0) return
-    if (.not. allocated(loops)) return
-    call read_turn_file_flux(path, loops)
+    if (len_trim(path) == 0 .or. .not. allocated(loops)) return
+    call read_turn_file(path, loops_labels(loops), scales)
+    do i = 1, size(loops)
+        loops(i)%turn_scale = scales(i)
+    end do
 end subroutine apply_flux_turns
 
 subroutine apply_segrog_turns(path, diagnostics)
-    use, intrinsic :: iso_fortran_env, only: dp => real64, error_unit
     character(len=*), intent(in) :: path
     type(segmented_rogowski_t), allocatable, intent(inout) :: diagnostics(:)
+    real(dp), allocatable :: scales(:)
+    integer :: i
 
-    if (len_trim(path) == 0) return
-    if (.not. allocated(diagnostics)) return
-    call read_turn_file_seg(path, diagnostics)
+    if (len_trim(path) == 0 .or. .not. allocated(diagnostics)) return
+    call read_turn_file(path, segrog_labels(diagnostics), scales)
+    do i = 1, size(diagnostics)
+        diagnostics(i)%turn_scale = scales(i)
+    end do
 end subroutine apply_segrog_turns
 
-subroutine read_turn_file_flux(path, loops)
-    use, intrinsic :: iso_fortran_env, only: dp => real64, error_unit
+subroutine read_turn_file(path, labels, scales)
+    !! Lines "label scale" (the scale is the last token, so labels may contain
+    !! blanks; "label, scale" works too). '#' starts a comment line. Labels
+    !! without an entry keep scale 1; entries matching no diagnostic are errors.
+    use, intrinsic :: iso_fortran_env, only: error_unit
     character(len=*), intent(in) :: path
-    type(flux_loop_t), allocatable, intent(inout) :: loops(:)
+    character(len=*), intent(in) :: labels(:)
+    real(dp), allocatable, intent(out) :: scales(:)
 
-    integer :: unit
-    integer :: ios
-    character(len=256) :: line
-    character(len=128) :: label
+    integer :: unit, ios, cut, i
+    character(len=512) :: line
+    character(len=:), allocatable :: text, label
     real(dp) :: value
-    character(len=:), allocatable :: trimmed
+    logical :: found
 
+    allocate(scales(size(labels)))
+    scales = 1.0_dp
     open(newunit=unit, file=trim(path), status='old', action='read', iostat=ios)
-    if (ios /= 0) then
-        write(error_unit, '(A)') 'unable to open turn file: '//trim(path)
-        stop 1
-    end if
-
+    if (ios /= 0) call die('unable to open turn file: '//trim(path))
     do
         read(unit, '(A)', iostat=ios) line
         if (ios /= 0) exit
-        if (len_trim(line) == 0) cycle
-        trimmed = adjustl(line)
-        if (len_trim(trimmed) == 0) cycle
-        if (trimmed(1:1) == '#') cycle
-        read(trimmed, *, iostat=ios) label, value
-        if (ios /= 0) cycle
-        call assign_flux_turn(trim(label), value, loops)
+        text = trim(adjustl(line))
+        if (len(text) == 0) cycle
+        if (text(1:1) == '#') cycle
+        cut = scan(text, ' ,'//achar(9), back=.true.)
+        if (cut == 0) call die(trim(path)//': expected "label scale": '//text)
+        read(text(cut + 1:), *, iostat=ios) value
+        if (ios /= 0) call die(trim(path)//': invalid scale: '//text)
+        label = trim(text(:cut - 1))
+        if (len(label) > 0) then
+            if (label(len(label):len(label)) == ',') label = trim(label(:len(label) - 1))
+        end if
+        found = .false.
+        do i = 1, size(labels)
+            if (trim(labels(i)) == label) then
+                scales(i) = value
+                found = .true.
+            end if
+        end do
+        if (.not. found) call die(trim(path)//': no diagnostic labelled '//label)
     end do
     close(unit)
-end subroutine read_turn_file_flux
-
-subroutine assign_flux_turn(label, value, loops)
-    use, intrinsic :: iso_fortran_env, only: dp => real64
-    character(len=*), intent(in) :: label
-    real(dp), intent(in) :: value
-    type(flux_loop_t), allocatable, intent(inout) :: loops(:)
-
-    integer :: i
-
-    do i = 1, size(loops)
-        if (trim(loops(i)%label) == trim(label)) then
-            loops(i)%turn_scale = value
-            return
-        end if
-    end do
-end subroutine assign_flux_turn
-
-subroutine read_turn_file_seg(path, diagnostics)
-    use, intrinsic :: iso_fortran_env, only: dp => real64, error_unit
-    character(len=*), intent(in) :: path
-    type(segmented_rogowski_t), allocatable, intent(inout) :: diagnostics(:)
-
-    integer :: unit
-    integer :: ios
-    character(len=256) :: line
-    character(len=128) :: label
-    real(dp) :: value
-    character(len=:), allocatable :: trimmed
-
-    open(newunit=unit, file=trim(path), status='old', action='read', iostat=ios)
-    if (ios /= 0) then
-        write(error_unit, '(A)') 'unable to open turn file: '//trim(path)
-        stop 1
-    end if
-
-    do
-        read(unit, '(A)', iostat=ios) line
-        if (ios /= 0) exit
-        if (len_trim(line) == 0) cycle
-        trimmed = adjustl(line)
-        if (len_trim(trimmed) == 0) cycle
-        if (trimmed(1:1) == '#') cycle
-        read(trimmed, *, iostat=ios) label, value
-        if (ios /= 0) cycle
-        call assign_seg_turn(trim(label), value, diagnostics)
-    end do
-    close(unit)
-end subroutine read_turn_file_seg
-
-subroutine assign_seg_turn(label, value, diagnostics)
-    use, intrinsic :: iso_fortran_env, only: dp => real64
-    character(len=*), intent(in) :: label
-    real(dp), intent(in) :: value
-    type(segmented_rogowski_t), allocatable, intent(inout) :: diagnostics(:)
-
-    integer :: i
-
-    do i = 1, size(diagnostics)
-        if (trim(diagnostics(i)%label) == trim(label)) then
-            diagnostics(i)%turn_scale = value
-            return
-        end if
-    end do
-end subroutine assign_seg_turn
+end subroutine read_turn_file
 
 subroutine scale_segrog_turns(diagnostics, values)
     use, intrinsic :: iso_fortran_env, only: dp => real64

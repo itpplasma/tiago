@@ -84,7 +84,7 @@ contains
     subroutine usage(status)
         integer, intent(in) :: status
         write(*, '(A)') 'Usage: tiago_cli diag lint <file> [--kind flux|segrog]'
-        if (status == 0) stop 0
+        if (status == 0) stop
         stop 1
     end subroutine usage
 
