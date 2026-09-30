@@ -17,10 +17,7 @@ module tiago_reconstruction
     !! Jacobians) and dy/dx from VMEC++'s implicit adjoint (tiago_equilibrium); the
     !! idia = 1 phiedge term is added analytically.
     use, intrinsic :: iso_fortran_env, only: dp => real64, i32 => int32, error_unit
-    use, intrinsic :: ieee_arithmetic, only: ieee_value, ieee_quiet_nan
-    use fortnum_status, only: fortnum_status_t, status_set, FORTNUM_OK, FORTNUM_CONVERGENCE_ERROR
-    use fortopt_least_squares, only: least_squares_t, levenberg_marquardt_t, &
-        least_squares_options_t, least_squares_result_t
+    use, intrinsic :: ieee_arithmetic, only: ieee_value, ieee_quiet_nan, ieee_is_finite
     use tiago_diagnostic_types, only: flux_loop_t, segmented_rogowski_t, bprobe_t
     use tiago_flux_loops, only: finalize_flux_signals
     use tiago_vacuum_forward, only: vacuum_solver_t, quadrature_rule_t
@@ -73,8 +70,8 @@ module tiago_reconstruction
 
     type(reconstruction_t), public, target, save :: rec
 
-    ! cache of the last residual and Jacobian (fortopt callbacks carry no context)
-    real(dp), allocatable, save :: cache_x(:), cache_r(:), cache_jx(:), cache_j(:, :)
+    ! the last residual and Jacobian with their parameters
+    real(dp), allocatable, save :: cache_rx(:), cache_r(:), cache_jx(:), cache_j(:, :)
 
     public :: n_rows, parameters_of, model_signals, residual_at, jacobian_at
     public :: fit, covariance, synthesize, signal_value
@@ -86,7 +83,7 @@ contains
     end function n_rows
 
     function parameters_of(z) result(x)
-        !! fortopt works on scaled parameters z = x / scale.
+        !! Parameters from scaled parameters z = x / scale.
         real(dp), intent(in) :: z(:)
         real(dp) :: x(size(z))
         x = z * rec%scale
@@ -203,16 +200,26 @@ contains
     end function signal_value
 
     subroutine residual_at(x, r)
+        !! Whitened residuals at x; a repeated x returns the last result without
+        !! counting a new evaluation.
         real(dp), intent(in) :: x(:)
         real(dp), intent(out) :: r(:)
         real(dp), allocatable :: flux(:), seg(:), probe(:)
         integer :: i, k
         logical :: ok
 
+        if (allocated(cache_rx)) then
+            if (size(cache_rx) == size(x)) then
+                if (all(cache_rx == x)) then
+                    r = cache_r
+                    return
+                end if
+            end if
+        end if
         call model_signals(x, flux, seg, probe, ok)
         rec%evaluations = rec%evaluations + 1
         if (.not. ok) then
-            ! the line search backtracks from non-finite residuals
+            ! the fit rejects a step to non-finite residuals
             r = ieee_value(1.0_dp, ieee_quiet_nan)
             write(*, '(A,I4,A)') 'evaluation ', rec%evaluations, ': no equilibrium, step rejected'
             return
@@ -229,6 +236,8 @@ contains
             r(rec%n_meas + rec%n_fb + i) = (x(k) - rec%prior(k)) / rec%prior_sigma(k)
         end do
         rec%history = [rec%history, sum(r**2)]
+        cache_rx = x
+        cache_r = r
         write(*, '(A,I4,A,ES12.4,A,*(1X,A,"=",ES13.6))') 'evaluation ', rec%evaluations, &
             ': chi^2 = ', sum(r**2), ' ', (trim(rec%names(k)), x(k), k = 1, rec%n)
     end subroutine residual_at
@@ -378,107 +387,108 @@ contains
         end do
     end subroutine jacobian_at
 
-    ! ---- fortopt callbacks on scaled parameters z = x / scale -------------------
-
-    subroutine value_cb(z, residual, status)
-        real(dp), intent(in) :: z(:)
-        real(dp), intent(out) :: residual(:)
-        type(fortnum_status_t), intent(out) :: status
-        real(dp), allocatable :: x(:)
-
-        x = parameters_of(z)
-        if (allocated(cache_x)) then
-            if (all(cache_x == x)) then
-                residual = cache_r
-                call status_set(status, FORTNUM_OK, '')
-                return
+    subroutine jacobian_cached(x, jac)
+        !! jacobian_at, reusing the last result at the same x (the fit ends at an
+        !! accepted point whose Jacobian the covariance needs again).
+        real(dp), intent(in) :: x(:)
+        real(dp), allocatable, intent(out) :: jac(:, :)
+        if (allocated(cache_jx)) then
+            if (size(cache_jx) == size(x)) then
+                if (all(cache_jx == x)) then
+                    jac = cache_j
+                    return
+                end if
             end if
         end if
-        call residual_at(x, residual)
-        cache_x = x
-        cache_r = residual
-        call status_set(status, FORTNUM_OK, '')
-    end subroutine value_cb
-
-    subroutine ensure_jacobian(z)
-        real(dp), intent(in) :: z(:)
-        real(dp), allocatable :: x(:), jx(:, :)
-        integer :: k
-
-        x = parameters_of(z)
-        if (allocated(cache_jx)) then
-            if (all(cache_jx == x)) return
-        end if
-        call jacobian_at(x, jx)
-        do k = 1, rec%n
-            jx(:, k) = jx(:, k) * rec%scale(k)
-        end do
-        cache_j = jx
+        call jacobian_at(x, jac)
         cache_jx = x
-    end subroutine ensure_jacobian
-
-    subroutine jvp_cb(z, direction, residual_dot, status)
-        real(dp), intent(in) :: z(:), direction(:)
-        real(dp), intent(out) :: residual_dot(:)
-        type(fortnum_status_t), intent(out) :: status
-
-        call ensure_jacobian(z)
-        residual_dot = matmul(cache_j, direction)
-        call status_set(status, FORTNUM_OK, '')
-    end subroutine jvp_cb
-
-    subroutine vjp_cb(z, residual_bar, gradient, status)
-        real(dp), intent(in) :: z(:), residual_bar(:)
-        real(dp), intent(out) :: gradient(:)
-        type(fortnum_status_t), intent(out) :: status
-
-        call ensure_jacobian(z)
-        gradient = matmul(residual_bar, cache_j)
-        call status_set(status, FORTNUM_OK, '')
-    end subroutine vjp_cb
+        cache_j = jac
+    end subroutine jacobian_cached
 
     subroutine fit(x, max_iterations, steps, message)
-        !! Levenberg-Marquardt from x (updated in place).
+        !! Levenberg-Marquardt (Madsen, Nielsen and Tingleff 2004, with Marquardt
+        !! scaling) from x, updated in place, on the scaled parameters x / scale.
+        !! A trial point costs a VMEC++ solve, so the fit stops as soon as the
+        !! Gauss-Newton model predicts a chi^2 decrease below the reproducibility
+        !! of chi^2 (~1e-3: equilibria are solved to FTOL, hot-restarted), rather
+        !! than probing the noise floor with further solves.
         real(dp), intent(inout) :: x(:)
         integer, intent(in) :: max_iterations
         integer, intent(out) :: steps
         character(len=:), allocatable, intent(out) :: message
-        type(least_squares_t) :: problem
-        type(levenberg_marquardt_t) :: lm
-        type(least_squares_options_t) :: options
-        type(least_squares_result_t) :: result
-        type(fortnum_status_t) :: status
-        real(dp), allocatable :: z(:)
+        real(dp), parameter :: floor = 1.0e-3_dp
+        real(dp), allocatable :: r(:), r_trial(:), jac(:, :), a(:, :), m(:, :), g(:), h(:), d(:)
+        real(dp), allocatable :: x_trial(:)
+        real(dp) :: chi2, chi2_trial, predicted, rho, mu, nu
+        integer :: n, i, info
+        external :: dposv
 
-        call problem%initialize(rec%n, n_rows(), value_cb, jvp_cb, vjp_cb, status)
-        options%max_iterations = max_iterations
-        ! Stop at VMEC++'s noise floor: with FTOL ~ 1e-14 chi^2 is reproducible
-        ! to ~1e-3, so smaller changes (and steps below 1e-4 of the parameter
-        ! scales) carry no information.
-        options%gradient_tolerance = 1.0e-10_dp
-        options%step_tolerance = 1.0e-4_dp
-        options%objective_tolerance = 1.0e-3_dp
-        ! A rejected step raises the damping after one halving instead of halving
-        ! a Gauss-Newton-like step many times: every trial is a VMEC++ solve.
-        options%max_backtracking = 2
-        options%max_damping_attempts = 6
-        z = x / rec%scale
-        call lm%minimize(problem, z, options, result, status)
-        x = parameters_of(z)
-        steps = result%accepted_steps
-        message = trim(status%msg)
-        if (status%code /= FORTNUM_OK) then
-            if (steps > 0 .and. status%code == FORTNUM_CONVERGENCE_ERROR) then
-                ! no decrease left at the noise floor of the equilibrium solves
-                message = 'converged (no further decrease of chi^2)'
-            else
-                write(error_unit, '(A)') 'WARNING: Levenberg-Marquardt: '//message
-            end if
-        else if (result%state%converged) then
-            message = 'converged'
-        else
-            message = 'iteration limit reached'
+        n = size(x)
+        allocate(r(n_rows()), r_trial(n_rows()))
+        call residual_at(x, r)
+        if (.not. all(ieee_is_finite(r))) then
+            message = 'no equilibrium at the start values'
+            steps = 0
+            return
         end if
+        chi2 = sum(r**2)
+        call jacobian_cached(x, jac)
+        jac = jac * spread(rec%scale, 1, size(jac, 1))
+        a = matmul(transpose(jac), jac)
+        g = matmul(transpose(jac), r)
+        mu = 1.0e-3_dp
+        nu = 2.0_dp
+        steps = 0
+        message = 'iteration limit reached'
+        do while (steps < max_iterations)
+            ! (A + mu diag(A)) h = -g
+            d = [(max(a(i, i), tiny(1.0_dp)), i = 1, n)]
+            m = a
+            do i = 1, n
+                m(i, i) = m(i, i) + mu * d(i)
+            end do
+            h = -g
+            call dposv('U', n, 1, m, n, h, n, info)
+            if (info /= 0) then
+                mu = mu * nu
+                nu = 2.0_dp * nu
+                cycle
+            end if
+            ! chi2 decrease predicted by the linear model
+            predicted = -2.0_dp * dot_product(h, g) - dot_product(h, matmul(a, h))
+            if (predicted <= floor) then
+                message = 'converged (predicted chi^2 decrease below the solver noise floor)'
+                exit
+            end if
+            if (maxval(abs(h)) <= 1.0e-8_dp * (maxval(abs(x / rec%scale)) + 1.0e-8_dp)) then
+                message = 'converged (step below 1e-8 of the parameters)'
+                exit
+            end if
+            x_trial = x + h * rec%scale
+            call residual_at(x_trial, r_trial)
+            chi2_trial = sum(r_trial**2)
+            rho = -1.0_dp
+            if (ieee_is_finite(chi2_trial)) rho = (chi2 - chi2_trial) / predicted
+            if (rho > 0.0_dp) then
+                x = x_trial
+                r = r_trial
+                chi2 = chi2_trial
+                steps = steps + 1
+                call jacobian_cached(x, jac)
+                jac = jac * spread(rec%scale, 1, size(jac, 1))
+                a = matmul(transpose(jac), jac)
+                g = matmul(transpose(jac), r)
+                mu = mu * max(1.0_dp / 3.0_dp, 1.0_dp - (2.0_dp * rho - 1.0_dp)**3)
+                nu = 2.0_dp
+            else
+                mu = mu * nu
+                nu = 2.0_dp * nu
+                if (mu > 1.0e12_dp) then
+                    message = 'converged (no further decrease of chi^2)'
+                    exit
+                end if
+            end if
+        end do
     end subroutine fit
 
     subroutine covariance(x, cov, jac, info)
@@ -489,7 +499,7 @@ contains
         external :: dpotrf, dpotri
         integer :: i, j
 
-        call jacobian_at(x, jac)
+        call jacobian_cached(x, jac)
         cov = matmul(transpose(jac), jac)
         call dpotrf('U', rec%n, cov, rec%n, info)
         if (info /= 0) return

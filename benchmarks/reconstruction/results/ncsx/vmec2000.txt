@@ -1,0 +1,4 @@
+VMEC2000 solve (1 core): 98.7 s wall, 60 MB peak
+flux      35 signals: max |VMEC++ - VMEC2000| / max |signal| = 4.1e-05
+segrog    25 signals: max |VMEC++ - VMEC2000| / max |signal| = 1.6e-03
+bprobes   20 signals: max |VMEC++ - VMEC2000| / max |signal| = 3.4e-04

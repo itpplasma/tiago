@@ -1,1 +1,1 @@
-36.3 s wall (1 thread)
+21.8 s wall (1 thread)

@@ -2,7 +2,8 @@
 # around the plasma, in DIAGNO format: diamagnetic loops (idia = 1), toroidal
 # loops, saddle loops and segmented Rogowskis on nphi x nth patches, one
 # Ampere Rogowski around the plasma, and nprobe B-probes with pseudo-random
-# orientations (fixed seed).
+# orientations (fixed seed; own Park-Miller generator, since awk's srand/rand
+# sequences differ between implementations and, for mawk, between runs).
 # Usage: awk -v R0=1.42 -v rs=0.85 -v nphi=6 -v nth=4 -v nprobe=20 -v dir=DIR -f sensors.awk
 function torus(r0, r, phi, th) {
     X = (r0 + r * cos(th)) * cos(phi); Y = (r0 + r * cos(th)) * sin(phi); Z = r * sin(th)
@@ -11,6 +12,7 @@ function point(file, area) {
     if (area == "") printf " % .12E % .12E % .12E\n", X, Y, Z > file
     else printf " % .12E % .12E % .12E % .12E\n", X, Y, Z, area > file
 }
+function uniform() { seed = (16807 * seed) % 2147483647; return seed / 2147483647 }
 function header(file, n, idia, label) { printf "%6d%6d%6d %-48s\n", n, 0, idia, label > file }
 BEGIN {
     pi = atan2(0, -1); side = 6; seg_area = 3.4e-4
@@ -44,10 +46,12 @@ BEGIN {
     for (i = 0; i < 101; i++) {
         t = 2 * pi * i / 100; X = R0 + 0.9 * cos(t); Y = 0; Z = 0.9 * sin(t); point(seg, seg_area / 100)
     }
-    srand(1)
+    seed = 12345
     printf "%d\n", nprobe > probes
     for (k = 0; k < nprobe; k++) {
-        torus(R0, rs, 2 * pi * k / nprobe, 2 * pi * rand())
-        printf " % .12E % .12E % .12E % .12E % .12E % .12E\n", X, Y, Z, 360 * rand(), 180 * rand(), 1.0e-3 > probes
+        torus(R0, rs, 2 * pi * k / nprobe, 2 * pi * uniform())
+        azimuth = 360 * uniform()
+        polar = 180 * uniform()
+        printf " % .12E % .12E % .12E % .12E % .12E % .12E\n", X, Y, Z, azimuth, polar, 1.0e-3 > probes
     }
 }

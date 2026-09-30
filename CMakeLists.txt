@@ -71,25 +71,18 @@ add_library(tiago_build_config STATIC ${TIAGO_GENERATED_DIR}/tiago_config.f90)
 add_executable(tiago_vacuum_cli src/cli/tiago_vacuum_cli.f90)
 target_link_libraries(tiago_vacuum_cli PRIVATE tiago_solver tiago_build_config)
 
-# Equilibrium reconstruction (tiago_reconstruct): Levenberg-Marquardt from
-# fortopt (on fortnum), figures from fortplot, equilibria and their adjoint
-# from VMEC++ (C++, built below).
+# Equilibrium reconstruction (tiago_reconstruct): Levenberg-Marquardt in Tiago
+# (LAPACK), figures from fortplot, equilibria and their adjoint from VMEC++
+# (C++, built below).
 option(TIAGO_ENABLE_RECONSTRUCTION
-    "Build tiago_reconstruct (fetches fortnum, fortopt, fortplot and VMEC++)" OFF)
+    "Build tiago_reconstruct (fetches fortplot and VMEC++)" OFF)
 if(TIAGO_ENABLE_RECONSTRUCTION)
     enable_language(C)
     set(FORTPLOT_BUILD_FORTARRAY_ADAPTER OFF CACHE BOOL "" FORCE)
-    FetchContent_Declare(fortnum
-        GIT_REPOSITORY https://github.com/lazy-fortran/fortnum.git
-        GIT_TAG 1a52e13c5e28b09d083947a6ec7e8a1dcf9d502e)
-    FetchContent_Declare(fortopt
-        GIT_REPOSITORY https://github.com/lazy-fortran/fortopt.git
-        GIT_TAG 883aa7ee0a3f2b3a508d0309b907adccc30a0f29
-        SOURCE_SUBDIR none)
     FetchContent_Declare(fortplot
         GIT_REPOSITORY https://github.com/lazy-fortran/fortplot.git
         GIT_TAG af5f26e1d35547e9136faec0ba87c1279ae8f04f)
-    FetchContent_MakeAvailable(fortnum fortopt fortplot)
+    FetchContent_MakeAvailable(fortplot)
     find_package(LAPACK REQUIRED)
 
     # VMEC++ (C++) for fixed-boundary equilibria and their exact implicit
@@ -158,10 +151,6 @@ end module tiago_vmecpp_paths
 ")
     set_source_files_properties(${TIAGO_GENERATED_DIR}/tiago_vmecpp_paths.f90 PROPERTIES
         COMPILE_OPTIONS -ffree-line-length-none)
-    add_library(tiago_fortopt STATIC
-        ${fortopt_SOURCE_DIR}/src/fortopt_objective.f90
-        ${fortopt_SOURCE_DIR}/src/fortopt_least_squares.f90)
-    target_link_libraries(tiago_fortopt PUBLIC fortnum)
     add_library(tiago_reconstruction STATIC
         ${TIAGO_GENERATED_DIR}/tiago_vmecpp_paths.f90
         src/equilibrium/vmecpp.f90
@@ -172,7 +161,7 @@ end module tiago_vmecpp_paths
     set_target_properties(tiago_reconstruction PROPERTIES
         Fortran_STANDARD 2018
         Fortran_STANDARD_REQUIRED YES)
-    target_link_libraries(tiago_reconstruction PUBLIC ${TIAGO_LIBOMP} tiago_solver tiago_fortopt
+    target_link_libraries(tiago_reconstruction PUBLIC ${TIAGO_LIBOMP} tiago_solver
         fortplot::fortplot tiago_vmecpp_adapter ${LAPACK_LIBRARIES})
     set_target_properties(tiago_reconstruction PROPERTIES LINKER_LANGUAGE Fortran)
     add_dependencies(tiago_reconstruction indata2json)
