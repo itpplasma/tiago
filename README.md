@@ -21,6 +21,7 @@ cmake -S . -B build
 cmake --build build
 # optional: -DTIAGO_LIBNEO_TAG=<commit> to use another libneo, and
 # -DCMAKE_Fortran_FLAGS="-march=native" for a machine-specific build
+# (about 2x faster Biot-Savart kernels through AVX vectorisation)
 
 # or the convenience wrappers
 make              # configures + builds
@@ -40,7 +41,10 @@ Pass extra cache entries through `CMAKE_ARGS`, e.g.
     --segrog-turns tests/cases/ncsx_nfp3/segrog_turns.csv
 ```
 This command emits `tiago_flux.csv` and `tiago_segrog.csv` in the output
-directory (names via `--flux-out`, `--segrog-out`). `--nfp` matches the field-period geometry,
+directory (names via `--flux-out`, `--segrog-out`). `--samples` sets the points
+per segment (midpoint rule, as DIAGNO's `int_type='midpoint'`); `--gauss` uses
+Gauss-Legendre points instead, which converge far faster (8 Gauss points are
+typically more accurate than thousands of midpoint samples). `--nfp` matches the field-period geometry,
 while `--flux-turns` / `--segrog-turns` accept text files of `label scale`
 pairs so Tiago mirrors DIAGNO's namelist-based `flux_turns` and
 `segrog_turns` arrays.

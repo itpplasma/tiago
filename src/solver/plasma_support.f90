@@ -225,7 +225,7 @@ contains
     end subroutine plasma_finalize
 
     subroutine plasma_sample_bfield(self, points, bfield)
-        !! points(:, 1:3) [m] -> plasma field bfield(:, 1:3) [T]
+        !! points(3, n) [m] -> plasma field bfield(3, n) [T]
         class(plasma_support_t), intent(in) :: self
         real(dp), intent(in) :: points(:, :)
         real(dp), intent(out) :: bfield(:, :)
@@ -236,23 +236,23 @@ contains
         if (.not. self%enabled) return
         rmin = huge(1.0_dp)
 !$omp parallel do schedule(static) private(i, k, d, r2, r, acc) reduction(min:rmin)
-        do i = 1, size(points, 1)
+        do i = 1, size(points, 2)
             acc = 0.0_dp
             do k = 1, size(self%xs, 2)
-                d = points(i, :) - self%xs(:, k)
+                d = points(:, i) - self%xs(:, k)
                 r2 = dot_product(d, d)
                 r = sqrt(r2)
                 rmin = min(rmin, r)
                 acc = acc + cross(self%sheet(:, k), d) / (r2 * r)
             end do
-            bfield(i, :) = acc
+            bfield(:, i) = acc
         end do
 !$omp end parallel do
         call warn_if_close(self, rmin)
     end subroutine plasma_sample_bfield
 
     subroutine plasma_sample_vector_potential(self, points, avec)
-        !! points(:, 1:3) [m] -> plasma vector potential avec(:, 1:3) [T m]
+        !! points(3, n) [m] -> plasma vector potential avec(3, n) [T m]
         class(plasma_support_t), intent(in) :: self
         real(dp), intent(in) :: points(:, :)
         real(dp), intent(out) :: avec(:, :)
@@ -263,15 +263,15 @@ contains
         if (.not. self%enabled) return
         rmin = huge(1.0_dp)
 !$omp parallel do schedule(static) private(i, k, d, r, acc) reduction(min:rmin)
-        do i = 1, size(points, 1)
+        do i = 1, size(points, 2)
             acc = 0.0_dp
             do k = 1, size(self%xs, 2)
-                d = points(i, :) - self%xs(:, k)
+                d = points(:, i) - self%xs(:, k)
                 r = sqrt(dot_product(d, d))
                 rmin = min(rmin, r)
                 acc = acc + self%sheet(:, k) / r
             end do
-            avec(i, :) = acc
+            avec(:, i) = acc
         end do
 !$omp end parallel do
         call warn_if_close(self, rmin)

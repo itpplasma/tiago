@@ -1,42 +1,46 @@
 module tiago_vacuum_forward
+    !! Forward model for flux loops, segmented Rogowskis and magnetic probes.
+    !!
+    !! Every diagnostic is reduced to quadrature points x_j with weighted line
+    !! elements dl_j; all points are evaluated in one batch by the coil kernels
+    !! (and the plasma sheet-current model if enabled):
+    !!     flux loop   sum_j A(x_j) . dl_j          (closed polygon, DIAGNO iflflg)
+    !!     Rogowski    sum_j eff_area B(x_j) . dl_j (open path)
+    !!     probe       eff_area B(x) . n
     use, intrinsic :: iso_fortran_env, only: dp => real64, i32 => int32
     use neo_biotsavart_field, only: biotsavart_field_t
     use tiago_coil_loader, only: load_coils_into_field
-    use neo_biotsavart, only: coils_init
-    use tiago_diagnostic_types, only: flux_loop_t, segmented_rogowski_t, &
-        loop_point_t, bprobe_t
+    use tiago_coil_kernels, only: coil_set_t, build_coil_set
+    use tiago_diagnostic_types, only: flux_loop_t, segmented_rogowski_t, bprobe_t
     use tiago_plasma_support, only: plasma_support_t
     implicit none
     private
 
-    real(dp), parameter :: min_segment_length = 1.0e-10_dp
     real(dp), parameter :: pi = acos(-1.0_dp)
-    real(dp), parameter :: two_pi = 2.0_dp * pi
-    real(dp), parameter :: meters_to_cm = 100.0_dp
-    real(dp), parameter :: gauss_to_tesla = 1.0e-4_dp
-    real(dp), parameter :: amps_to_statamp = 2.9979245368431e9_dp
-    real(dp), parameter :: maxwell_to_weber = 1.0e-8_dp
 
     type :: quadrature_rule_t
+        !> Points per segment: midpoint rule (DIAGNO int_type='midpoint') or
+        !> Gauss-Legendre, which converges much faster for smooth integrands.
         integer(i32) :: samples_per_segment = 6_i32
+        logical :: gauss = .false.
     end type quadrature_rule_t
 
-
     type :: vacuum_solver_t
-        type(biotsavart_field_t) :: field
+        type(coil_set_t) :: coils
         logical :: is_ready = .false.
         integer(i32) :: nfp = 1_i32
         type(plasma_support_t) :: plasma
-        integer, allocatable :: group(:)           !! coil group of every coil point
-        real(dp), allocatable :: unit_current(:)   !! current per unit EXTCUR (statamp)
+        real(dp), allocatable :: x(:), y(:), z(:)  !! coil nodes [m] (response matrices)
+        integer, allocatable :: group(:)           !! coil group of every node
+        real(dp), allocatable :: unit_current(:)   !! current per unit EXTCUR [A]
     contains
         procedure :: init => vacuum_solver_init
         procedure :: finalize => vacuum_solver_finalize
+        procedure :: set_nfp => vacuum_solver_set_nfp
+        procedure :: enable_plasma_from_vmec => vacuum_solver_enable_plasma_from_vmec
         procedure :: flux_loops => vacuum_solver_flux_loops
         procedure :: segrog => vacuum_solver_segrog
-        procedure :: set_nfp => vacuum_solver_set_nfp
         procedure :: flux_and_segrog => vacuum_solver_flux_and_segrog
-        procedure :: enable_plasma_from_vmec => vacuum_solver_enable_plasma_from_vmec
         procedure :: bprobes => vacuum_solver_bprobes
         procedure :: response => vacuum_solver_response
         procedure :: n_groups => vacuum_solver_n_groups
@@ -46,30 +50,32 @@ module tiago_vacuum_forward
     public :: quadrature_rule_t
 
 contains
+
     subroutine vacuum_solver_init(self, coil_file, coil_extcur)
+        !! An empty coil_file gives a coil-free (plasma-only) solver.
         class(vacuum_solver_t), intent(inout) :: self
         character(len=*), intent(in) :: coil_file
         character(len=*), intent(in), optional :: coil_extcur
-        real(dp) :: no_points(0)
+        type(biotsavart_field_t) :: field
 
         if (len_trim(coil_file) == 0) then
-            ! No coils: plasma-only evaluation.
-            call coils_init(no_points, no_points, no_points, no_points, self%field%coils)
-            allocate(self%group(0), self%unit_current(0))
+            allocate(self%x(0), self%y(0), self%z(0), self%group(0), self%unit_current(0))
+            self%coils = build_coil_set(self%x, self%y, self%z, self%unit_current)
             self%is_ready = .true.
             return
         end if
 
         if (present(coil_extcur)) then
-            call load_coils_into_field(self%field, trim(coil_file), trim(coil_extcur), &
+            call load_coils_into_field(field, trim(coil_file), trim(coil_extcur), &
                 self%group, self%unit_current)
         else
-            call load_coils_into_field(self%field, trim(coil_file), groups=self%group, &
+            call load_coils_into_field(field, trim(coil_file), groups=self%group, &
                 unit_current=self%unit_current)
         end if
-
-        call scale_coils_to_cgs(self%field)
-        self%unit_current = self%unit_current * amps_to_statamp
+        self%x = field%coils%x
+        self%y = field%coils%y
+        self%z = field%coils%z
+        self%coils = build_coil_set(self%x, self%y, self%z, field%coils%current)
         self%is_ready = .true.
     end subroutine vacuum_solver_init
 
@@ -95,30 +101,23 @@ contains
         call self%plasma%init_from_vmec(trim(wout_file), nphi, ntheta)
     end subroutine vacuum_solver_enable_plasma_from_vmec
 
+    integer function vacuum_solver_n_groups(self)
+        class(vacuum_solver_t), intent(in) :: self
+        vacuum_solver_n_groups = 0
+        if (allocated(self%group)) then
+            if (size(self%group) > 0) vacuum_solver_n_groups = maxval(self%group)
+        end if
+    end function vacuum_solver_n_groups
+
     subroutine vacuum_solver_flux_loops(self, loops, fluxes, rule)
         class(vacuum_solver_t), intent(in) :: self
         type(flux_loop_t), allocatable, intent(in) :: loops(:)
         real(dp), allocatable, intent(out) :: fluxes(:)
         type(quadrature_rule_t), intent(in), optional :: rule
 
-        integer :: i
-        type(quadrature_rule_t) :: q
-
         call assert_ready(self)
-        if (present(rule)) q = rule
-        if (.not. allocated(loops)) call abort_with('flux loop array not set')
-        if (allocated(fluxes)) deallocate(fluxes)
-        allocate(fluxes(size(loops)))
-
-!$omp parallel do default(shared) private(i)
-        do i = 1, size(loops)
-            fluxes(i) = evaluate_loop_flux(self%field, loops(i), q, &
-                self%nfp)
-        end do
-!$omp end parallel do
-        if (self%plasma%has_data()) then
-            call add_plasma_flux(self, loops, fluxes, q)
-        end if
+        if (.not. allocated(loops)) error stop 'flux loop array not set'
+        fluxes = loop_fluxes(self, self%coils, loops, rule_or_default(rule), .true.)
     end subroutine vacuum_solver_flux_loops
 
     subroutine vacuum_solver_segrog(self, diagnostics, voltages, rule)
@@ -127,25 +126,9 @@ contains
         real(dp), allocatable, intent(out) :: voltages(:)
         type(quadrature_rule_t), intent(in), optional :: rule
 
-        integer :: i
-        type(quadrature_rule_t) :: q
-
         call assert_ready(self)
-        if (present(rule)) q = rule
-        if (.not. allocated(diagnostics)) then
-            call abort_with('segmented Rogowski array not set')
-        end if
-        if (allocated(voltages)) deallocate(voltages)
-        allocate(voltages(size(diagnostics)))
-
-!$omp parallel do default(shared) private(i)
-        do i = 1, size(diagnostics)
-            voltages(i) = evaluate_segrog_signal(self%field, diagnostics(i), q)
-        end do
-!$omp end parallel do
-        if (self%plasma%has_data()) then
-            call add_plasma_segrog(self, diagnostics, voltages, q)
-        end if
+        if (.not. allocated(diagnostics)) error stop 'segmented Rogowski array not set'
+        voltages = segrog_signals(self, self%coils, diagnostics, rule_or_default(rule), .true.)
     end subroutine vacuum_solver_segrog
 
     subroutine vacuum_solver_flux_and_segrog(self, loops, fluxes, diagnostics, &
@@ -157,73 +140,18 @@ contains
         real(dp), allocatable, intent(out) :: voltages(:)
         type(quadrature_rule_t), intent(in), optional :: rule
 
-        integer :: i
-        type(quadrature_rule_t) :: q
-
-        call assert_ready(self)
-        if (present(rule)) q = rule
-        if (.not. allocated(loops)) call abort_with('flux loop array not set')
-        if (.not. allocated(diagnostics)) then
-            call abort_with('segmented Rogowski array not set')
-        end if
-        if (allocated(fluxes)) deallocate(fluxes)
-        if (allocated(voltages)) deallocate(voltages)
-        allocate(fluxes(size(loops)))
-        allocate(voltages(size(diagnostics)))
-
-        ! Single flattened loop: compute all flux loops, then all segrog diagnostics
-        ! This distributes work evenly across threads without intermediate barriers
-!$omp parallel do default(shared) private(i)
-        do i = 1, size(loops) + size(diagnostics)
-            if (i <= size(loops)) then
-                fluxes(i) = evaluate_loop_flux(self%field, loops(i), q, &
-                    self%nfp)
-            else
-                voltages(i - size(loops)) = evaluate_segrog_signal(self%field, &
-                    diagnostics(i - size(loops)), q)
-            end if
-        end do
-!$omp end parallel do
-        if (self%plasma%has_data()) then
-            call add_plasma_flux(self, loops, fluxes, q)
-            call add_plasma_segrog(self, diagnostics, voltages, q)
-        end if
+        call self%flux_loops(loops, fluxes, rule)
+        call self%segrog(diagnostics, voltages, rule)
     end subroutine vacuum_solver_flux_and_segrog
-
-    integer function vacuum_solver_n_groups(self)
-        class(vacuum_solver_t), intent(in) :: self
-        vacuum_solver_n_groups = 0
-        if (allocated(self%group)) then
-            if (size(self%group) > 0) vacuum_solver_n_groups = maxval(self%group)
-        end if
-    end function vacuum_solver_n_groups
 
     subroutine vacuum_solver_bprobes(self, probes, signals)
         !! eff_area * B . normal at every probe (coils + plasma), before turns.
         class(vacuum_solver_t), intent(in) :: self
         type(bprobe_t), intent(in) :: probes(:)
         real(dp), allocatable, intent(out) :: signals(:)
-        real(dp) :: points(size(probes), 3), bplasma(size(probes), 3)
-        integer :: i
 
         call assert_ready(self)
-        allocate(signals(size(probes)))
-!$omp parallel do default(shared) private(i) schedule(dynamic)
-        do i = 1, size(probes)
-            signals(i) = probes(i)%eff_area * &
-                dot_product(coil_bfield(self%field, probes(i)%position), probes(i)%normal)
-        end do
-!$omp end parallel do
-        if (self%plasma%has_data()) then
-            do i = 1, size(probes)
-                points(i, :) = probes(i)%position
-            end do
-            call self%plasma%sample_bfield(points, bplasma)
-            do i = 1, size(probes)
-                signals(i) = signals(i) + probes(i)%eff_area * dot_product(bplasma(i, :), &
-                    probes(i)%normal)
-            end do
-        end if
+        signals = probe_signals(self, self%coils, probes, .true.)
     end subroutine vacuum_solver_bprobes
 
     subroutine vacuum_solver_response(self, loops, segs, probes, flux_resp, seg_resp, &
@@ -238,16 +166,15 @@ contains
         real(dp), allocatable, intent(out) :: flux_resp(:, :), seg_resp(:, :), probe_resp(:, :)
         type(quadrature_rule_t), intent(in), optional :: rule
 
-        type(vacuum_solver_t) :: unit_solver
-        real(dp), allocatable :: values(:)
+        type(coil_set_t) :: group_coils
+        type(quadrature_rule_t) :: q
+        logical, allocatable :: in_group(:)
         integer :: g, ng
 
         call assert_ready(self)
+        q = rule_or_default(rule)
         ng = self%n_groups()
-        unit_solver%field = self%field
-        unit_solver%nfp = self%nfp
-        unit_solver%is_ready = .true.
-        allocate(flux_resp(0, 0), seg_resp(0, 0), probe_resp(0, 0))
+        allocate(flux_resp(0, ng), seg_resp(0, ng), probe_resp(0, ng))
         if (allocated(loops)) then
             deallocate(flux_resp)
             allocate(flux_resp(size(loops), ng))
@@ -261,464 +188,227 @@ contains
             allocate(probe_resp(size(probes), ng))
         end if
         do g = 1, ng
-            unit_solver%field%coils%current = merge(self%unit_current, 0.0_dp, self%group == g)
-            if (allocated(loops)) then
-                call unit_solver%flux_loops(loops, values, rule)
-                flux_resp(:, g) = values
-            end if
-            if (allocated(segs)) then
-                call unit_solver%segrog(segs, values, rule)
-                seg_resp(:, g) = values
-            end if
-            if (allocated(probes)) then
-                call unit_solver%bprobes(probes, values)
-                probe_resp(:, g) = values
-            end if
+            ! A group's coils end with a zero-current node, so dropping the other
+            ! groups' nodes cannot join coils; the cost is one evaluation in total.
+            in_group = self%group == g
+            group_coils = build_coil_set(pack(self%x, in_group), pack(self%y, in_group), &
+                pack(self%z, in_group), pack(self%unit_current, in_group))
+            if (allocated(loops)) flux_resp(:, g) = loop_fluxes(self, group_coils, loops, q, .false.)
+            if (allocated(segs)) seg_resp(:, g) = segrog_signals(self, group_coils, segs, q, .false.)
+            if (allocated(probes)) probe_resp(:, g) = probe_signals(self, group_coils, probes, .false.)
         end do
     end subroutine vacuum_solver_response
 
-    function coil_bfield(field, x) result(b)
-        !! Coil field [T] at x [m] (Hanson-Hirshman, all coil segments).
-        type(biotsavart_field_t), intent(in) :: field
-        real(dp), intent(in) :: x(3)
-        real(dp) :: b(3)
-        real(dp) :: xc(3), dl(3), ri(3), rf(3), l, r_i, r_f, eps
-        integer :: k
+    function loop_fluxes(self, coils, loops, rule, with_plasma) result(fluxes)
+        class(vacuum_solver_t), intent(in) :: self
+        type(coil_set_t), intent(in) :: coils
+        type(flux_loop_t), intent(in) :: loops(:)
+        type(quadrature_rule_t), intent(in) :: rule
+        logical, intent(in) :: with_plasma
+        real(dp) :: fluxes(size(loops))
+        real(dp), allocatable :: points(:, :), dls(:, :), a(:, :), ap(:, :)
+        integer, allocatable :: owner(:)
+        integer :: j
 
-        b = 0.0_dp
-        xc = x * meters_to_cm
-        do k = 1, size(field%coils%x) - 1
-            if (field%coils%current(k) == 0.0_dp) cycle
-            dl = [field%coils%x(k + 1) - field%coils%x(k), field%coils%y(k + 1) - &
-                field%coils%y(k), field%coils%z(k + 1) - field%coils%z(k)]
-            l = norm2(dl)
-            if (l == 0.0_dp) cycle
-            ri = xc - [field%coils%x(k), field%coils%y(k), field%coils%z(k)]
-            rf = ri - dl
-            r_i = norm2(ri)
-            r_f = norm2(rf)
-            eps = l / (r_i + r_f)
-            b = b + field%coils%current(k) / 2.99792458e10_dp * &
-                [dl(2) * ri(3) - dl(3) * ri(2), dl(3) * ri(1) - dl(1) * ri(3), &
-                 dl(1) * ri(2) - dl(2) * ri(1)] / (l * r_i * r_f) * 2.0_dp * eps / (1.0_dp - eps**2)
+        call sample_loops(loops, self%nfp, rule, points, dls, owner)
+        allocate(a(3, size(owner)))
+        call coils%vector_potential(points, a)
+        if (with_plasma .and. self%plasma%has_data()) then
+            allocate(ap(3, size(owner)))
+            call self%plasma%sample_vector_potential(points, ap)
+            a = a + ap
+        end if
+        fluxes = 0.0_dp
+        do j = 1, size(owner)
+            fluxes(owner(j)) = fluxes(owner(j)) + dot_product(a(:, j), dls(:, j))
         end do
-        b = b * gauss_to_tesla
-    end function coil_bfield
+        do j = 1, size(loops)
+            if (loops(j)%one_period) fluxes(j) = fluxes(j) * real(self%nfp, dp)
+        end do
+    end function loop_fluxes
+
+    function segrog_signals(self, coils, segs, rule, with_plasma) result(signals)
+        class(vacuum_solver_t), intent(in) :: self
+        type(coil_set_t), intent(in) :: coils
+        type(segmented_rogowski_t), intent(in) :: segs(:)
+        type(quadrature_rule_t), intent(in) :: rule
+        logical, intent(in) :: with_plasma
+        real(dp) :: signals(size(segs))
+        real(dp), allocatable :: points(:, :), dls(:, :), b(:, :), bp(:, :)
+        integer, allocatable :: owner(:)
+        integer :: j
+
+        call sample_segrogs(segs, rule, points, dls, owner)
+        allocate(b(3, size(owner)))
+        call coils%field(points, b)
+        if (with_plasma .and. self%plasma%has_data()) then
+            allocate(bp(3, size(owner)))
+            call self%plasma%sample_bfield(points, bp)
+            b = b + bp
+        end if
+        signals = 0.0_dp
+        do j = 1, size(owner)
+            signals(owner(j)) = signals(owner(j)) + dot_product(b(:, j), dls(:, j))
+        end do
+    end function segrog_signals
+
+    function probe_signals(self, coils, probes, with_plasma) result(signals)
+        class(vacuum_solver_t), intent(in) :: self
+        type(coil_set_t), intent(in) :: coils
+        type(bprobe_t), intent(in) :: probes(:)
+        logical, intent(in) :: with_plasma
+        real(dp) :: signals(size(probes))
+        real(dp) :: points(3, size(probes)), b(3, size(probes)), bp(3, size(probes))
+        integer :: j
+
+        do j = 1, size(probes)
+            points(:, j) = probes(j)%position
+        end do
+        call coils%field(points, b)
+        if (with_plasma .and. self%plasma%has_data()) then
+            call self%plasma%sample_bfield(points, bp)
+            b = b + bp
+        end if
+        do j = 1, size(probes)
+            signals(j) = probes(j)%eff_area * dot_product(b(:, j), probes(j)%normal)
+        end do
+    end function probe_signals
+
+    subroutine sample_loops(loops, nfp, rule, points, dls, owner)
+        !! Quadrature points of closed flux loops. DIAGNO semantics: the last
+        !! point connects back to the first, or for iflflg=1 to the first point
+        !! rotated by one field period.
+        type(flux_loop_t), intent(in) :: loops(:)
+        integer(i32), intent(in) :: nfp
+        type(quadrature_rule_t), intent(in) :: rule
+        real(dp), allocatable, intent(out) :: points(:, :), dls(:, :)
+        integer, allocatable, intent(out) :: owner(:)
+        real(dp), allocatable :: t(:), w(:)
+        real(dp) :: a(3), b(3)
+        integer :: i, seg, k, n, m
+
+        call segment_rule(rule, t, w)
+        m = size(t)
+        n = 0
+        do i = 1, size(loops)
+            n = n + size(loops(i)%points) * m
+        end do
+        allocate(points(3, n), dls(3, n), owner(n))
+        n = 0
+        do i = 1, size(loops)
+            do seg = 1, size(loops(i)%points)
+                a = xyz(loops(i), seg)
+                if (seg < size(loops(i)%points)) then
+                    b = xyz(loops(i), seg + 1)
+                else if (loops(i)%one_period) then
+                    b = rotate_z(xyz(loops(i), 1), 2.0_dp * pi / real(nfp, dp))
+                else
+                    b = xyz(loops(i), 1)
+                end if
+                do k = 1, m
+                    n = n + 1
+                    points(:, n) = a + t(k) * (b - a)
+                    dls(:, n) = w(k) * (b - a)
+                    owner(n) = i
+                end do
+            end do
+        end do
+    end subroutine sample_loops
+
+    subroutine sample_segrogs(segs, rule, points, dls, owner)
+        !! Quadrature points of open Rogowski paths; line elements carry eff_area.
+        type(segmented_rogowski_t), intent(in) :: segs(:)
+        type(quadrature_rule_t), intent(in) :: rule
+        real(dp), allocatable, intent(out) :: points(:, :), dls(:, :)
+        integer, allocatable, intent(out) :: owner(:)
+        real(dp), allocatable :: t(:), w(:)
+        real(dp) :: a(3), b(3)
+        integer :: i, seg, k, n, m
+
+        call segment_rule(rule, t, w)
+        m = size(t)
+        n = 0
+        do i = 1, size(segs)
+            n = n + (size(segs(i)%path) - 1) * m
+        end do
+        allocate(points(3, n), dls(3, n), owner(n))
+        n = 0
+        do i = 1, size(segs)
+            do seg = 1, size(segs(i)%path) - 1
+                a = [segs(i)%path(seg)%x, segs(i)%path(seg)%y, segs(i)%path(seg)%z]
+                b = [segs(i)%path(seg + 1)%x, segs(i)%path(seg + 1)%y, segs(i)%path(seg + 1)%z]
+                do k = 1, m
+                    n = n + 1
+                    points(:, n) = a + t(k) * (b - a)
+                    dls(:, n) = w(k) * segs(i)%segment_area(seg) * (b - a)
+                    owner(n) = i
+                end do
+            end do
+        end do
+    end subroutine sample_segrogs
+
+    subroutine segment_rule(rule, t, w)
+        !! Nodes t in (0, 1) and weights w (sum 1) of the per-segment rule.
+        type(quadrature_rule_t), intent(in) :: rule
+        real(dp), allocatable, intent(out) :: t(:), w(:)
+        integer :: n, k
+
+        n = max(1_i32, rule%samples_per_segment)
+        allocate(t(n), w(n))
+        if (rule%gauss) then
+            call gauss_legendre(n, t, w)
+        else
+            t = [((real(k, dp) - 0.5_dp) / real(n, dp), k = 1, n)]
+            w = 1.0_dp / real(n, dp)
+        end if
+    end subroutine segment_rule
+
+    subroutine gauss_legendre(n, t, w)
+        !! n-point Gauss-Legendre rule mapped to [0, 1] (Newton on P_n).
+        integer, intent(in) :: n
+        real(dp), intent(out) :: t(n), w(n)
+        real(dp) :: x, p0, p1, p2, dp_dx
+        integer :: i, k, iter
+
+        do i = 1, n
+            x = cos(pi * (real(i, dp) - 0.25_dp) / (real(n, dp) + 0.5_dp))
+            do iter = 1, 100
+                p0 = 1.0_dp
+                p1 = x
+                do k = 2, n
+                    p2 = ((2 * k - 1) * x * p1 - (k - 1) * p0) / k
+                    p0 = p1
+                    p1 = p2
+                end do
+                dp_dx = n * (x * p1 - p0) / (x * x - 1.0_dp)
+                x = x - p1 / dp_dx
+                if (abs(p1 / dp_dx) < 1.0e-15_dp) exit
+            end do
+            t(i) = 0.5_dp * (1.0_dp - x)
+            w(i) = 1.0_dp / ((1.0_dp - x * x) * dp_dx * dp_dx)
+        end do
+    end subroutine gauss_legendre
+
+    function xyz(loop, i) result(p)
+        type(flux_loop_t), intent(in) :: loop
+        integer, intent(in) :: i
+        real(dp) :: p(3)
+        p = [loop%points(i)%x, loop%points(i)%y, loop%points(i)%z]
+    end function xyz
+
+    pure function rotate_z(p, angle) result(q)
+        real(dp), intent(in) :: p(3), angle
+        real(dp) :: q(3)
+        q = [p(1) * cos(angle) - p(2) * sin(angle), p(1) * sin(angle) + p(2) * cos(angle), p(3)]
+    end function rotate_z
+
+    type(quadrature_rule_t) function rule_or_default(rule)
+        type(quadrature_rule_t), intent(in), optional :: rule
+        if (present(rule)) rule_or_default = rule
+    end function rule_or_default
 
     subroutine assert_ready(self)
         class(vacuum_solver_t), intent(in) :: self
-        if (.not. self%is_ready) call abort_with('vacuum solver not initialised')
+        if (.not. self%is_ready) error stop 'vacuum solver not initialised'
     end subroutine assert_ready
-
-    function evaluate_loop_flux(field, loop, rule, nfp) result(flux)
-        type(biotsavart_field_t), intent(in) :: field
-        type(flux_loop_t), intent(in) :: loop
-        type(quadrature_rule_t), intent(in) :: rule
-        integer(i32), intent(in) :: nfp
-        real(dp) :: flux
-
-        integer :: seg
-        integer :: samples
-        real(dp) :: dl(3)
-        real(dp) :: start_point(3)
-        real(dp) :: end_point(3)
-        real(dp) :: weight
-
-        flux = 0.0_dp
-        samples = max(1_i32, rule%samples_per_segment)
-        weight = 1.0_dp / real(samples, dp)
-
-        ! DIAGNO semantics: a flux loop is always closed. For iflflg=1 the
-        ! closing point is the first point rotated by one field period and the
-        ! result is multiplied by nfp.
-        do seg = 1, size(loop%points)
-            call loop_segment(loop, seg, nfp, start_point, end_point)
-            dl = end_point - start_point
-            flux = flux + integrate_segment(field, start_point, dl, samples, weight)
-        end do
-
-        flux = flux * maxwell_to_weber
-        if (loop%one_period) flux = flux * real(nfp, dp)
-    end function evaluate_loop_flux
-
-    real(dp) function integrate_segment(field, start_point, dl, samples, weight)
-        type(biotsavart_field_t), intent(in) :: field
-        real(dp), intent(in) :: start_point(3)
-        real(dp), intent(in) :: dl(3)
-        integer(i32), intent(in) :: samples
-        real(dp), intent(in) :: weight
-
-        integer :: s, coil_i
-        real(dp) :: a_field(3)
-        real(dp) :: step
-        real(dp) :: sample_point_cm(3)
-        real(dp) :: dl_cm(3)
-        real(dp) :: start_point_cm(3)
-        real(dp) :: dx_i(3), dx_f(3), dl_coil(3)
-        real(dp) :: R_i, R_f, L, eps, log_term
-        real(dp) :: clight_param
-        integer :: n_coil_segments
-
-        integrate_segment = 0.0_dp
-        start_point_cm = start_point * meters_to_cm
-        dl_cm = dl * meters_to_cm
-
-        ! Cache coil parameters
-        n_coil_segments = size(field%coils%x) - 1
-        clight_param = 2.99792458d10  ! Speed of light in CGS
-
-        ! Coil loop OUTERMOST - keep coil data in L1D cache
-        ! This achieves ~95% L1D hit rate vs ~10% with sample loop outermost
-        do coil_i = 1, n_coil_segments
-            ! Get coil segment vector (stays in L1D for all samples)
-            dl_coil(1) = field%coils%x(coil_i + 1) - field%coils%x(coil_i)
-            dl_coil(2) = field%coils%y(coil_i + 1) - field%coils%y(coil_i)
-            dl_coil(3) = field%coils%z(coil_i + 1) - field%coils%z(coil_i)
-            L = sqrt(dl_coil(1)**2 + dl_coil(2)**2 + dl_coil(3)**2)
-            ! Duplicated points and inter-coil jumpers carry no field (and L=0 gives 0/0).
-            if (L == 0.0_dp .or. field%coils%current(coil_i) == 0.0_dp) cycle
-
-            ! Sample loop inner - compute contribution from coil_i to all samples
-            do s = 1, samples
-                step = (real(s, dp) - 0.5_dp) / real(samples, dp)
-                sample_point_cm = start_point_cm + step * dl_cm
-
-                ! Hanson-Hirshman formula for vector potential contribution
-                ! from coil segment coil_i to sample_point_cm
-                dx_i(1) = sample_point_cm(1) - field%coils%x(coil_i)
-                dx_i(2) = sample_point_cm(2) - field%coils%y(coil_i)
-                dx_i(3) = sample_point_cm(3) - field%coils%z(coil_i)
-                R_i = sqrt(dx_i(1)**2 + dx_i(2)**2 + dx_i(3)**2)
-
-                dx_f(1) = sample_point_cm(1) - field%coils%x(coil_i + 1)
-                dx_f(2) = sample_point_cm(2) - field%coils%y(coil_i + 1)
-                dx_f(3) = sample_point_cm(3) - field%coils%z(coil_i + 1)
-                R_f = sqrt(dx_f(1)**2 + dx_f(2)**2 + dx_f(3)**2)
-
-                eps = L / (R_i + R_f)
-                log_term = log((1.0_dp + eps) / (1.0_dp - eps))
-
-                ! Accumulate vector potential from this coil segment
-                a_field(1) = (field%coils%current(coil_i) / clight_param) * &
-                    (dl_coil(1) / L) * log_term
-                a_field(2) = (field%coils%current(coil_i) / clight_param) * &
-                    (dl_coil(2) / L) * log_term
-                a_field(3) = (field%coils%current(coil_i) / clight_param) * &
-                    (dl_coil(3) / L) * log_term
-
-                integrate_segment = integrate_segment + &
-                    weight * (a_field(1) * dl_cm(1) + &
-                              a_field(2) * dl_cm(2) + &
-                              a_field(3) * dl_cm(3))
-            end do
-        end do
-    end function integrate_segment
-
-    function evaluate_segrog_signal(field, diagnostic, rule) result(voltage)
-        type(biotsavart_field_t), intent(in) :: field
-        type(segmented_rogowski_t), intent(in) :: diagnostic
-        type(quadrature_rule_t), intent(in) :: rule
-        real(dp) :: voltage
-
-        integer :: seg
-        integer :: samples
-        real(dp) :: start_point(3)
-        real(dp) :: end_point(3)
-        real(dp) :: dl(3)
-        real(dp) :: tangent(3)
-        real(dp) :: norm_dl
-        real(dp) :: weight
-
-        samples = max(1_i32, rule%samples_per_segment)
-        weight = 1.0_dp / real(samples, dp)
-        voltage = 0.0_dp
-
-        do seg = 1, size(diagnostic%path) - 1
-            call extract_path_segment(diagnostic, seg, start_point, end_point)
-            dl = end_point - start_point
-            norm_dl = max(min_segment_length, sqrt(sum(dl**2)))
-            tangent = dl / norm_dl
-            voltage = voltage + diagnostic%segment_area(seg) * &
-                integrate_segrog_segment(field, start_point, dl, norm_dl, tangent, &
-                samples, weight)
-        end do
-    end function evaluate_segrog_signal
-
-    real(dp) function integrate_segrog_segment(field, start_point, dl, &
-            norm_dl, tangent, samples, weight)
-        type(biotsavart_field_t), intent(in) :: field
-        real(dp), intent(in) :: start_point(3)
-        real(dp), intent(in) :: dl(3)
-        real(dp), intent(in) :: norm_dl
-        real(dp), intent(in) :: tangent(3)
-        integer(i32), intent(in) :: samples
-        real(dp), intent(in) :: weight
-
-        integer :: s, coil_i
-        real(dp) :: step
-        real(dp) :: sample_point(3)
-        real(dp) :: b_field(3)
-        real(dp) :: sample_point_cm(3)
-        real(dp) :: dx_i(3), dx_f(3), dl_coil(3), dl_coil_hat(3), dx_i_hat(3)
-        real(dp) :: R_i, R_f, L, eps, cross_prod(3)
-        real(dp) :: clight_param
-        integer :: n_coil_segments
-
-        integrate_segrog_segment = 0.0_dp
-
-        ! Cache coil parameters
-        n_coil_segments = size(field%coils%x) - 1
-        clight_param = 2.99792458d10  ! Speed of light in CGS
-
-        ! Coil loop OUTERMOST - keep coil data in L1D cache
-        ! This achieves ~95% L1D hit rate vs ~10% with sample loop outermost
-        do coil_i = 1, n_coil_segments
-            ! Get coil segment vector (stays in L1D for all samples)
-            dl_coil(1) = field%coils%x(coil_i + 1) - field%coils%x(coil_i)
-            dl_coil(2) = field%coils%y(coil_i + 1) - field%coils%y(coil_i)
-            dl_coil(3) = field%coils%z(coil_i + 1) - field%coils%z(coil_i)
-            L = sqrt(dl_coil(1)**2 + dl_coil(2)**2 + dl_coil(3)**2)
-            ! Duplicated points and inter-coil jumpers carry no field (and L=0 gives 0/0).
-            if (L == 0.0_dp .or. field%coils%current(coil_i) == 0.0_dp) cycle
-            dl_coil_hat(1) = dl_coil(1) / L
-            dl_coil_hat(2) = dl_coil(2) / L
-            dl_coil_hat(3) = dl_coil(3) / L
-
-            ! Sample loop inner - compute contribution from coil_i to all samples
-            do s = 1, samples
-                step = (real(s, dp) - 0.5_dp) / real(samples, dp)
-                sample_point = start_point + step * dl
-                sample_point_cm = sample_point * meters_to_cm
-
-                ! Hanson-Hirshman formula for magnetic field contribution
-                ! from coil segment coil_i to sample_point_cm
-                dx_i(1) = sample_point_cm(1) - field%coils%x(coil_i)
-                dx_i(2) = sample_point_cm(2) - field%coils%y(coil_i)
-                dx_i(3) = sample_point_cm(3) - field%coils%z(coil_i)
-                R_i = sqrt(dx_i(1)**2 + dx_i(2)**2 + dx_i(3)**2)
-
-                dx_f(1) = sample_point_cm(1) - field%coils%x(coil_i + 1)
-                dx_f(2) = sample_point_cm(2) - field%coils%y(coil_i + 1)
-                dx_f(3) = sample_point_cm(3) - field%coils%z(coil_i + 1)
-                R_f = sqrt(dx_f(1)**2 + dx_f(2)**2 + dx_f(3)**2)
-
-                ! Normalized vector from segment start to sample point
-                dx_i_hat(1) = dx_i(1) / R_i
-                dx_i_hat(2) = dx_i(2) / R_i
-                dx_i_hat(3) = dx_i(3) / R_i
-
-                ! Cross product: dl_hat × dx_i_hat
-                cross_prod(1) = dl_coil_hat(2) * dx_i_hat(3) - &
-                                dl_coil_hat(3) * dx_i_hat(2)
-                cross_prod(2) = dl_coil_hat(3) * dx_i_hat(1) - &
-                                dl_coil_hat(1) * dx_i_hat(3)
-                cross_prod(3) = dl_coil_hat(1) * dx_i_hat(2) - &
-                                dl_coil_hat(2) * dx_i_hat(1)
-
-                eps = L / (R_i + R_f)
-
-                ! Accumulate magnetic field from this coil segment
-                b_field(1) = (field%coils%current(coil_i) / clight_param) * &
-                    cross_prod(1) * (1.0_dp / R_f) * &
-                    (2.0_dp * eps / (1.0_dp - eps**2))
-                b_field(2) = (field%coils%current(coil_i) / clight_param) * &
-                    cross_prod(2) * (1.0_dp / R_f) * &
-                    (2.0_dp * eps / (1.0_dp - eps**2))
-                b_field(3) = (field%coils%current(coil_i) / clight_param) * &
-                    cross_prod(3) * (1.0_dp / R_f) * &
-                    (2.0_dp * eps / (1.0_dp - eps**2))
-
-                ! Convert from Gauss to Tesla and accumulate
-                b_field = b_field * gauss_to_tesla
-
-                integrate_segrog_segment = integrate_segrog_segment + weight * &
-                    (b_field(1) * tangent(1) + &
-                     b_field(2) * tangent(2) + &
-                     b_field(3) * tangent(3)) * norm_dl
-            end do
-        end do
-    end function integrate_segrog_segment
-
-    subroutine loop_segment(loop, seg, nfp, start_point, end_point)
-        !! Segment seg of a closed flux loop; for iflflg=1 loops the closing
-        !! point is the first point rotated by one field period.
-        type(flux_loop_t), intent(in) :: loop
-        integer, intent(in) :: seg
-        integer(i32), intent(in) :: nfp
-        real(dp), intent(out) :: start_point(3), end_point(3)
-
-        call segment_endpoints(loop, seg, start_point, end_point)
-        if (seg == size(loop%points) .and. loop%one_period) then
-            call rotate_point(start_point_of(loop), two_pi / real(nfp, dp), end_point)
-        end if
-    end subroutine loop_segment
-
-    subroutine add_plasma_flux(self, loops, fluxes, rule)
-        !! Plasma part of every flux loop, sum over samples of A_plasma . dl,
-        !! evaluated in one batch (the plasma kernel is itself parallel).
-        class(vacuum_solver_t), intent(in) :: self
-        type(flux_loop_t), intent(in) :: loops(:)
-        real(dp), intent(inout) :: fluxes(:)
-        type(quadrature_rule_t), intent(in) :: rule
-
-        real(dp), allocatable :: points(:, :), dls(:, :), avec(:, :)
-        integer, allocatable :: owner(:)
-        real(dp) :: a(3), b(3), plasma_flux(size(loops))
-        integer :: i, seg, s, n, samples
-
-        n = 0
-        do i = 1, size(loops)
-            n = n + size(loops(i)%points) * &
-                sample_count(rule)
-        end do
-        allocate(points(n, 3), dls(n, 3), owner(n), avec(n, 3))
-        n = 0
-        do i = 1, size(loops)
-            samples = sample_count(rule)
-            do seg = 1, size(loops(i)%points)
-                call loop_segment(loops(i), seg, self%nfp, a, b)
-                do s = 1, samples
-                    n = n + 1
-                    points(n, :) = a + (real(s, dp) - 0.5_dp) / real(samples, dp) * (b - a)
-                    dls(n, :) = (b - a) / real(samples, dp)
-                    owner(n) = i
-                end do
-            end do
-        end do
-
-        call self%plasma%sample_vector_potential(points, avec)
-        plasma_flux = 0.0_dp
-        do s = 1, n
-            plasma_flux(owner(s)) = plasma_flux(owner(s)) + dot_product(avec(s, :), dls(s, :))
-        end do
-        do i = 1, size(loops)
-            if (loops(i)%one_period) plasma_flux(i) = plasma_flux(i) * real(self%nfp, dp)
-        end do
-        fluxes = fluxes + plasma_flux
-    end subroutine add_plasma_flux
-
-    subroutine add_plasma_segrog(self, diagnostics, voltages, rule)
-        !! Plasma part of every segmented Rogowski, sum of eff_area * B_plasma . dl.
-        class(vacuum_solver_t), intent(in) :: self
-        type(segmented_rogowski_t), intent(in) :: diagnostics(:)
-        real(dp), intent(inout) :: voltages(:)
-        type(quadrature_rule_t), intent(in) :: rule
-
-        real(dp), allocatable :: points(:, :), dls(:, :), bvec(:, :)
-        integer, allocatable :: owner(:)
-        real(dp) :: a(3), b(3)
-        integer :: i, seg, s, n, samples
-
-        n = 0
-        do i = 1, size(diagnostics)
-            n = n + (size(diagnostics(i)%path) - 1) * &
-                sample_count(rule)
-        end do
-        allocate(points(n, 3), dls(n, 3), owner(n), bvec(n, 3))
-        n = 0
-        do i = 1, size(diagnostics)
-            samples = sample_count(rule)
-            do seg = 1, size(diagnostics(i)%path) - 1
-                call extract_path_segment(diagnostics(i), seg, a, b)
-                do s = 1, samples
-                    n = n + 1
-                    points(n, :) = a + (real(s, dp) - 0.5_dp) / real(samples, dp) * (b - a)
-                    dls(n, :) = (b - a) / real(samples, dp) * diagnostics(i)%segment_area(seg)
-                    owner(n) = i
-                end do
-            end do
-        end do
-
-        call self%plasma%sample_bfield(points, bvec)
-        do s = 1, n
-            voltages(owner(s)) = voltages(owner(s)) + dot_product(bvec(s, :), dls(s, :))
-        end do
-    end subroutine add_plasma_segrog
-
-    integer function sample_count(rule)
-        type(quadrature_rule_t), intent(in) :: rule
-        sample_count = max(1_i32, rule%samples_per_segment)
-    end function sample_count
-
-    function start_point_of(loop) result(point)
-        type(flux_loop_t), intent(in) :: loop
-        real(dp) :: point(3)
-
-        point = [loop%points(1)%x, loop%points(1)%y, loop%points(1)%z]
-    end function start_point_of
-
-    subroutine segment_endpoints(loop, index, start_point, end_point)
-        type(flux_loop_t), intent(in) :: loop
-        integer, intent(in) :: index
-        real(dp), intent(out) :: start_point(3)
-        real(dp), intent(out) :: end_point(3)
-
-        type(loop_point_t) :: p1
-        type(loop_point_t) :: p2
-        integer :: start_idx
-        integer :: end_idx
-
-        start_idx = index
-        end_idx = next_index(loop, index)
-        p1 = loop%points(start_idx)
-        p2 = loop%points(end_idx)
-        start_point = [p1%x, p1%y, p1%z]
-        end_point = [p2%x, p2%y, p2%z]
-    end subroutine segment_endpoints
-
-    subroutine extract_path_segment(diagnostic, index, start_point, end_point)
-        type(segmented_rogowski_t), intent(in) :: diagnostic
-        integer, intent(in) :: index
-        real(dp), intent(out) :: start_point(3)
-        real(dp), intent(out) :: end_point(3)
-
-        start_point = [diagnostic%path(index)%x, diagnostic%path(index)%y, &
-            diagnostic%path(index)%z]
-        end_point = [diagnostic%path(index + 1)%x, &
-            diagnostic%path(index + 1)%y, diagnostic%path(index + 1)%z]
-    end subroutine extract_path_segment
-
-    integer function next_index(loop, current)
-        type(flux_loop_t), intent(in) :: loop
-        integer, intent(in) :: current
-        integer :: npts
-
-        npts = size(loop%points)
-        if (current == npts) then
-            next_index = 1
-        else
-            next_index = current + 1
-        end if
-    end function next_index
-
-
-    subroutine abort_with(message)
-        character(len=*), intent(in) :: message
-        error stop trim(message)
-    end subroutine abort_with
-
-    subroutine rotate_point(point, angle, rotated)
-        real(dp), intent(in) :: point(3)
-        real(dp), intent(in) :: angle
-        real(dp), intent(out) :: rotated(3)
-
-        real(dp) :: cang
-        real(dp) :: sang
-
-        cang = cos(angle)
-        sang = sin(angle)
-        rotated(1) = point(1) * cang - point(2) * sang
-        rotated(2) = point(1) * sang + point(2) * cang
-        rotated(3) = point(3)
-    end subroutine rotate_point
-
-    subroutine scale_coils_to_cgs(field)
-        type(biotsavart_field_t), intent(inout) :: field
-
-        if (.not. allocated(field%coils%x)) return
-        field%coils%x = field%coils%x * meters_to_cm
-        field%coils%y = field%coils%y * meters_to_cm
-        field%coils%z = field%coils%z * meters_to_cm
-        field%coils%current = field%coils%current * amps_to_statamp
-    end subroutine scale_coils_to_cgs
 end module tiago_vacuum_forward

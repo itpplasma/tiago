@@ -129,7 +129,7 @@ class Runner:
         return dt, fl, sg
 
     def tiago_run(self, d: Path, coil: Path, flux, seg, ns: int, nthreads: int = 1, nfp: int = 1,
-                  turn_files=None):
+                  turn_files=None, gauss=False):
         out = d / "tiago"
         shutil.rmtree(out, ignore_errors=True)
         cmd = [self.tiago, str(coil), str(flux or ""), str(seg or ""),
@@ -137,6 +137,8 @@ class Runner:
                "--samples", str(ns), "--nfp", str(nfp), "--output-dir", str(out)]
         for option, path in (turn_files or {}).items():
             cmd += [option, str(path)]
+        if gauss:
+            cmd.append("--gauss")
         t0 = time.perf_counter()
         p = subprocess.run(cmd, env=dict(ENV, OMP_NUM_THREADS=str(nthreads)),
                            stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True)
@@ -213,7 +215,9 @@ def run_case(r: Runner, name, coil, flux_entries, seg_entries, nfp=1, flags=None
         tt1, tf, ts = trun(ns, 1)
         ttn, _, _ = trun(ns, r.ncpu)
         x, t = merged(xf, xs), merged(tf, ts)
-        rows.append(dict(samples=ns, t_xdiagno_1=tx1, t_xdiagno_n=txn, t_tiago_1=tt1,
+        tg, gf, gs = r.tiago_run(d, coil, flux, seg, ns, r.ncpu, nfp, turn_files, gauss=True)
+        rows.append(dict(samples=ns, t_tiago_gauss_n=tg, quad_err_tiago_gauss=compare(merged(gf, gs), t64)["med"],
+                         t_xdiagno_1=tx1, t_xdiagno_n=txn, t_tiago_1=tt1,
                          t_tiago_n=ttn, vs_xdiagno=compare(t, x),
                          quad_err_xdiagno=compare(x, x64)["med"],
                          quad_err_tiago=compare(t, t64)["med"]))
@@ -548,6 +552,19 @@ def report(results, ncpu) -> str:
                     f"| {fmt(v['med'])} / {fmt(v['max'])} | {v['missing']} / {v['nonfinite']} "
                     f"| {fmt(row['quad_err_xdiagno'])} / {fmt(row['quad_err_tiago'])} |")
         out.append("")
+        geo = results.get("geometry", [])
+        if geo:
+            out += ["### Quadrature: midpoint vs Gauss-Legendre (Tiago, `--gauss`)", "",
+                    "Median deviation from the converged 64-sample midpoint result, and wall "
+                    f"time on {ncpu} threads, at equal points per segment.", "",
+                    "| case | samples | midpoint error | midpoint time | Gauss error | Gauss time |",
+                    "|---|---:|---:|---:|---:|---:|"]
+            for c in geo:
+                for row in c["rows"]:
+                    out.append(f"| {c['case']} | {row['samples']} | {fmt(row['quad_err_tiago'])} | "
+                               f"{row['t_tiago_n']:.2f} | {fmt(row['quad_err_tiago_gauss'])} | "
+                               f"{row['t_tiago_gauss_n']:.2f} |")
+            out.append("")
     if "features" in results:
         f = results["features"]
         out += ["### Magnetic probes and response matrices (NCSX coils, vacuum)", "",

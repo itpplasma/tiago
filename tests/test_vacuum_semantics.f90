@@ -29,6 +29,7 @@ program test_vacuum_semantics
     call test_file_formats()
     call test_bprobe_square_center()
     call test_response_reconstructs_signals()
+    call test_gauss_quadrature()
 
     call solver%finalize()
     if (failures > 0) then
@@ -207,7 +208,7 @@ contains
         probes(1)%normal = [0.0_dp, 0.0_dp, 1.0_dp]
         call solver%bprobes(probes, signal)
         call check_close('B-probe at square-loop centre', signal(1), &
-            2.0_dp * sqrt(2.0_dp) * 4.0e-7_dp * pi / pi, 1.0e-7_dp)  ! CGS constants: 1.4e-8 off
+            2.0_dp * sqrt(2.0_dp) * 4.0e-7_dp * pi / pi, 1.0e-12_dp)
     end subroutine test_bprobe_square_center
 
     subroutine test_response_reconstructs_signals()
@@ -238,6 +239,28 @@ contains
             3.0_dp * fr(1, 1) - 2.0_dp * fr(1, 2), flux(1), 1.0e-12_dp)
         call two%finalize()
     end subroutine test_response_reconstructs_signals
+
+    subroutine test_gauss_quadrature()
+        !! Gauss-Legendre converges spectrally: 8 points per segment agree with 32
+        !! (midpoint needs thousands of samples for the same accuracy).
+        type(flux_loop_t), allocatable :: loops(:)
+        type(quadrature_rule_t) :: g8, g32
+        real(dp), allocatable :: f8(:), f32(:)
+        integer :: ierr
+        character(len=:), allocatable :: message
+
+        call write_text('gauss.diagno', '1' // new_line('a') // '4 0 0 SQ' // new_line('a') // &
+            '0.2 0.2 0.1' // new_line('a') // '0.8 0.2 0.1' // new_line('a') // &
+            '0.8 0.8 0.1' // new_line('a') // '0.2 0.8 0.1')
+        call read_flux_loop_file('gauss.diagno', loops, ierr, message)
+        g8%samples_per_segment = 8
+        g8%gauss = .true.
+        g32%samples_per_segment = 32
+        g32%gauss = .true.
+        call solver%flux_loops(loops, f8, g8)
+        call solver%flux_loops(loops, f32, g32)
+        call check_close('8-point Gauss = 32-point Gauss', f8(1), f32(1), 1.0e-9_dp)
+    end subroutine test_gauss_quadrature
 
     subroutine write_symmetric_coils(path, nfp)
         !! nfp tilted square coils, rotated copies of each other.

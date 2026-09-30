@@ -27,6 +27,7 @@ set_target_properties(tiago_diagnostics PROPERTIES
 target_link_libraries(tiago_diagnostics PUBLIC LIBNEO::neo)
 
 add_library(tiago_solver STATIC
+    src/solver/coil_kernels.f90
     src/solver/vacuum_forward.f90
     src/solver/coil_loader.f90
     src/solver/plasma_support.f90)
@@ -40,6 +41,10 @@ target_link_libraries(tiago_solver PUBLIC tiago_diagnostics)
 set(TIAGO_WOUT_SIMSOPT_SMALL_URL
     "https://raw.githubusercontent.com/hiddenSymmetries/simsopt/9e027eac38028d57aa23777be52a781aa860e347/tests/test_files/wout_li383_low_res_reference.nc")
 set(TIAGO_WOUT_SIMSOPT_SMALL ${CMAKE_BINARY_DIR}/tests/cases/wout_li383_low_res_reference.nc)
+
+# Lets gfortran vectorise log/sqrt in the Biot-Savart kernels (glibc vector math);
+# results are unchanged, only errno is not set.
+set_source_files_properties(src/solver/coil_kernels.f90 PROPERTIES COMPILE_OPTIONS -fno-math-errno)
 
 set(TIAGO_GENERATED_DIR ${CMAKE_BINARY_DIR}/generated)
 file(MAKE_DIRECTORY ${TIAGO_GENERATED_DIR})

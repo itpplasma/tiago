@@ -33,6 +33,7 @@ program tiago_vacuum_cli
     character(len=512) :: bprobe_path = '', bprobe_out_path = 'tiago_bprobes.csv'
     character(len=512) :: bprobe_turn_path = '', response_out_path = ''
     logical :: rphiz = .false.
+    logical :: use_gauss = .false.   ! Gauss-Legendre instead of midpoint samples
 
     argc = command_argument_count()
     call check_help(argc)
@@ -169,6 +170,8 @@ subroutine parse_options(argc, output_dir, flux_out_path, segrog_out_path, &
             call get_command_argument(i, bprobe_turn_path)
         case ('--rphiz')
             rphiz = .true.
+        case ('--gauss')
+            use_gauss = .true.
         case ('--response-out')
             i = i + 1
             call ensure_arg(argc, i, '--response-out')
@@ -329,6 +332,7 @@ subroutine run_solver(coil_path, flux_path, segrog_path, output_dir, &
     call ensure_directory(output_dir)
 
     rule%samples_per_segment = samples_per_segment
+    rule%gauss = use_gauss
     if (len_trim(coil_extcur_path) > 0) then
         call solver%init(coil_path, coil_extcur_path)
     else
@@ -607,7 +611,7 @@ subroutine usage_and_stop(status)
     integer, intent(in) :: status
     write(error_unit, '(A)') 'Usage: tiago_vacuum_cli <coil> <flux> <segrog>   (pass "" to omit one)'
     write(error_unit, '(A)') '       [--output-dir dir] [--flux-out file]'
-    write(error_unit, '(A)') '       [--segrog-out file] [--samples N]'
+    write(error_unit, '(A)') '       [--segrog-out file] [--samples N] [--gauss]'
     write(error_unit, '(A)') '       [--seg-area value] [--nfp value]'
     write(error_unit, '(A)') '       [--coil-extcur vmec_input_or_list]'
     write(error_unit, '(A)') '       [--flux-turns file] [--segrog-turns file]'

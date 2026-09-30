@@ -13,7 +13,7 @@ program test_plasma_support
     type(plasma_support_t) :: plasma
     character(len=512) :: wout
     real(dp) :: ctor, rmajor, aminor, t, circ, flux_a, flux_b, h
-    real(dp) :: pts(n, 3), dls(n, 3), field(n, 3), sq(4, 3), sq_dl(4, 3), a(4, 3), c(1, 3), bc(1, 3)
+    real(dp) :: pts(3, n), dls(3, n), field(3, n), sq(3, 4), sq_dl(3, 4), a(3, 4), c(3, 1), bc(3, 1)
     integer :: k, failures
 
     failures = 0
@@ -24,8 +24,8 @@ program test_plasma_support
     ! 1. Ampere around the plasma cross-section at phi = 0 (circle in the x-z plane).
     do k = 1, n
         t = 2.0_dp * pi * (real(k, dp) - 0.5_dp) / real(n, dp)
-        pts(k, :) = [rmajor + 3.0_dp * aminor * cos(t), 0.0_dp, 3.0_dp * aminor * sin(t)]
-        dls(k, :) = [-sin(t), 0.0_dp, cos(t)] * 3.0_dp * aminor * 2.0_dp * pi / real(n, dp)
+        pts(:, k) = [rmajor + 3.0_dp * aminor * cos(t), 0.0_dp, 3.0_dp * aminor * sin(t)]
+        dls(:, k) = [-sin(t), 0.0_dp, cos(t)] * 3.0_dp * aminor * 2.0_dp * pi / real(n, dp)
     end do
     call plasma%sample_bfield(pts, field)
     circ = sum(field * dls)
@@ -33,19 +33,19 @@ program test_plasma_support
 
     ! 2. curl A = B on a 1 cm square in the x-y plane outside the plasma.
     h = 0.01_dp
-    c(1, :) = [rmajor + 3.0_dp * aminor, 0.0_dp, 0.1_dp]
-    sq(1, :) = c(1, :) + [0.5_dp * h, 0.0_dp, 0.0_dp]
-    sq(2, :) = c(1, :) + [0.0_dp, 0.5_dp * h, 0.0_dp]
-    sq(3, :) = c(1, :) - [0.5_dp * h, 0.0_dp, 0.0_dp]
-    sq(4, :) = c(1, :) - [0.0_dp, 0.5_dp * h, 0.0_dp]
-    sq_dl(1, :) = [0.0_dp, h, 0.0_dp]
-    sq_dl(2, :) = [-h, 0.0_dp, 0.0_dp]
-    sq_dl(3, :) = [0.0_dp, -h, 0.0_dp]
-    sq_dl(4, :) = [h, 0.0_dp, 0.0_dp]
+    c(:, 1) = [rmajor + 3.0_dp * aminor, 0.0_dp, 0.1_dp]
+    sq(:, 1) = c(:, 1) + [0.5_dp * h, 0.0_dp, 0.0_dp]
+    sq(:, 2) = c(:, 1) + [0.0_dp, 0.5_dp * h, 0.0_dp]
+    sq(:, 3) = c(:, 1) - [0.5_dp * h, 0.0_dp, 0.0_dp]
+    sq(:, 4) = c(:, 1) - [0.0_dp, 0.5_dp * h, 0.0_dp]
+    sq_dl(:, 1) = [0.0_dp, h, 0.0_dp]
+    sq_dl(:, 2) = [-h, 0.0_dp, 0.0_dp]
+    sq_dl(:, 3) = [0.0_dp, -h, 0.0_dp]
+    sq_dl(:, 4) = [h, 0.0_dp, 0.0_dp]
     call plasma%sample_vector_potential(sq, a)
     call plasma%sample_bfield(c, bc)
     flux_a = sum(a * sq_dl)
-    flux_b = bc(1, 3) * h * h
+    flux_b = bc(3, 1) * h * h
     call check('curl A = B (small loop flux)', flux_a, flux_b, 1.0e-4_dp)
 
     call plasma%finalize()

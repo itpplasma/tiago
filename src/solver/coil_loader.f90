@@ -212,13 +212,14 @@ contains
     end subroutine read_stellopt_coils
 
     subroutine parse_coil_line(line, x, y, z, current, has_group, group_id)
+        !! "x y z I [group name]": only the closing line of a coil has a group.
         character(len=*), intent(in) :: line
         real(dp), intent(out) :: x, y, z, current
         logical, intent(out) :: has_group
         integer, intent(out) :: group_id
 
-        real(dp) :: tmp_x, tmp_y, tmp_z, tmp_current
-        integer :: ios, tmp_group
+        real(dp) :: values(4)
+        integer :: ios
 
         read(line, *, iostat=ios) x, y, z, current
         if (ios /= 0) then
@@ -226,15 +227,30 @@ contains
             stop 1
         end if
 
-        read(line, *, iostat=ios) tmp_x, tmp_y, tmp_z, tmp_current, tmp_group
-        if (ios == 0) then
-            has_group = .true.
-            group_id = tmp_group
-        else
-            has_group = .false.
-            group_id = -1
-        end if
+        has_group = .false.
+        group_id = -1
+        if (count_tokens(line) < 5) return    ! cheap test avoids a second read per line
+        read(line, *, iostat=ios) values, group_id
+        has_group = ios == 0
+        if (.not. has_group) group_id = -1
     end subroutine parse_coil_line
+
+    pure integer function count_tokens(line)
+        character(len=*), intent(in) :: line
+        integer :: i
+        logical :: in_token
+
+        count_tokens = 0
+        in_token = .false.
+        do i = 1, len_trim(line)
+            if (line(i:i) == ' ' .or. line(i:i) == achar(9) .or. line(i:i) == ',') then
+                in_token = .false.
+            else if (.not. in_token) then
+                in_token = .true.
+                count_tokens = count_tokens + 1
+            end if
+        end do
+    end function count_tokens
 
     subroutine append_point(px, py, pz, pcurr, x, y, z, current, groups, n_points, capacity)
         real(dp), intent(in) :: px, py, pz, pcurr
@@ -261,7 +277,7 @@ contains
         integer :: new_cap
 
         if (required <= capacity) return
-        new_cap = max(required, merge(1024, capacity * 2, capacity > 0))
+        new_cap = max(required, merge(capacity * 2, 1024, capacity > 0))
         call grow_array(x, new_cap)
         call grow_array(y, new_cap)
         call grow_array(z, new_cap)
