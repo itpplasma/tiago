@@ -193,7 +193,20 @@ contains
         end do
 
         ! EXTCUR(g) replaces the file current of group g, keeping relative
-        ! currents within the group; groups without EXTCUR keep the file currents.
+        ! currents within the group. Without an EXTCUR file the file currents
+        ! are used; with one, groups it leaves out are off (EXTCUR defaults to 0
+        ! in the VMEC namelist, as in DIAGNO).
+        if (.not. any(given)) then
+            deallocate(given)
+            allocate(given(max_group), source=.false.)
+        else
+            do i = 1, max_group
+                if (given(i)) cycle
+                write(error_unit, '(A,I0,A)') 'WARNING: EXTCUR(', i, &
+                    ') not given; coil group switched off (EXTCUR = 0, as DIAGNO)'
+                given(i) = .true.
+            end do
+        end if
         do i = 1, n_points
             if (group_ids(i) < 1) cycle
             if (.not. given(group_ids(i))) cycle
@@ -367,14 +380,15 @@ contains
 
     subroutine load_extcur_values(path, values, given)
         !! EXTCUR from a VMEC &INDATA file (EXTCUR(i) = v, EXTCUR = a, b, ...,
-        !! EXTCUR(i) = a b, repeat counts n*v, D exponents, ! comments) or,
+        !! EXTCUR(i) = a b, slices EXTCUR(i:j) = ..., repeat counts n*v,
+        !! D exponents, ! comments) or,
         !! without any EXTCUR keyword, a plain list of numbers.
         character(len=*), intent(in) :: path
         real(dp), intent(inout) :: values(:)
         logical, intent(inout) :: given(:)
 
         character(len=:), allocatable :: text
-        integer :: pos, start_idx, found
+        integer :: pos, start_idx, last_idx, found
 
         text = read_lowercase_without_comments(path)
         found = 0
@@ -385,17 +399,18 @@ contains
             found = found + 1
             pos = pos + len('extcur')
             start_idx = 1
+            last_idx = huge(1)
             call skip_blanks(text, pos)
             if (pos <= len(text)) then
                 if (text(pos:pos) == '(') then
-                    call read_index(text, pos, start_idx, path)
+                    call read_index(text, pos, start_idx, last_idx, path)
                     call skip_blanks(text, pos)
                 end if
             end if
             if (pos > len(text)) call extcur_error(path, 'missing "=" after EXTCUR')
             if (text(pos:pos) /= '=') call extcur_error(path, 'missing "=" after EXTCUR')
             pos = pos + 1
-            call read_value_list(text, pos, start_idx, values, given, path)
+            call read_value_list(text, pos, start_idx, last_idx, values, given, path)
         end do
 
         if (found == 0) call read_plain_list(text, values, given, path)
@@ -466,24 +481,36 @@ contains
         end do
     end subroutine skip_blanks
 
-    subroutine read_index(text, pos, idx, path)
+    subroutine read_index(text, pos, idx, last, path)
+        !! (i) -> idx = i, last = huge; (i:j) -> idx = i, last = j; (i:) -> last = huge.
         character(len=*), intent(in) :: text, path
         integer, intent(inout) :: pos
-        integer, intent(out) :: idx
-        integer :: close_pos, ios
+        integer, intent(out) :: idx, last
+        integer :: close_pos, colon, ios
+        character(len=:), allocatable :: inner
 
         close_pos = index(text(pos:), ')')
         if (close_pos == 0) call extcur_error(path, 'unterminated EXTCUR(')
-        read(text(pos + 1:pos + close_pos - 2), *, iostat=ios) idx
-        if (ios /= 0 .or. idx < 1) call extcur_error(path, 'invalid EXTCUR index')
+        inner = text(pos + 1:pos + close_pos - 2)
+        last = huge(1)
+        colon = index(inner, ':')
+        if (colon > 0) then
+            if (len_trim(inner(colon + 1:)) > 0) then
+                read(inner(colon + 1:), *, iostat=ios) last
+                if (ios /= 0) call extcur_error(path, 'invalid EXTCUR index')
+            end if
+            inner = inner(:colon - 1)
+        end if
+        read(inner, *, iostat=ios) idx
+        if (ios /= 0 .or. idx < 1 .or. last < idx) call extcur_error(path, 'invalid EXTCUR index')
         pos = pos + close_pos
     end subroutine read_index
 
-    subroutine read_value_list(text, pos, start_idx, values, given, path)
-        !! Values after "=" up to the next identifier, "/" or "&".
+    subroutine read_value_list(text, pos, start_idx, last_idx, values, given, path)
+        !! Values after "=" up to the next identifier, "/" or "&", at most up to last_idx.
         character(len=*), intent(in) :: text, path
         integer, intent(inout) :: pos
-        integer, intent(in) :: start_idx
+        integer, intent(in) :: start_idx, last_idx
         real(dp), intent(inout) :: values(:)
         logical, intent(inout) :: given(:)
         integer :: idx, tok_end, star, repeat, ios, k
@@ -512,6 +539,7 @@ contains
             read(token, *, iostat=ios) v
             if (ios /= 0) call extcur_error(path, 'invalid EXTCUR value: '//token)
             do k = 1, repeat
+                if (idx > last_idx) call extcur_error(path, 'more EXTCUR values than the slice holds')
                 call store(idx, v, values, given, path)
                 idx = idx + 1
             end do
@@ -526,7 +554,7 @@ contains
         integer :: pos
 
         pos = 1
-        call read_value_list(text, pos, 1, values, given, path)
+        call read_value_list(text, pos, 1, huge(1), values, given, path)
     end subroutine read_plain_list
 
     subroutine store(idx, v, values, given, path)

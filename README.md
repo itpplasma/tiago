@@ -60,6 +60,13 @@ benchmarks/xdiagno/fetch_data.sh
     --segrog-turns tests/cases/ncsx_nfp3/segrog_turns.csv
 ```
 
+`--coil-extcur file` sets the coil-group currents from a VMEC `&INDATA` input
+(`EXTCUR(i) = v`, `EXTCUR = a, b, ...`, slices `EXTCUR(i:j) = ...`, repeat
+counts `n*v`) or a plain list of numbers. As in DIAGNO, each group's currents
+are normalised to its first point and scaled by `EXTCUR(g)`; groups the file
+leaves out are switched off (`EXTCUR = 0`, with a warning). Without
+`--coil-extcur` the currents of the coil file are used as they are.
+
 ## Magnetic probes and response matrices
 `--bprobes file` evaluates DIAGNO magnetic probes (`x y z theta_inc phi_inc
 eff_area` per row, angles in degrees; `--rphiz` for `R phi z`), written to

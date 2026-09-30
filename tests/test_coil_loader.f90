@@ -117,8 +117,10 @@ subroutine test_extcur_forms(field)
     call check('&INDATA  EXTCUR = 3.0, 5.0 /', 3.0_dp, 5.0_dp, 'namelist array')
     call check('&INDATA  EXTCUR(1) = 3.0  EXTCUR(2) = 5.0D0 /', 3.0_dp, 5.0_dp, 'several per line')
     call check('&INDATA  EXTCUR = 2*4.0 /', 4.0_dp, 4.0_dp, 'repeat count')
+    call check('&INDATA  EXTCUR(1:2) = 6.0 7.0 /', 6.0_dp, 7.0_dp, 'slice')
+    call check('&INDATA  EXTCUR(2:) = 8.0 /', 0.0_dp, 8.0_dp, 'open slice; group 1 off')
     call check('&INDATA  LEXTCUR = 9  EXTCUR(2) = 5.0 ! EXTCUR(1)=7'//new_line('a')//'/', &
-        1.0_dp, 5.0_dp, 'only EXTCUR(2) given; comments and LEXTCUR ignored')
+        0.0_dp, 5.0_dp, 'only EXTCUR(2) given (group 1 off); comments and LEXTCUR ignored')
     call check('3.0'//new_line('a')//'5.0', 3.0_dp, 5.0_dp, 'plain list')
 
 contains
