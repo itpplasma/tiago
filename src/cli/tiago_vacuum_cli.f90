@@ -308,7 +308,8 @@ subroutine run_solver(coil_path, flux_path, segrog_path, output_dir, &
         end if
         call solver%enable_plasma_from_vmec(plasma_wout, plasma_nphi, plasma_ntheta)
         if (have_flux) then
-            write(error_unit, '(A)') 'WARNING: plasma response only applied to segmented Rogowski diagnostics; flux loops remain vacuum-only'
+            write(error_unit, '(A)') 'WARNING: plasma response only applied to segmented '// &
+                'Rogowski diagnostics; flux loops remain vacuum-only'
         end if
     end if
 
