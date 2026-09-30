@@ -86,10 +86,18 @@ if(TIAGO_USE_PLASMA)
     target_compile_definitions(tiago_solver PUBLIC TIAGO_PLASMA_RESPONSE)
 endif()
 
+# Small VMEC equilibrium fetched on demand by `tiago_vacuum_cli --plasma-sample`.
+set(TIAGO_WOUT_SIMSOPT_SMALL_URL
+    "https://raw.githubusercontent.com/hiddenSymmetries/simsopt/9e027eac38028d57aa23777be52a781aa860e347/tests/test_files/wout_li383_low_res_reference.nc")
+set(TIAGO_WOUT_SIMSOPT_SMALL ${CMAKE_BINARY_DIR}/tests/cases/wout_li383_low_res_reference.nc)
+
 set(TIAGO_GENERATED_DIR ${CMAKE_BINARY_DIR}/generated)
 file(MAKE_DIRECTORY ${TIAGO_GENERATED_DIR})
 configure_file(${CMAKE_SOURCE_DIR}/cmake/tiago_config.f90.in
     ${TIAGO_GENERATED_DIR}/tiago_config.f90 @ONLY)
+# Embedded paths/URLs can exceed the 132-column free-form limit.
+set_source_files_properties(${TIAGO_GENERATED_DIR}/tiago_config.f90 PROPERTIES
+    COMPILE_OPTIONS -ffree-line-length-none)
 
 if(TIAGO_ENABLE_OPENMP)
     find_package(OpenMP COMPONENTS Fortran)
@@ -118,9 +126,6 @@ set(TIAGO_SIMSOPT_DIR ${TIAGO_OUTPUT_DIR}/simsopt_li383)
 set(TIAGO_SIMSOPT_GAMMA ${TIAGO_SIMSOPT_DIR}/gamma.csv)
 set(TIAGO_SIMSOPT_BTOTAL ${TIAGO_SIMSOPT_DIR}/b_total.csv)
 set(TIAGO_SIMSOPT_BEXT ${TIAGO_SIMSOPT_DIR}/b_external.csv)
-set(TIAGO_WOUT_SIMSOPT_SMALL_URL
-    "https://raw.githubusercontent.com/hiddenSymmetries/simsopt/9e027eac38028d57aa23777be52a781aa860e347/tests/test_files/wout_simsopt_small.nc")
-set(TIAGO_WOUT_SIMSOPT_SMALL ${CMAKE_SOURCE_DIR}/tests/cases/wout_simsopt_small.nc)
 add_executable(tiago_coil_loader_tests tests/test_coil_loader.f90)
 target_link_libraries(tiago_coil_loader_tests PRIVATE tiago_solver)
 add_test(NAME tiago_coil_loader_tests COMMAND $<TARGET_FILE:tiago_coil_loader_tests>)

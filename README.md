@@ -37,7 +37,7 @@ Pass extra cache entries through `CMAKE_ARGS`, e.g.
     tests/data/segrog_sample.diagno \
     --output-dir build/tests/output --seg-area 3.40e-4 --samples 8 \
     --nfp 3 --flux-turns tests/cases/ncsx_nfp3/flux_turns.csv \
-    --segrog-turns tests/cases/ncsx_nfp3/segrog_turns.csv --plasma-sample
+    --segrog-turns tests/cases/ncsx_nfp3/segrog_turns.csv
 ```
 This command emits `tiago_flux.csv` and `tiago_segrog.csv` in the output
 directory. Override sample metadata via

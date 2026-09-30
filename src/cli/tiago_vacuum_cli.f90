@@ -194,6 +194,10 @@ subroutine prepare_plasma_support(plasma_wout, use_plasma_sample)
         return
     end if
 
+    if (.not. tiago_plasma_available) then
+        call die('binary built without plasma support; rebuild with TIAGO_ENABLE_PLASMA=ON')
+    end if
+
     if (len_trim(plasma_wout) > 0) then
         write(error_unit, '(A)') 'WARNING: --plasma-sample ignored because '// &
             '--plasma-wout was provided'
@@ -201,6 +205,9 @@ subroutine prepare_plasma_support(plasma_wout, use_plasma_sample)
         return
     end if
 
+    if (len(simsopt_sample_path) == 0) then
+        call die('--plasma-sample: no sample path configured in this build')
+    end if
     plasma_wout = simsopt_sample_path
     call ensure_sample_file(plasma_wout)
 end subroutine prepare_plasma_support
