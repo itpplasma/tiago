@@ -12,7 +12,9 @@ module tiago_diagnostic_types
     type :: flux_loop_t
         character(len=:), allocatable :: label
         logical :: subtract_toroidal_flux = .false.
-        integer(i32) :: repeat_count = 0
+        !> DIAGNO iflflg=1: the loop spans one field period; it is closed to its
+        !> first point rotated by 2*pi/nfp and the flux is multiplied by nfp.
+        logical :: one_period = .false.
         real(dp) :: turn_scale = 1.0_dp
         type(loop_point_t), allocatable :: points(:)
     end type flux_loop_t

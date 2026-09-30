@@ -205,51 +205,32 @@ contains
 
         integer :: seg
         integer :: samples
-        integer :: period
-        real(dp) :: angle
         real(dp) :: dl(3)
         real(dp) :: start_point(3)
         real(dp) :: end_point(3)
         real(dp) :: weight
-        real(dp) :: rotated_start(3)
-        real(dp) :: rotated_end(3)
-        real(dp) :: rotated_dl(3)
-        real(dp) :: seg_flux
 
         flux = 0.0_dp
         samples = max(1_i32, rule%samples_per_segment)
+        weight = 1.0_dp / real(samples, dp)
 
-        ! DIAGNO semantics: a flux loop is always closed (last point -> first).
+        ! DIAGNO semantics: a flux loop is always closed. For iflflg=1 the
+        ! closing point is the first point rotated by one field period and the
+        ! result is multiplied by nfp.
         do seg = 1, size(loop%points)
             call segment_endpoints(loop, seg, start_point, end_point)
-            dl = end_point - start_point
-            weight = 1.0_dp / real(samples, dp)
-            seg_flux = integrate_segment(field, start_point, dl, samples, weight)
-            flux = flux + seg_flux
-            if (loop%repeat_count > 0 .and. nfp > 1) then
-                do period = 1, nfp - 1
-                    angle = real(period, dp) * two_pi / real(nfp, dp)
-                    call rotate_point(start_point, angle, rotated_start)
-                    call rotate_point(end_point, angle, rotated_end)
-                    rotated_dl = rotated_end - rotated_start
-                    flux = flux + integrate_segment(field, rotated_start, &
-                        rotated_dl, samples, weight)
-                end do
+            if (seg == size(loop%points) .and. loop%one_period) then
+                call rotate_point(start_point_of(loop), two_pi / real(nfp, dp), end_point)
             end if
+            dl = end_point - start_point
+            flux = flux + integrate_segment(field, start_point, dl, samples, weight)
         end do
 
         flux = flux * maxwell_to_weber
+        if (loop%one_period) flux = flux * real(nfp, dp)
 
         if (loop%subtract_toroidal_flux) then
             flux = flux - estimate_toroidal_flux(field, loop)
-            if (loop%repeat_count > 0 .and. nfp > 1) then
-                do period = 1, nfp - 1
-                    angle = real(period, dp) * two_pi / real(nfp, dp)
-                    call rotate_point(loop_centroid(loop), angle, rotated_start)
-                    flux = flux - toroidal_flux_at_point(field, rotated_start, &
-                        polygon_area_xy(loop))
-                end do
-            end if
         end if
     end function evaluate_loop_flux
 
@@ -611,6 +592,13 @@ contains
 
         labels_equal = trim(a) == trim(b)
     end function labels_equal
+
+    function start_point_of(loop) result(point)
+        type(flux_loop_t), intent(in) :: loop
+        real(dp) :: point(3)
+
+        point = [loop%points(1)%x, loop%points(1)%y, loop%points(1)%z]
+    end function start_point_of
 
     subroutine segment_endpoints(loop, index, start_point, end_point)
         type(flux_loop_t), intent(in) :: loop

@@ -161,8 +161,14 @@ contains
             return
         end if
 
+        if (repeat_flag > 1_i32) then
+            ios = -1
+            message = 'unsupported iflflg > 1 (only 0 and 1 are defined): '//trim(line)
+            return
+        end if
+
         loop%subtract_toroidal_flux = (subtract_flag /= 0_i32)
-        loop%repeat_count = max(0_i32, repeat_flag)
+        loop%one_period = (repeat_flag == 1_i32)
         loop%label = trim(label_buffer)
         if (len_trim(loop%label) == 0) then
             loop%label = 'loop_' // trim(adjustl(int_to_string(npts)))
