@@ -1,6 +1,8 @@
 program test_vmecpp_equilibrium
     !! VMEC++ through Tiago's C adapter, without Python.
-    !! Usage: test_vmecpp_equilibrium <VMEC input (INDATA or JSON)> <workdir>
+    !! Usage: test_vmecpp_equilibrium <VMEC input (INDATA or JSON)> <workdir> [adjoint-only]
+    !! (adjoint-only: checks 1-2 and the Jacobian timing, no finite differences,
+    !! for timing large equilibria)
     !!  1. Tiago's edge field y equals VMEC++'s wout (1.5 b(ns) - 0.5 b(ns-1)).
     !!  2. The edge VJP matches directional finite differences of the edge map.
     !!  3. The full Jacobian cot (dy/dx) (edge VJP + VMEC++ adjoint + profile
@@ -13,21 +15,25 @@ program test_vmecpp_equilibrium
     character(len=16), parameter :: names(7) = [character(len=16) :: 'PRES_SCALE', 'CURTOR', &
         'AM(1)', 'AC(1)', 'RBC(1,1)', 'ZBS(0,1)', 'PHIEDGE']
     type(equilibrium_t) :: eq
-    character(len=512) :: input, workdir
+    character(len=512) :: input, workdir, mode
     real(dp), allocatable :: x0(:), x(:), y0(:), yp(:), ym(:), cot(:, :), jac(:, :), fd(:)
     real(dp), allocatable :: ref(:), b(:, :), coef_bar(:, :, :, :), dcoef(:, :, :, :)
     real(dp), allocatable :: iota_bar(:), current_bar(:), ybar(:), cp(:, :, :, :), cm(:, :, :, :)
     real(dp) :: h, err, t0, t1, eps
+    real(dp), allocatable :: xp(:), yhot(:)
     integer :: failures, k, ns, nb, ng, mnq, mnmax
     logical :: ok
 
     failures = 0
     call get_command_argument(1, input)
     call get_command_argument(2, workdir)
+    call get_command_argument(3, mode)
     call execute_command_line('mkdir -p "'//trim(workdir)//'"')
     call eq%init(trim(input), trim(workdir), names)
-    call eq%vmec%set_input('ftol', 1.0e-14_dp)
-    call eq%vmec%set_input('niter', 20000.0_dp)
+    if (trim(mode) /= 'adjoint-only') then  ! else FTOL and NITER of the input
+        call eq%vmec%set_input('ftol', 1.0e-14_dp)
+        call eq%vmec%set_input('niter', 20000.0_dp)
+    end if
     x0 = eq%values()
     call cpu_time(t0)
     call eq%solve(x0, ok)
@@ -59,7 +65,11 @@ program test_vmecpp_equilibrium
     allocate(ybar(size(eq%y)))
     allocate(coef_bar, dcoef, mold=eq%coef)
     allocate(iota_bar(ns - 1), current_bar(ns - 1), yp(size(eq%y)), ym(size(eq%y)))
-    call random_seed()
+    block
+        integer :: n_seed
+        call random_seed(size=n_seed)
+        call random_seed(put=[(17 * k + 5, k = 1, n_seed)])
+    end block
     call random_number(ybar)
     ybar = ybar - 0.5_dp
     call random_number(dcoef)
@@ -72,8 +82,9 @@ program test_vmecpp_equilibrium
     cm = eq%coef - eps * dcoef
     call eq%edge%forward(cp, eq%phip_full, eq%phip_half, eq%iota_half, eq%current_half, yp)
     call eq%edge%forward(cm, eq%phip_full, eq%phip_half, eq%iota_half, eq%current_half, ym)
-    call check_equal('edge VJP vs FD (geometry)', sum(coef_bar * dcoef), &
-        dot_product(ybar, yp - ym) / (2.0_dp * eps), 1.0e-7_dp)
+    ! relative to the size of the terms: the random sum cancels strongly
+    call check_close('edge VJP vs FD (geometry)', sum(coef_bar * dcoef), &
+        dot_product(ybar, yp - ym) / (2.0_dp * eps), 1.0e-7_dp * sum(abs(coef_bar * dcoef)))
     block
         real(dp), allocatable :: cur(:)
         cur = eq%current_half
@@ -86,7 +97,21 @@ program test_vmecpp_equilibrium
             1.0e-7_dp)
     end block
 
-    ! 3. full Jacobian vs central differences of re-solved equilibria
+    ! 3. a hot-restarted solve (from the last equilibrium) agrees with a cold one
+    if (trim(mode) /= 'adjoint-only') then
+        xp = x0 * (1.0_dp + 1.0e-3_dp)
+        call eq%solve(xp, ok)
+        yhot = eq%y
+        call eq%vmec%set_input('hot_restart', 0.0_dp)
+        call eq%solve(xp, ok)
+        call check_vector('hot restart vs cold solve', yhot, eq%y, 1.0e-6_dp)
+        call eq%solve(x0, ok)
+    end if
+
+    ! 4. full Jacobian vs central differences of re-solved equilibria. Cold
+    !    solves: at FTOL = 1e-14 a solve is accurate to ~1e-7, smoothly in x
+    !    along the same (cold) path, but not across hot restarts from
+    !    different start states, which would swamp differences of 1e-5 steps.
     y0 = eq%y
     allocate(cot(4, size(y0)))
     call random_number(cot)
@@ -95,6 +120,15 @@ program test_vmecpp_equilibrium
     call eq%jacobian(x0, cot, jac)
     call cpu_time(t1)
     print '(A,F7.2,A)', 'Jacobian (4 cotangents, incl. factorization): ', t1 - t0, ' s'
+    if (trim(mode) == 'adjoint-only') then
+        call cpu_time(t0)
+        call eq%jacobian(x0, cot, jac)
+        call cpu_time(t1)
+        print '(A,F7.2,A)', 'Jacobian (4 cotangents, factorization cached): ', t1 - t0, ' s'
+        call eq%vmec%destroy()
+        if (failures > 0) error stop 1
+        stop
+    end if
     do k = 1, size(names)
         h = 1.0e-5_dp * max(abs(x0(k)), 1.0e-2_dp)
         x = x0
@@ -133,6 +167,17 @@ contains
             print '(A,ES10.3)', 'ok   '//name//': max rel diff ', e
         end if
     end subroutine check_vector
+
+    subroutine check_close(name, actual, expected, atol)
+        character(len=*), intent(in) :: name
+        real(dp), intent(in) :: actual, expected, atol
+        if (abs(actual - expected) > atol) then
+            write(error_unit, '(A,3ES24.16)') 'FAIL '//name//': ', actual, expected, atol
+            failures = failures + 1
+        else
+            print '(A,2ES24.16)', 'ok   '//name//': ', actual, expected
+        end if
+    end subroutine check_close
 
     subroutine check_equal(name, actual, expected, rtol)
         character(len=*), intent(in) :: name

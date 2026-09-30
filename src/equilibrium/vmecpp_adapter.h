@@ -30,7 +30,8 @@ void tiago_vmecpp_destroy(tiago_vmecpp* handle);
  * spres_ped, gamma), 1-based index i into arrays (am, ai, ac, aphi: i = k + 1
  * for coefficient k), (i, j) = (m + 1, n + ntor + 1) for rbc and zbs. Setting
  * an array element beyond its length extends the array with zeros. Setting
- * "ftol" or "niter" sets every entry of ftol_array or niter_array. */
+ * "ftol" or "niter" sets every entry of ftol_array or niter_array;
+ * "hot_restart" = 0 disables starting solves from the last equilibrium. */
 int tiago_vmecpp_get_input(const tiago_vmecpp* handle, const char* name, int i,
                            int j, double* value);
 int tiago_vmecpp_set_input(tiago_vmecpp* handle, const char* name, int i, int j,
@@ -48,7 +49,9 @@ int tiago_vmecpp_get_string(const tiago_vmecpp* handle, const char* name,
                             char* buffer, int length);
 
 /* Solve with the current input values; *converged = 1 on success. A failure to
- * converge is not an error (returns 0 with *converged = 0). */
+ * converge is not an error (returns 0 with *converged = 0). After a first
+ * converged solve, solves hot-restart from the last equilibrium on a single
+ * grid at the final ns, falling back to a cold multi-grid start. */
 int tiago_vmecpp_solve(tiago_vmecpp* handle, int* converged);
 
 /* After a solve. Geometry: 12 blocks (r_cc, r_ss, r_sc, r_cs, z_sc, z_cs,
@@ -75,11 +78,13 @@ int tiago_vmecpp_wout(const tiago_vmecpp* handle, const char* name,
  * cotangent the boundary cotangent (rbc, zbs), 2 * mpol * (2 ntor + 1) values
  * in (block, m, n + ntor) order with n fastest, and the implicit part of the
  * half-grid profile cotangents (mu0 p, iota, current), 3 * (ns - 1) values.
- * The linear system is factorized once per solve (dense LU of the deflated
- * transposed interior force Jacobian); interior sizes above max_dense fail. */
+ * The linear system (the deflated transposed interior force Jacobian) is
+ * block tridiagonal in the radial surfaces; its blocks are extracted with
+ * 3 * (unknowns per surface) forward Hessian-vector products and factorized once per
+ * solve by block LU. Surface blocks larger than max_block fail. */
 int tiago_vmecpp_adjoint(tiago_vmecpp* handle, int ncot,
                          const double* geometry_bar, double* boundary_bar,
-                         double* profile_bar, int max_dense);
+                         double* profile_bar, int max_block);
 
 #ifdef __cplusplus
 }

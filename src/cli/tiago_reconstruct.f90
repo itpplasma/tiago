@@ -402,6 +402,9 @@ contains
         integer :: k, unit
 
         call jacobian_at(x, j_ad)
+        ! cold solves: their ~1e-7 solver error is smooth in x, that of hot
+        ! restarts from varying start states is not
+        call rec%eq%vmec%set_input('hot_restart', 0.0_dp)
         allocate(j_fd(n_rows(), rec%n), rp(n_rows()), rm(n_rows()))
         open(newunit=unit, file=trim(output_dir)//'/jacobian_check.csv', status='replace')
         write(unit, '(A)') 'parameter,step,max_abs_error_over_max_abs'
@@ -419,6 +422,7 @@ contains
                 ': max |adjoint - FD| / max |FD| = ', err
         end do
         close(unit)
+        call rec%eq%vmec%set_input('hot_restart', 1.0_dp)
         call plot_jacobian_check(trim(output_dir)//'/jacobian_check.png', &
             reshape(j_ad, [size(j_ad)]), reshape(j_fd, [size(j_fd)]))
     end subroutine jacobian_check

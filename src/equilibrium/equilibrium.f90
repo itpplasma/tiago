@@ -32,7 +32,7 @@ module tiago_equilibrium
         integer, allocatable :: kind(:), i1(:), i2(:)
         integer :: ns = 0, mpol = 0, ntor = 0, nfp = 1, ncurr = 0
         logical :: solved = .false.
-        integer :: max_dense = 8000
+        integer :: max_block = 8000
         ! the last solve
         real(dp), allocatable :: coef(:, :, :, :), y(:)
         real(dp), allocatable :: phip_full(:), phip_half(:), iota_half(:), current_half(:)
@@ -249,7 +249,7 @@ contains
                 self%current_half, cot(r, :), coef_bar, iota_d(:, r), current_d(:, r))
             gbar(:, r) = reshape(coef_bar, [size(coef_bar)])
         end do
-        call self%vmec%adjoint(gbar, bbar, pbar, self%max_dense)
+        call self%vmec%adjoint(gbar, bbar, pbar, self%max_block)
         call system_clock(finish)
         self%t_adjoint = self%t_adjoint + real(finish - start, dp) / rate
         self%adjoint_solves = self%adjoint_solves + nrow

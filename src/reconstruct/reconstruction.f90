@@ -62,6 +62,13 @@ module tiago_reconstruction
         integer :: evaluations = 0
         real(dp), allocatable :: history(:)              !! chi^2 of every evaluation
         real(dp), allocatable :: eq_x(:)                 !! its equilibrium parameters
+        ! Plasma responses (raw, before DIAGNO post-processing and turns) at the
+        ! boundary geometry resp_geometry: the plasma part of the signals is
+        ! exactly linear in the edge field y_B at fixed boundary shape, so while
+        ! the boundary is unchanged S_plasma = R y_B replaces the sheet sums.
+        real(dp), allocatable :: resp_geometry(:)
+        real(dp), allocatable :: r_flux(:, :), r_seg(:, :), r_probe(:, :)
+        real(dp), allocatable :: s_flux(:, :), s_seg(:, :), s_probe(:, :)
     end type reconstruction_t
 
     type(reconstruction_t), public, target, save :: rec
@@ -114,7 +121,7 @@ contains
         real(dp), intent(in) :: x(:)
         real(dp), allocatable, intent(out) :: flux(:), seg(:), probe(:)
         logical, intent(out), optional :: ok
-        real(dp), allocatable :: extcur(:), pf(:), ps(:), pp(:)
+        real(dp), allocatable :: extcur(:), pf(:), ps(:), pp(:), yb(:)
         logical :: solved
 
         extcur = extcur_of(x)
@@ -125,22 +132,29 @@ contains
             return
         end if
         allocate(flux(0), seg(0), probe(0))
+        if (responses_current()) then
+            yb = rec%eq%y(:size(rec%r_flux, 2))
+            if (allocated(rec%loops)) pf = matmul(rec%r_flux, yb)
+            if (allocated(rec%segs)) ps = matmul(rec%r_seg, yb)
+            if (allocated(rec%probes)) pp = matmul(rec%r_probe, yb)
+        else
+            if (allocated(rec%loops)) call rec%plasma%flux_loops(rec%loops, pf, rec%rule)
+            if (allocated(rec%segs)) call rec%plasma%segrog(rec%segs, ps, rec%rule)
+            if (allocated(rec%probes)) call rec%plasma%bprobes(rec%probes, pp)
+        end if
         ! (no matmul with a zero inner extent: gfortran's inlined matmul sizes
         ! the sum from it and overruns the result)
         if (allocated(rec%loops)) then
-            call rec%plasma%flux_loops(rec%loops, pf, rec%rule)
             flux = pf
             if (size(extcur) > 0) flux = flux + matmul(rec%flux_m, extcur)
             call finalize_flux_signals(rec%loops, flux, rec%plasma%plasma%diamagnetic_flux)
         end if
         if (allocated(rec%segs)) then
-            call rec%plasma%segrog(rec%segs, ps, rec%rule)
             seg = ps
             if (size(extcur) > 0) seg = seg + matmul(rec%seg_m, extcur)
             seg = seg * rec%segs%turn_scale
         end if
         if (allocated(rec%probes)) then
-            call rec%plasma%bprobes(rec%probes, pp)
             probe = pp
             if (size(extcur) > 0) probe = probe + matmul(rec%probe_m, extcur)
             probe = probe * rec%probes%turn_scale
@@ -219,6 +233,52 @@ contains
             ': chi^2 = ', sum(r**2), ' ', (trim(rec%names(k)), x(k), k = 1, rec%n)
     end subroutine residual_at
 
+    logical function responses_current()
+        !! The cached plasma responses belong to the current boundary geometry.
+        responses_current = .false.
+        if (.not. allocated(rec%resp_geometry)) return
+        if (size(rec%resp_geometry) /= size(boundary_geometry())) return
+        responses_current = all(rec%resp_geometry == boundary_geometry())
+    end function responses_current
+
+    function boundary_geometry() result(g)
+        !! Boundary rmnc, zmns of the current equilibrium (the edge part of y).
+        real(dp), allocatable :: g(:)
+        g = rec%eq%y(2 * rec%eq%edge%mnmax_nyq + 1:)
+    end function boundary_geometry
+
+    subroutine update_responses()
+        !! Plasma field and shape responses at the current equilibrium's boundary.
+        !! Without RBC/ZBS parameters the boundary is that of the VMEC input, so
+        !! the shape responses do not enter the Jacobian and are left zero.
+        integer :: k, ng
+        logical :: shape
+
+        if (responses_current()) return
+        shape = .false.
+        do k = 1, rec%n
+            shape = shape .or. index(upper(rec%names(k)), 'RBC(') == 1 .or. &
+                index(upper(rec%names(k)), 'ZBS(') == 1
+        end do
+        if (shape) then
+            call rec%plasma%plasma_response(rec%loops, rec%segs, rec%probes, rec%r_flux, &
+                rec%r_seg, rec%r_probe, rec%rule, rec%s_flux, rec%s_seg, rec%s_probe)
+        else
+            call rec%plasma%plasma_response(rec%loops, rec%segs, rec%probes, rec%r_flux, &
+                rec%r_seg, rec%r_probe, rec%rule)
+            ng = rec%plasma%plasma%n_shape_columns()
+            if (allocated(rec%s_flux)) deallocate(rec%s_flux)
+            if (allocated(rec%s_seg)) deallocate(rec%s_seg)
+            if (allocated(rec%s_probe)) deallocate(rec%s_probe)
+            allocate(rec%s_flux(size(rec%r_flux, 1), ng), rec%s_seg(size(rec%r_seg, 1), ng), &
+                rec%s_probe(size(rec%r_probe, 1), ng))
+            rec%s_flux = 0.0_dp
+            rec%s_seg = 0.0_dp
+            rec%s_probe = 0.0_dp
+        end if
+        rec%resp_geometry = boundary_geometry()
+    end subroutine update_responses
+
     subroutine jacobian_at(x, jac)
         !! d r / d x (unscaled parameters), rows as in residual_at.
         real(dp), intent(in) :: x(:)
@@ -233,8 +293,13 @@ contains
         if (neq > 0) then
             ! C = dS/dy at the current equilibrium (field then shape columns)
             call use_equilibrium(x)
-            call rec%plasma%plasma_response(rec%loops, rec%segs, rec%probes, fr, sr, pr, &
-                rec%rule, fs, ss, prs)
+            call update_responses()
+            fr = rec%r_flux
+            sr = rec%r_seg
+            pr = rec%r_probe
+            fs = rec%s_flux
+            ss = rec%s_seg
+            prs = rec%s_probe
             nb = size(fr, 2)
             ny = nb + size(fs, 2)
             if (allocated(rec%loops)) then

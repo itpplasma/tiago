@@ -3,7 +3,7 @@
 // Adapted in part from VMEC++ (https://github.com/proximafusion/vmecpp,
 // SPDX-License-Identifier: MIT, Copyright Proxima Fusion GmbH): the model
 // bindings of src/vmecpp/cpp/vmecpp/vmec/pybind11/pybind_vmec.cc (VmecModel)
-// and the implicit VJP of src/vmecpp/autodiff.py, ported to C++ with a dense
+// and the implicit VJP of src/vmecpp/autodiff.py, ported to C++ with a block-tridiagonal
 // LU instead of per-cotangent GMRES.
 #include "vmecpp_adapter.h"
 
@@ -398,15 +398,70 @@ std::vector<int> GaugeEntries(const Layout& l, int mpol_geometry,
 
 // ---- handle ---------------------------------------------------------------
 
+// Block-tridiagonal linear system A x = b, one block per radial surface
+// (VMEC's forces on surface j depend on the geometry of surfaces j - 1, j and
+// j + 1 only). Block LU without pivoting across blocks (block Thomas), partial
+// pivoting within: O(ns m^3) time and O(ns m^2) memory for blocks of size m,
+// against O((ns m)^3) and O((ns m)^2) for a dense LU.
+class BlockTridiagonal {
+ public:
+  // diagonal[k] = A(k, k), lower[k] = A(k, k - 1) (k >= 1),
+  // upper[k] = A(k, k + 1) (k + 1 < blocks); blocks may be empty.
+  void Factor(std::vector<Eigen::MatrixXd> diagonal,
+              std::vector<Eigen::MatrixXd> lower,
+              std::vector<Eigen::MatrixXd> upper) {
+    const int blocks = static_cast<int>(diagonal.size());
+    lu_.assign(blocks, {});
+    gain_.assign(blocks, {});
+    lower_ = std::move(lower);
+    for (int k = 0; k < blocks; ++k) {
+      Eigen::MatrixXd schur = std::move(diagonal[k]);
+      if (k > 0 && schur.size() > 0 && gain_[k - 1].size() > 0) {
+        schur.noalias() -= lower_[k] * gain_[k - 1];
+      }
+      if (schur.rows() == 0) continue;
+      lu_[k].compute(schur);
+      if (k + 1 < blocks) gain_[k] = lu_[k].solve(upper[k]);  // S_k^-1 A(k, k+1)
+    }
+  }
+
+  // b and x are concatenated block by block.
+  Eigen::VectorXd Solve(const Eigen::VectorXd& b) const {
+    const int blocks = static_cast<int>(lu_.size());
+    std::vector<int> offset(blocks + 1, 0);
+    for (int k = 0; k < blocks; ++k) offset[k + 1] = offset[k] + Size(k);
+    Eigen::VectorXd x(b.size());
+    for (int k = 0; k < blocks; ++k) {  // forward: y_k = S_k^-1 (b_k - L_k y_k-1)
+      if (Size(k) == 0) continue;
+      Eigen::VectorXd r = b.segment(offset[k], Size(k));
+      if (k > 0 && Size(k - 1) > 0) r.noalias() -= lower_[k] * x.segment(offset[k - 1], Size(k - 1));
+      x.segment(offset[k], Size(k)) = lu_[k].solve(r);
+    }
+    for (int k = blocks - 2; k >= 0; --k) {  // backward: x_k = y_k - G_k x_k+1
+      if (Size(k) == 0 || Size(k + 1) == 0) continue;
+      x.segment(offset[k], Size(k)).noalias() -= gain_[k] * x.segment(offset[k + 1], Size(k + 1));
+    }
+    return x;
+  }
+
+ private:
+  int Size(int k) const { return static_cast<int>(lu_[k].rows()); }
+  std::vector<Eigen::PartialPivLU<Eigen::MatrixXd>> lu_;
+  std::vector<Eigen::MatrixXd> lower_, gain_;
+};
+
 struct tiago_vmecpp {
   vmecpp::VmecINDATA indata;
   std::optional<vmecpp::OutputQuantities> output;
   std::unique_ptr<Model> model;
+  // last converged equilibrium, the start of the next solve (hot restart)
+  std::optional<vmecpp::WOutFileContents> last_wout;
+  bool hot_restart = true;
   int status = -1;
   // adjoint cache for the current solve
   bool factorized = false;
-  std::vector<int> interior, prescribed, gauge;
-  Eigen::PartialPivLU<Eigen::MatrixXd> lu;
+  std::vector<int> interior, prescribed, gauge;  // interior: grouped by surface
+  BlockTridiagonal system;                        // transposed interior Hessian
 };
 
 namespace {
@@ -495,6 +550,8 @@ extern "C" int tiago_vmecpp_set_input(tiago_vmecpp* handle, const char* name, in
       in.ftol_array.setConstant(value);  // every multi-grid step
     } else if (key == "niter") {
       in.niter_array.setConstant(static_cast<int>(value));
+    } else if (key == "hot_restart") {
+      handle->hot_restart = value != 0.0;
     } else if (double* s = Scalar(in, key)) {
       *s = value;
     } else if (key == "rbc" || key == "zbs") {
@@ -591,16 +648,33 @@ extern "C" int tiago_vmecpp_solve(tiago_vmecpp* handle, int* converged) {
     handle->model.reset();
     handle->factorized = false;
     handle->status = 1;
-    auto result = vmecpp::run(handle->indata, std::nullopt, 1,
-                              vmecpp::OutputMode::kSilent, nullptr, true);
+    const int last = static_cast<int>(handle->indata.ns_array.size()) - 1;
+    const int ns = handle->indata.ns_array[last];
+    // Hot restart: a single grid at the final ns from the last converged
+    // equilibrium (inner surfaces; the boundary comes from the input), which
+    // is close for the small parameter steps of a fit. Cold multigrid start
+    // otherwise, and as fallback.
+    vmecpp::VmecINDATA indata = handle->indata;
+    std::optional<vmecpp::HotRestartState> initial;
+    if (handle->hot_restart && handle->last_wout && handle->last_wout->ns == ns) {
+      indata.ns_array = Eigen::VectorXi::Constant(1, ns);
+      indata.ftol_array = Eigen::VectorXd::Constant(1, handle->indata.ftol_array[last]);
+      indata.niter_array = Eigen::VectorXi::Constant(1, handle->indata.niter_array[last]);
+      initial.emplace(*handle->last_wout, indata);
+    }
+    auto result = vmecpp::run(indata, initial, 1, vmecpp::OutputMode::kSilent, nullptr, true);
+    if (!result.ok() && initial) {
+      indata = handle->indata;
+      result = vmecpp::run(indata, std::nullopt, 1, vmecpp::OutputMode::kSilent, nullptr, true);
+    }
     if (!result.ok()) {
       ErrorMessage() = std::string(result.status().message());
       return;
     }
     handle->output = std::move(*result);
-    const int ns = handle->indata.ns_array[handle->indata.ns_array.size() - 1];
-    vmecpp::HotRestartState restart(handle->output->wout, handle->indata);
-    handle->model = std::make_unique<Model>(handle->indata, ns, restart);
+    handle->last_wout = handle->output->wout;
+    vmecpp::HotRestartState restart(handle->output->wout, indata);
+    handle->model = std::make_unique<Model>(indata, ns, restart);
     handle->status = 0;
     *converged = 1;
   });
@@ -703,11 +777,11 @@ extern "C" int tiago_vmecpp_wout(const tiago_vmecpp* handle, const char* name,
 
 extern "C" int tiago_vmecpp_adjoint(tiago_vmecpp* handle, int ncot,
                                     const double* geometry_bar, double* boundary_bar,
-                                    double* profile_bar, int max_dense) {
+                                    double* profile_bar, int max_block) {
   return Guard([&] {
 #ifndef VMECPP_ENABLE_ENZYME
     (void)ncot; (void)geometry_bar; (void)boundary_bar; (void)profile_bar;
-    (void)max_dense;
+    (void)max_block;
     throw std::runtime_error(
         "this VMEC++ build has no exact force Jacobian (VMECPP_ENABLE_ENZYME)");
 #else
@@ -742,31 +816,78 @@ extern "C" int tiago_vmecpp_adjoint(tiago_vmecpp* handle, int ncot,
       }
       const double threshold =
           1.0e-9 * std::max({column.maxCoeff(), row.maxCoeff(), 1.0});
-      handle->interior.clear();
+      // interior unknowns grouped by radial surface, in state order within one
+      std::vector<std::vector<int>> by_surface(ns);
+      auto surface_of = [&](int i) { return (i % layout.span) / layout.modes; };
       for (int i = 0; i < state_size; ++i) {
         if (!excluded[i] && column[i] > threshold && row[i] > threshold) {
-          handle->interior.push_back(i);
+          by_surface[surface_of(i)].push_back(i);
         }
+      }
+      handle->interior.clear();
+      std::vector<int> position(state_size, -1);  // index within its surface block
+      int largest = 0;
+      for (int j = 0; j < ns; ++j) {
+        for (int k = 0; k < static_cast<int>(by_surface[j].size()); ++k) {
+          position[by_surface[j][k]] = k;
+          handle->interior.push_back(by_surface[j][k]);
+        }
+        largest = std::max(largest, static_cast<int>(by_surface[j].size()));
       }
       handle->prescribed = boundary;
       handle->prescribed.insert(handle->prescribed.end(), handle->gauge.begin(),
                                 handle->gauge.end());
-      const int n = static_cast<int>(handle->interior.size());
-      if (n == 0) throw std::runtime_error("the interior force operator is null");
-      if (n > max_dense) {
-        throw std::runtime_error("interior system of " + std::to_string(n) +
-                                 " unknowns exceeds max_dense = " +
-                                 std::to_string(max_dense));
+      if (handle->interior.empty()) throw std::runtime_error("the interior force operator is null");
+      if (largest > max_block) {
+        throw std::runtime_error("a surface block of " + std::to_string(largest) +
+                                 " unknowns exceeds max_block = " + std::to_string(max_block));
       }
-      Eigen::MatrixXd matrix(n, n);
-      Eigen::VectorXd unit = Eigen::VectorXd::Zero(state_size);
-      for (int c = 0; c < n; ++c) {
-        unit[handle->interior[c]] = 1.0;
-        const Eigen::VectorXd col = model.HessianVectorProductTranspose(unit);
-        unit[handle->interior[c]] = 0.0;
-        for (int r = 0; r < n; ++r) matrix(r, c) = col[handle->interior[r]];
+      // Blocks of A = H^T by colored probing with forward-mode Hessian-vector
+      // products (about twice as fast as the reverse ones): one per (state
+      // slot, surface class j mod 3) sets that slot on every third surface;
+      // each result row belongs to exactly one probed column because columns
+      // of surface j only reach rows of surfaces j - 1 .. j + 1.
+      std::vector<Eigen::MatrixXd> diagonal(ns), lower(ns), upper(ns);
+      auto size_of = [&](int j) { return static_cast<int>(by_surface[j].size()); };
+      for (int j = 0; j < ns; ++j) {
+        diagonal[j] = Eigen::MatrixXd::Zero(size_of(j), size_of(j));
+        if (j > 0) lower[j] = Eigen::MatrixXd::Zero(size_of(j), size_of(j - 1));
+        if (j + 1 < ns) upper[j] = Eigen::MatrixXd::Zero(size_of(j), size_of(j + 1));
       }
-      handle->lu.compute(matrix);
+      std::vector<int> starts;
+      for (int start : {layout.r_cc, layout.r_ss, layout.z_sc, layout.z_cs, layout.l_sc,
+                        layout.l_cs}) {
+        if (start >= 0) starts.push_back(start);
+      }
+      Eigen::VectorXd probe = Eigen::VectorXd::Zero(state_size);
+      for (int start : starts) {
+        for (int mode = 0; mode < layout.modes; ++mode) {
+          for (int color = 0; color < 3; ++color) {
+            std::vector<int> columns;
+            for (int j = color; j < ns; j += 3) {
+              const int i = start + j * layout.modes + mode;
+              if (position[i] >= 0) columns.push_back(i);
+            }
+            if (columns.empty()) continue;
+            for (int i : columns) probe[i] = 1.0;
+            const Eigen::VectorXd result = model.HessianVectorProduct(probe);
+            for (int i : columns) probe[i] = 0.0;
+            // column i of H (surface j) holds row i of A = H^T in the blocks
+            // (j, j - 1), (j, j) and (j, j + 1)
+            for (int i : columns) {
+              const int j = surface_of(i), c = position[i];
+              for (int r = 0; r < size_of(j); ++r) diagonal[j](c, r) = result[by_surface[j][r]];
+              if (j > 0) {
+                for (int r = 0; r < size_of(j - 1); ++r) lower[j](c, r) = result[by_surface[j - 1][r]];
+              }
+              if (j + 1 < ns) {
+                for (int r = 0; r < size_of(j + 1); ++r) upper[j](c, r) = result[by_surface[j + 1][r]];
+              }
+            }
+          }
+        }
+      }
+      handle->system.Factor(std::move(diagonal), std::move(lower), std::move(upper));
       handle->factorized = true;
     }
 
@@ -786,7 +907,7 @@ extern "C" int tiago_vmecpp_adjoint(tiago_vmecpp* handle, int ncot,
           model.GeometryStateVjp(geometry_bar + static_cast<size_t>(c) * coefficient_size);
       Eigen::VectorXd rhs(n);
       for (int r = 0; r < n; ++r) rhs[r] = state_bar[handle->interior[r]];
-      const Eigen::VectorXd adjoint = handle->lu.solve(rhs);
+      const Eigen::VectorXd adjoint = handle->system.Solve(rhs);
       Eigen::VectorXd embedded = Eigen::VectorXd::Zero(state_size);
       for (int r = 0; r < n; ++r) embedded[handle->interior[r]] = adjoint[r];
       const Eigen::VectorXd coupling = model.HessianVectorProductTranspose(embedded);
