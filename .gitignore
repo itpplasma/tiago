@@ -28,9 +28,6 @@ __pycache__/
 /.idea/
 /.vscode/
 .DS_Store
-# Case assets generated at runtime or downloaded
-tests/cases/**/coils.*
-tests/cases/**/wout_*.nc
 
 # Debug and test artifacts
 *.dat
@@ -46,6 +43,3 @@ tests/debug/output/
 tests/debug/*.csv
 tests/debug/*.dat
 tests/debug/*.png
-tiago_*.csv
-diagno_*.csv
-*_diff.csv

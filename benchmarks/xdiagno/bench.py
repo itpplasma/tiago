@@ -101,14 +101,18 @@ class Runner:
         self.xdiagno_patched = args.xdiagno_patched if Path(args.xdiagno_patched).exists() else None
         self.ncpu = args.ncpu
 
-    def xdiagno_run(self, d: Path, coil: Path, flux, seg, ns: int, nproc: int = 1, binary=None):
+    def xdiagno_run(self, d: Path, coil: Path, flux, seg, ns: int, nproc: int = 1, binary=None,
+                    turns=None):
+        turn_lines = "".join(f"  {name} = {', '.join(f'{v:.12g}' for v in values)},\n"
+                             for name, values in (turns or {}).items())
         (d / "diagno.control").write_text(
             "&diagno_in\n"
             f"  flux_diag_file = '{flux or ''}',\n"
             f"  seg_rog_file = '{seg or ''}',\n"
             "  nu = 64, nv = 64, int_type = 'midpoint',\n"
             f"  int_step = {ns},\n"
-            "  lrphiz = .false., lvc_field = .false., luse_extcur = .true., units = 1.0,\n/\n")
+            "  lrphiz = .false., lvc_field = .false., luse_extcur = .true., units = 1.0,\n"
+            + turn_lines + "/\n")
         for f in ("diagno_flux.", "diagno_seg."):
             (d / f).unlink(missing_ok=True)
         exe = [binary or self.xdiagno]
@@ -122,12 +126,15 @@ class Runner:
         sg = read_diagno_out(d / "diagno_seg.") if seg else {}
         return dt, fl, sg
 
-    def tiago_run(self, d: Path, coil: Path, flux, seg, ns: int, nthreads: int = 1, nfp: int = 1):
+    def tiago_run(self, d: Path, coil: Path, flux, seg, ns: int, nthreads: int = 1, nfp: int = 1,
+                  turn_files=None):
         out = d / "tiago"
         shutil.rmtree(out, ignore_errors=True)
         cmd = [self.tiago, str(coil), str(flux or ""), str(seg or ""),
                "--coil-extcur", str(d / "input."), "--seg-area", str(SEG_AREA),
                "--samples", str(ns), "--nfp", str(nfp), "--output-dir", str(out)]
+        for option, path in (turn_files or {}).items():
+            cmd += [option, str(path)]
         t0 = time.perf_counter()
         p = subprocess.run(cmd, env=dict(ENV, OMP_NUM_THREADS=str(nthreads)),
                            stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True)
@@ -163,8 +170,17 @@ def prepare(name: str) -> Path:
     return d
 
 
+def read_turns(path: Path) -> dict:
+    turns = {}
+    for line in path.read_text().splitlines():
+        parts = line.split()
+        if len(parts) >= 2 and not parts[0].startswith("#"):
+            turns[parts[0]] = float(parts[1])
+    return turns
+
+
 def run_case(r: Runner, name, coil, flux_entries, seg_entries, nfp=1, flags=None,
-             samples=(2, 6, 16), use_patched=False):
+             samples=(2, 6, 16), use_patched=False, turn_files=None):
     d = prepare(name)
     shutil.copy(coil, d / "coils.in")
     coil = d / "coils.in"
@@ -177,15 +193,23 @@ def run_case(r: Runner, name, coil, flux_entries, seg_entries, nfp=1, flags=None
         seg = d / "seg.diagno"
         write_diag(seg, seg_entries, True)
     binary = r.xdiagno_patched if use_patched and r.xdiagno_patched else None
-    _, xf, xs = r.xdiagno_run(d, coil, flux, seg, 64, r.ncpu, binary)
-    _, tf, ts = r.tiago_run(d, coil, flux, seg, 64, r.ncpu, nfp)
+    turns = None
+    if turn_files:   # DIAGNO wants arrays in file order, Tiago label -> scale files
+        ft = read_turns(turn_files["--flux-turns"])
+        st = read_turns(turn_files["--segrog-turns"])
+        turns = {"flux_turns": [ft.get(l, 1.0) for l, _ in flux_entries],
+                 "segrog_turns": [st.get(l, 1.0) for l, _ in seg_entries]}
+    xrun = lambda ns, n: r.xdiagno_run(d, coil, flux, seg, ns, n, binary, turns)
+    trun = lambda ns, n: r.tiago_run(d, coil, flux, seg, ns, n, nfp, turn_files)
+    _, xf, xs = xrun(64, r.ncpu)
+    _, tf, ts = trun(64, r.ncpu)
     x64, t64 = merged(xf, xs), merged(tf, ts)
     rows = []
     for ns in samples:
-        tx1, xf, xs = r.xdiagno_run(d, coil, flux, seg, ns, 1, binary)
-        txn, _, _ = r.xdiagno_run(d, coil, flux, seg, ns, r.ncpu, binary)
-        tt1, tf, ts = r.tiago_run(d, coil, flux, seg, ns, 1, nfp)
-        ttn, _, _ = r.tiago_run(d, coil, flux, seg, ns, r.ncpu, nfp)
+        tx1, xf, xs = xrun(ns, 1)
+        txn, _, _ = xrun(ns, r.ncpu)
+        tt1, tf, ts = trun(ns, 1)
+        ttn, _, _ = trun(ns, r.ncpu)
         x, t = merged(xf, xs), merged(tf, ts)
         rows.append(dict(samples=ns, t_xdiagno_1=tx1, t_xdiagno_n=txn, t_tiago_1=tt1,
                          t_tiago_n=ttn, vs_xdiagno=compare(t, x),
@@ -211,9 +235,14 @@ def suite_repo(r: Runner, quick: bool):
     out = []
     for name, coil, flux, seg, nfp in cases:
         fl, sg = read_diag(flux), read_diag(seg)
+        turn_files = None
+        if (flux.parent / "flux_turns.csv").exists():
+            turn_files = {"--flux-turns": flux.parent / "flux_turns.csv",
+                          "--segrog-turns": flux.parent / "segrog_turns.csv"}
         out.append(run_case(r, f"repo_{name}", coil, [(l, p) for l, p, _ in fl],
                             [(l, p) for l, p, _ in sg], nfp=nfp,
-                            flags=[f for *_, f in fl], samples=samples, use_patched=nfp > 1))
+                            flags=[f for *_, f in fl], samples=samples, use_patched=nfp > 1,
+                            turn_files=turn_files))
     return out
 
 

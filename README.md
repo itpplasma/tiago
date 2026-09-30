@@ -1,18 +1,18 @@
 # TIAGO: Toolkit for Inference and Analysis of Generalized Observables
 
-Tiago is a modern Fortran toolkit for vacuum magnetic diagnostic studies. It
-parses legacy DIAGNO coil descriptions, evaluates flux loops and segmented
-Rogowski probes via libneo's Biot–Savart solver, and cross-validates every run
-against STELLOPT's `xdiagno` binary.
+Tiago is a modern Fortran toolkit for magnetic diagnostic studies. It reads
+DIAGNO diagnostic files and STELLOPT coil files, and evaluates flux loops and
+segmented Rogowski probes from coil currents (Biot–Savart) and, optionally, the
+plasma currents of a VMEC equilibrium. Results are benchmarked against
+STELLOPT's `xdiagno`.
 
 ## Highlights
 - **Drop-in DIAGNO ingestion** – Load STELLOPT-compatible flux loops, segmented
   Rogowski files, and registry metadata without altering the on-disk format.
 - **Vacuum solver + CLI** – Batch evaluation with `tiago_vacuum_cli` using
   libneo's Biot-Savart solver; comprehensive CMake test suite.
-- **Cross-code validation** – `scripts/run_xdiagno.py` automatically prepares
-  control files, runs both Tiago and `xdiagno`, writes CSV summaries, and emits
-  comparison PNGs in `build/tests/output/` for visual inspection.
+- **Cross-code validation** – `benchmarks/xdiagno/` builds STELLOPT's `xdiagno`
+  at a pinned commit and compares accuracy and run time on identical inputs.
 
 ## Quick start
 ```bash
@@ -58,34 +58,6 @@ closer to the boundary than two grid spacings. As in DIAGNO, loops that link
 the plasma poloidally must be flagged `idia = 1`, which adds the plasma
 toroidal flux `phiedge`. Pass `""` as coil file for plasma-only signals.
 
-## Cross-code validation & visual artifacts
-```
-python3 scripts/run_xdiagno.py \
-    --coil tests/data/coil_sample.neo \
-    --flux tests/data/fluxloop_sample.diagno \
-    --segrog tests/data/segrog_sample.diagno \
-    --output build/tests/output \
-    --tiago-bin ./build/tiago_vacuum_cli \
-    --seg-area 3.40e-4
-```
-When `TIAGO_XDIAGNO` is unset, the harness looks for `xdiagno` on `PATH`. The
-script writes:
-- `tiago_flux.csv`, `tiago_segrog.csv`
-- `diagno_flux.csv`, `diagno_segrog.csv`
-- `flux_diff.csv`, `segrog_diff.csv`
-- `diagnostics.png` – absolute traces (y-axis pinned to zero), relative-error
-  subplot, and Tiago vs. `xdiagno` runtimes
-- `geometry.png` – coil filaments plus flux-loop/segmented Rogowski paths so you
-  can inspect geometry coverage visually
-
-`ctest` target `tiago_vs_xdiagno` wraps this flow for the toy sample, while the
-`tiago_vs_xdiagno_ncsx_nfp1` and `tiago_vs_xdiagno_ncsx_nfp3` tests target two
-NCSX vacuum scenarios. During those runs the harness automatically downloads
-`coils.NCSX_nfp1` / `coils.NCSX` from the public STELLOPT tree (only when the
-files are absent), runs Tiago and `xdiagno` with matching `nfp` values and turn
-scalars, and stores artifacts in `build/tests/output/<case>/diagnostics_<case>.png`
-and `geometry_<case>.png`.
-
 ## Benchmark against STELLOPT xdiagno
 A manual, reproducible accuracy and performance comparison with the reference
 code lives in [`benchmarks/xdiagno/`](benchmarks/xdiagno/README.md). It is not
@@ -95,7 +67,6 @@ part of `ctest`.
 ```
 cmake/                     # Toolchain helpers
 CMakeLists.txt             # FetchContent bridge + targets
-scripts/run_xdiagno.py     # Cross-code harness + PNG generator
 benchmarks/xdiagno/        # Manual benchmark vs STELLOPT xdiagno
 src/                       # Fortran diagnostics, solver, CLI
 tests/                     # Sample inputs + regression drivers
