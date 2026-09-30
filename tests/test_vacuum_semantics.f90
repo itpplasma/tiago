@@ -3,7 +3,7 @@ program test_vacuum_semantics
     !! Usage: test_vacuum_semantics <coils_sample.coils>
     use, intrinsic :: iso_fortran_env, only: dp => real64, error_unit
     use tiago_diagnostic_types, only: flux_loop_t
-    use tiago_flux_loops, only: read_flux_loop_file
+    use tiago_flux_loops, only: read_flux_loop_file, finalize_flux_signals
     use tiago_vacuum_forward, only: vacuum_solver_t, quadrature_rule_t
     implicit none
 
@@ -22,6 +22,7 @@ program test_vacuum_semantics
 
     call test_open_polygon_is_closed()
     call test_one_period_loop()
+    call test_idia()
 
     call solver%finalize()
     if (failures > 0) then
@@ -76,6 +77,40 @@ contains
             flux(2), 1.0e-10_dp)
         call sym%finalize()
     end subroutine test_one_period_loop
+
+    subroutine test_idia()
+        !! idia=1 (diamagnetic, adds phiedge = 0 in vacuum) leaves the signal
+        !! unchanged; idia=-k subtracts the flux of loop k.
+        character(len=*), parameter :: big_rows = &
+            '0.3 0.3 0.3' // new_line('a') // '0.7 0.3 0.3' // new_line('a') // &
+            '0.7 0.7 0.3' // new_line('a') // '0.3 0.7 0.3' // new_line('a')
+        character(len=*), parameter :: text = '4' // new_line('a') // &
+            '4 0 0 SMALL' // new_line('a') // square_rows // &
+            '4 0 1 SMALL_DIA' // new_line('a') // square_rows // &
+            '4 0 0 BIG' // new_line('a') // big_rows // &
+            '4 0 -1 BIG_MINUS_SMALL' // new_line('a') // big_rows
+        character(len=*), parameter :: self_ref = '1' // new_line('a') // &
+            '4 0 -1 SELF' // new_line('a') // square_rows
+        type(flux_loop_t), allocatable :: loops(:)
+        real(dp), allocatable :: flux(:)
+        integer :: unit, ierr
+        character(len=:), allocatable :: message
+
+        call eval_file('semantics_idia.diagno', text, flux)
+        call check_close('idia=1 unchanged in vacuum', flux(2), flux(1), 1.0e-14_dp)
+        call check_close('idia=-1 subtracts loop 1', flux(4), flux(3) - flux(1), 1.0e-14_dp)
+
+        open(newunit=unit, file='semantics_self.diagno', status='replace', action='write')
+        write(unit, '(A)', advance='no') self_ref
+        close(unit)
+        call read_flux_loop_file('semantics_self.diagno', loops, ierr, message)
+        if (ierr == 0) then
+            write(error_unit, '(A)') 'FAIL idia self-reference must be rejected'
+            failures = failures + 1
+        else
+            print '(A)', 'ok   idia self-reference rejected'
+        end if
+    end subroutine test_idia
 
     subroutine write_symmetric_coils(path, nfp)
         !! nfp tilted square coils, rotated copies of each other.
@@ -138,6 +173,7 @@ contains
         else
             call solver%flux_loops(loops, flux, rule)
         end if
+        call finalize_flux_signals(loops, flux)
     end subroutine eval_file
 
     subroutine check_close(name, actual, expected, rtol)

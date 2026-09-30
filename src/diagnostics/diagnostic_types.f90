@@ -11,7 +11,9 @@ module tiago_diagnostic_types
 
     type :: flux_loop_t
         character(len=:), allocatable :: label
-        logical :: subtract_toroidal_flux = .false.
+        !> DIAGNO idia: 1 = diamagnetic loop (adds phiedge; zero in vacuum),
+        !> -k = subtract the flux of loop k.
+        integer(i32) :: idia = 0
         !> DIAGNO iflflg=1: the loop spans one field period; it is closed to its
         !> first point rotated by 2*pi/nfp and the flux is multiplied by nfp.
         logical :: one_period = .false.

@@ -12,8 +12,8 @@ module tiago_vacuum_forward
     real(dp), parameter :: pi = acos(-1.0_dp)
     real(dp), parameter :: two_pi = 2.0_dp * pi
     real(dp), parameter :: meters_to_cm = 100.0_dp
-    real(dp), parameter :: amps_to_statamp = 2.9979245368431e9_dp
     real(dp), parameter :: gauss_to_tesla = 1.0e-4_dp
+    real(dp), parameter :: amps_to_statamp = 2.9979245368431e9_dp
     real(dp), parameter :: maxwell_to_weber = 1.0e-8_dp
 
     type :: quadrature_rule_t
@@ -228,10 +228,6 @@ contains
 
         flux = flux * maxwell_to_weber
         if (loop%one_period) flux = flux * real(nfp, dp)
-
-        if (loop%subtract_toroidal_flux) then
-            flux = flux - estimate_toroidal_flux(field, loop)
-        end if
     end function evaluate_loop_flux
 
     real(dp) function integrate_segment(field, start_point, dl, samples, weight)
@@ -304,66 +300,6 @@ contains
             end do
         end do
     end function integrate_segment
-
-    real(dp) function estimate_toroidal_flux(field, loop)
-        type(biotsavart_field_t), intent(in) :: field
-        type(flux_loop_t), intent(in) :: loop
-
-        real(dp) :: centroid(3)
-        real(dp) :: area
-
-        centroid = loop_centroid(loop)
-        area = polygon_area_xy(loop)
-        estimate_toroidal_flux = toroidal_flux_at_point(field, centroid, area)
-    end function estimate_toroidal_flux
-
-    real(dp) function toroidal_flux_at_point(field, position, area)
-        type(biotsavart_field_t), intent(in) :: field
-        real(dp), intent(in) :: position(3)
-        real(dp), intent(in) :: area
-
-        real(dp) :: position_cm(3)
-        real(dp) :: b_gauss(3)
-
-        position_cm = position * meters_to_cm
-        call field%compute_bfield(position_cm, b_gauss)
-        toroidal_flux_at_point = b_gauss(3) * gauss_to_tesla * area
-    end function toroidal_flux_at_point
-
-    function loop_centroid(loop) result(center)
-        type(flux_loop_t), intent(in) :: loop
-        real(dp) :: center(3)
-        integer :: i
-
-        center = 0.0_dp
-        do i = 1, size(loop%points)
-            center(1) = center(1) + loop%points(i)%x
-            center(2) = center(2) + loop%points(i)%y
-            center(3) = center(3) + loop%points(i)%z
-        end do
-        center = center / real(size(loop%points), dp)
-    end function loop_centroid
-
-    real(dp) function polygon_area_xy(loop)
-        type(flux_loop_t), intent(in) :: loop
-        integer :: npts
-        integer :: i
-        real(dp) :: x1
-        real(dp) :: y1
-        real(dp) :: x2
-        real(dp) :: y2
-
-        npts = size(loop%points)
-        polygon_area_xy = 0.0_dp
-        do i = 1, npts
-            x1 = loop%points(i)%x
-            y1 = loop%points(i)%y
-            x2 = loop%points(next_index(loop, i))%x
-            y2 = loop%points(next_index(loop, i))%y
-            polygon_area_xy = polygon_area_xy + (x1 * y2 - x2 * y1)
-        end do
-        polygon_area_xy = 0.5_dp * polygon_area_xy
-    end function polygon_area_xy
 
     function evaluate_segrog_signal(field, diagnostic, rule, plasma) result(voltage)
         type(biotsavart_field_t), intent(in) :: field

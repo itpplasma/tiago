@@ -7,6 +7,7 @@ module tiago_flux_loops
 
     public :: read_flux_loop_file
     public :: lint_flux_loops
+    public :: finalize_flux_signals
 
 contains
     subroutine read_flux_loop_file(path, loops, ierr, message)
@@ -34,7 +35,42 @@ contains
         allocate(loops(loop_count))
         call populate_loops(unit, loops, ierr, message)
         call close_file(unit)
+        if (ierr /= 0_i32) return
+        call check_idia_references(loops, ierr, message)
     end subroutine read_flux_loop_file
+
+    subroutine check_idia_references(loops, ierr, message)
+        type(flux_loop_t), intent(in) :: loops(:)
+        integer(i32), intent(out) :: ierr
+        character(len=:), allocatable, intent(out) :: message
+        integer :: i
+
+        ierr = 0_i32
+        message = ''
+        do i = 1, size(loops)
+            if (-loops(i)%idia > size(loops) .or. -loops(i)%idia == i) then
+                ierr = 6_i32
+                message = 'loop '//trim(loops(i)%label)// &
+                    ': idia refers to a non-existent loop or to itself'
+                return
+            end if
+        end do
+    end subroutine check_idia_references
+
+    subroutine finalize_flux_signals(loops, fluxes)
+        !! DIAGNO post-processing, applied in DIAGNO's order (diagno_flux.f90):
+        !! for each loop in turn, subtract loop |idia| if idia < 0 (its value as
+        !! already processed when |idia| < i), then apply the turn scale.
+        !! idia = 1 would add the plasma's phiedge, which is zero in vacuum.
+        type(flux_loop_t), intent(in) :: loops(:)
+        real(dp), intent(inout) :: fluxes(:)
+        integer :: i
+
+        do i = 1, size(loops)
+            if (loops(i)%idia < 0_i32) fluxes(i) = fluxes(i) - fluxes(-loops(i)%idia)
+            fluxes(i) = fluxes(i) * loops(i)%turn_scale
+        end do
+    end subroutine finalize_flux_signals
 
     subroutine open_flux_unit(path, unit, ierr, message)
         character(len=*), intent(in) :: path
@@ -145,7 +181,7 @@ contains
 
         integer(i32) :: npts
         integer(i32) :: repeat_flag
-        integer(i32) :: subtract_flag
+        integer(i32) :: subtract_flag  ! DIAGNO idia column
         character(len=128) :: label_buffer
 
         message = ''
@@ -167,7 +203,7 @@ contains
             return
         end if
 
-        loop%subtract_toroidal_flux = (subtract_flag /= 0_i32)
+        loop%idia = subtract_flag
         loop%one_period = (repeat_flag == 1_i32)
         loop%label = trim(label_buffer)
         if (len_trim(loop%label) == 0) then

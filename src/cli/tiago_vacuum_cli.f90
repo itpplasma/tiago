@@ -2,7 +2,7 @@ program tiago_vacuum_cli
     use, intrinsic :: iso_fortran_env, only: dp => real64, i32 => int32, &
         error_unit
     use tiago_diagnostic_types, only: flux_loop_t, segmented_rogowski_t
-    use tiago_flux_loops, only: read_flux_loop_file
+    use tiago_flux_loops, only: read_flux_loop_file, finalize_flux_signals
     use tiago_segmented_rogowski, only: read_segmented_rogowski_file
     use tiago_vacuum_forward, only: vacuum_solver_t, quadrature_rule_t
     use tiago_plasma_support, only: tiago_plasma_available
@@ -269,7 +269,7 @@ subroutine run_solver(coil_path, flux_path, segrog_path, output_dir, &
     use, intrinsic :: iso_fortran_env, only: dp => real64, i32 => int32, &
         error_unit
     use tiago_diagnostic_types, only: flux_loop_t, segmented_rogowski_t
-    use tiago_flux_loops, only: read_flux_loop_file
+    use tiago_flux_loops, only: read_flux_loop_file, finalize_flux_signals
     use tiago_segmented_rogowski, only: read_segmented_rogowski_file
     use tiago_vacuum_forward, only: vacuum_solver_t, quadrature_rule_t
     character(len=*), intent(in) :: coil_path
@@ -338,13 +338,13 @@ subroutine run_solver(coil_path, flux_path, segrog_path, output_dir, &
 
     if (have_flux .and. have_seg) then
         call solver%flux_and_segrog(loops, fluxes, segs, voltages, rule)
-        call scale_flux_turns(loops, fluxes)
+        call finalize_flux_signals(loops, fluxes)
         call scale_segrog_turns(segs, voltages)
         call write_result(flux_out_path, loops, fluxes)
         call write_segrog(segrog_out_path, segs, voltages)
     else if (have_flux) then
         call solver%flux_loops(loops, fluxes, rule)
-        call scale_flux_turns(loops, fluxes)
+        call finalize_flux_signals(loops, fluxes)
         call write_result(flux_out_path, loops, fluxes)
     else if (have_seg) then
         call solver%segrog(segs, voltages, rule)
@@ -538,19 +538,6 @@ subroutine assign_seg_turn(label, value, diagnostics)
         end if
     end do
 end subroutine assign_seg_turn
-
-subroutine scale_flux_turns(loops, fluxes)
-    use, intrinsic :: iso_fortran_env, only: dp => real64
-    type(flux_loop_t), allocatable, intent(in) :: loops(:)
-    real(dp), allocatable, intent(inout) :: fluxes(:)
-    integer :: i
-
-    if (.not. allocated(loops)) return
-    if (.not. allocated(fluxes)) return
-    do i = 1, min(size(loops), size(fluxes))
-        fluxes(i) = fluxes(i) * loops(i)%turn_scale
-    end do
-end subroutine scale_flux_turns
 
 subroutine scale_segrog_turns(diagnostics, values)
     use, intrinsic :: iso_fortran_env, only: dp => real64
