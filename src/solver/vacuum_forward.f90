@@ -12,7 +12,7 @@ module tiago_vacuum_forward
     use tiago_coil_loader, only: load_coils_into_field
     use tiago_coil_kernels, only: coil_set_t, build_coil_set
     use tiago_diagnostic_types, only: flux_loop_t, segmented_rogowski_t, bprobe_t
-    use tiago_plasma_support, only: plasma_support_t
+    use tiago_plasma_support, only: plasma_support_t, vmec_boundary_t
     implicit none
     private
 
@@ -33,11 +33,13 @@ module tiago_vacuum_forward
         real(dp), allocatable :: x(:), y(:), z(:)  !! coil nodes [m] (response matrices)
         integer, allocatable :: group(:)           !! coil group of every node
         real(dp), allocatable :: unit_current(:)   !! current per unit EXTCUR [A]
+        real(dp), allocatable :: extcur(:)         !! EXTCUR of every coil group
     contains
         procedure :: init => vacuum_solver_init
         procedure :: finalize => vacuum_solver_finalize
         procedure :: set_nfp => vacuum_solver_set_nfp
         procedure :: enable_plasma_from_vmec => vacuum_solver_enable_plasma_from_vmec
+        procedure :: enable_plasma_from_boundary => vacuum_solver_enable_plasma_from_boundary
         procedure :: flux_loops => vacuum_solver_flux_loops
         procedure :: segrog => vacuum_solver_segrog
         procedure :: flux_and_segrog => vacuum_solver_flux_and_segrog
@@ -58,9 +60,11 @@ contains
         character(len=*), intent(in) :: coil_file
         character(len=*), intent(in), optional :: coil_extcur
         type(biotsavart_field_t) :: field
+        integer :: g
 
         if (len_trim(coil_file) == 0) then
             allocate(self%x(0), self%y(0), self%z(0), self%group(0), self%unit_current(0))
+            allocate(self%extcur(0))
             self%coils = build_coil_set(self%x, self%y, self%z, self%unit_current)
             self%is_ready = .true.
             return
@@ -77,6 +81,12 @@ contains
         self%y = field%coils%y
         self%z = field%coils%z
         self%coils = build_coil_set(self%x, self%y, self%z, field%coils%current)
+        allocate(self%extcur(self%n_groups()))
+        self%extcur = 0.0_dp
+        do g = size(self%group), 1, -1
+            if (self%group(g) < 1 .or. self%unit_current(g) == 0.0_dp) cycle
+            self%extcur(self%group(g)) = field%coils%current(g) / self%unit_current(g)
+        end do
         self%is_ready = .true.
     end subroutine vacuum_solver_init
 
@@ -101,6 +111,16 @@ contains
 
         call self%plasma%init_from_vmec(trim(wout_file), nphi, ntheta)
     end subroutine vacuum_solver_enable_plasma_from_vmec
+
+    subroutine vacuum_solver_enable_plasma_from_boundary(self, vb, nphi, ntheta)
+        !! Plasma model from in-memory boundary data (e.g. a VMEC++ solve).
+        class(vacuum_solver_t), intent(inout) :: self
+        type(vmec_boundary_t), intent(in) :: vb
+        integer(i32), intent(in) :: nphi
+        integer(i32), intent(in) :: ntheta
+
+        call self%plasma%init_from_boundary(vb, nphi, ntheta)
+    end subroutine vacuum_solver_enable_plasma_from_boundary
 
     integer function vacuum_solver_n_groups(self)
         class(vacuum_solver_t), intent(in) :: self
