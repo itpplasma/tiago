@@ -113,14 +113,22 @@ if(TIAGO_ENABLE_RECONSTRUCTION)
     set(VMECPP_ENABLE_ENZYME ON CACHE BOOL "" FORCE)
     set(VMECPP_ENZYME_PLUGIN "${TIAGO_ENZYME_PLUGIN}" CACHE FILEPATH "" FORCE)
     set(VMECPP_HWCAPS_DISPATCH OFF CACHE BOOL "" FORCE)
-    # One OpenMP runtime in the process: Clang compiles VMEC++ against gfortran's libgomp.
-    execute_process(COMMAND ${CMAKE_Fortran_COMPILER} -print-file-name=libgomp.so
-        OUTPUT_VARIABLE TIAGO_LIBGOMP OUTPUT_STRIP_TRAILING_WHITESPACE)
+    # One OpenMP runtime in the process: LLVM's libomp. Clang has no code
+    # generation for libgomp (-fopenmp=libgomp silently drops the pragmas, so
+    # VMEC++'s radial threads would not run), while libomp also implements
+    # the GOMP ABI of gfortran's OpenMP code. Executables link libomp ahead of
+    # libgomp, so its symbols serve both (LLVM also ships libgomp.so.1 as a
+    # link to libomp; CMake warns that it hides GCC's libgomp, as intended).
+    execute_process(COMMAND ${CMAKE_CXX_COMPILER} -print-file-name=libomp.so
+        OUTPUT_VARIABLE TIAGO_LIBOMP OUTPUT_STRIP_TRAILING_WHITESPACE)
+    if(NOT EXISTS "${TIAGO_LIBOMP}")
+        message(FATAL_ERROR "libomp for ${CMAKE_CXX_COMPILER} not found (e.g. apt install libomp-20-dev)")
+    endif()
     foreach(lang C CXX)
-        set(OpenMP_${lang}_FLAGS "-fopenmp=libgomp" CACHE STRING "" FORCE)
-        set(OpenMP_${lang}_LIB_NAMES "gomp" CACHE STRING "" FORCE)
+        set(OpenMP_${lang}_FLAGS "-fopenmp=libomp" CACHE STRING "" FORCE)
+        set(OpenMP_${lang}_LIB_NAMES "omp" CACHE STRING "" FORCE)
     endforeach()
-    set(OpenMP_gomp_LIBRARY "${TIAGO_LIBGOMP}" CACHE FILEPATH "" FORCE)
+    set(OpenMP_omp_LIBRARY "${TIAGO_LIBOMP}" CACHE FILEPATH "" FORCE)
     FetchContent_Declare(vmecpp
         GIT_REPOSITORY https://github.com/proximafusion/vmecpp.git
         GIT_TAG 860df56938ea6aaf7a1775c89d51069bab4120b3
@@ -164,7 +172,7 @@ end module tiago_vmecpp_paths
     set_target_properties(tiago_reconstruction PROPERTIES
         Fortran_STANDARD 2018
         Fortran_STANDARD_REQUIRED YES)
-    target_link_libraries(tiago_reconstruction PUBLIC tiago_solver tiago_fortopt
+    target_link_libraries(tiago_reconstruction PUBLIC ${TIAGO_LIBOMP} tiago_solver tiago_fortopt
         fortplot::fortplot tiago_vmecpp_adapter ${LAPACK_LIBRARIES})
     set_target_properties(tiago_reconstruction PROPERTIES LINKER_LANGUAGE Fortran)
     add_dependencies(tiago_reconstruction indata2json)
@@ -267,4 +275,6 @@ if(TIAGO_ENABLE_RECONSTRUCTION)
                 ${CMAKE_BINARY_DIR}/tests/reconstruct_exact)
     set_tests_properties(tiago_vmecpp_equilibrium tiago_reconstruct_exact PROPERTIES
         FIXTURES_REQUIRED input_li383 TIMEOUT 600)
+    # check the extracted adjoint blocks against isolated Hessian-vector products
+    set_tests_properties(tiago_vmecpp_equilibrium PROPERTIES ENVIRONMENT TIAGO_VMECPP_VERIFY=1)
 endif()

@@ -18,7 +18,7 @@ program tiago_reconstruct
     character(len=512) :: vmec_input = '', output_dir = 'reconstruction'
     character(len=512) :: coils = '', coil_extcur = ''
     character(len=512) :: flux = '', segrog = '', bprobes = '', measurements = ''
-    character(len=512) :: consistency_points = ''
+    character(len=512) :: consistency_points = '', vmec_boundary_wout = ''
     character(len=64) :: parameters(maxp) = ''
     real(dp) :: start_values(maxp), truth_values(maxp), parameter_scale(maxp)
     real(dp) :: prior_values(maxp), prior_sigma(maxp)
@@ -30,7 +30,7 @@ program tiago_reconstruct
     logical :: gauss = .true., synthesize_measurements = .false., check_jacobian = .false., &
         add_noise = .true.
     logical :: rphiz = .false.
-    namelist /reconstruction/ vmec_input, output_dir, coils, coil_extcur, &
+    namelist /reconstruction/ vmec_input, vmec_boundary_wout, output_dir, coils, coil_extcur, &
         flux, segrog, bprobes, measurements, consistency_points, parameters, start_values, &
         truth_values, parameter_scale, prior_values, prior_sigma, consistency_sigma, seg_area, &
         sigma_relative, sigma_flux, sigma_segrog, sigma_bprobe, fd_step, vmec_ftol, vmec_niter, samples, plasma_nphi, &
@@ -150,6 +150,7 @@ contains
         call rec%eq%init(trim(vmec_input), workdir, eq_names)
         call rec%eq%vmec%set_input('ftol', vmec_ftol)
         call rec%eq%vmec%set_input('niter', real(vmec_niter, dp))
+        if (len_trim(vmec_boundary_wout) > 0) call boundary_from_wout(trim(vmec_boundary_wout))
         rec%rule%samples_per_segment = samples
         rec%rule%gauss = gauss
         rec%nphi = plasma_nphi
@@ -233,6 +234,39 @@ contains
         end do
         rec%x0 = values
     end subroutine parameter_defaults
+
+    subroutine boundary_from_wout(path)
+        !! Replace the input boundary (RBC, ZBS) by the last surface of a wout,
+        !! e.g. a free-boundary equilibrium, for a consistent fixed-boundary run.
+        use tiago_plasma_support, only: vmec_boundary_t, read_vmec_boundary
+        character(len=*), intent(in) :: path
+        type(vmec_boundary_t) :: vb
+        integer :: k, m, n, mpol, ntor, nfp
+
+        call read_vmec_boundary(path, vb)
+        if (vb%lasym) call die('vmec_boundary_wout: lasym equilibria are not supported')
+        mpol = rec%eq%vmec%get_int('mpol')
+        ntor = rec%eq%vmec%get_int('ntor')
+        nfp = rec%eq%vmec%get_int('nfp')
+        if (vb%nfp /= nfp) call die('vmec_boundary_wout: nfp differs from the VMEC input')
+        do m = 0, mpol - 1
+            do n = -ntor, ntor
+                call rec%eq%vmec%set_input('rbc', 0.0_dp, m + 1, n + ntor + 1)
+                call rec%eq%vmec%set_input('zbs', 0.0_dp, m + 1, n + ntor + 1)
+            end do
+        end do
+        do k = 1, size(vb%xm)
+            m = nint(vb%xm(k))
+            n = nint(vb%xn(k)) / nfp
+            if (m >= mpol .or. abs(n) > ntor) then
+                if (abs(vb%rmnc(k)) + abs(vb%zmns(k)) > 0.0_dp) &
+                    call die('vmec_boundary_wout: wout modes exceed MPOL/NTOR of the input')
+                cycle
+            end if
+            call rec%eq%vmec%set_input('rbc', vb%rmnc(k), m + 1, n + ntor + 1)
+            call rec%eq%vmec%set_input('zbs', vb%zmns(k), m + 1, n + ntor + 1)
+        end do
+    end subroutine boundary_from_wout
 
     subroutine read_consistency_points(fb)
         !! Rows "x y z" [m]; each point gives three virtual probes (x, y, z).

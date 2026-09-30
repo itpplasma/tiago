@@ -8,6 +8,9 @@
 #include "vmecpp_adapter.h"
 
 #include <Eigen/Dense>
+#include <thread>
+#include <cstdio>
+#include <cstdlib>
 #include <algorithm>
 #include <climits>
 #include <cmath>
@@ -42,8 +45,8 @@ int Fail(const std::string& message) {
 template <typename Function>
 int Guard(Function&& function) {
   try {
+    ErrorMessage().clear();  // a function may leave a soft failure message
     function();
-    ErrorMessage().clear();
     return 0;
   } catch (const std::exception& error) {
     return Fail(error.what());
@@ -462,9 +465,55 @@ struct tiago_vmecpp {
   bool factorized = false;
   std::vector<int> interior, prescribed, gauge;  // interior: grouped by surface
   BlockTridiagonal system;                        // transposed interior Hessian
+  // (H^T x)[prescribed[k]] = sum over coupling[k] of value * x[interior[position]]
+  std::vector<std::vector<std::pair<int, double>>> coupling;
+  // worker models (copies of model at the same state) for parallel passes
+  std::optional<vmecpp::VmecINDATA> model_indata;
+  std::vector<std::unique_ptr<Model>> workers;
+  int threads = 0;  // 0: OMP_NUM_THREADS, else the hardware concurrency
 };
 
 namespace {
+
+int ThreadCount(const tiago_vmecpp* handle) {
+  if (handle->threads > 0) return handle->threads;
+  if (const char* env = std::getenv("OMP_NUM_THREADS")) {
+    const int n = std::atoi(env);
+    if (n > 0) return n;
+  }
+  return std::max(1u, std::thread::hardware_concurrency());
+}
+
+// Runs body(task, model) for task = 0 .. tasks - 1 on up to ThreadCount
+// threads, each with its own model at the converged state.
+template <class Body>
+void ParallelOverModels(tiago_vmecpp* handle, int tasks, const Body& body) {
+  const int threads = std::max(1, std::min(ThreadCount(handle), tasks));
+  const Eigen::VectorXd state = handle->model->GetState();
+  while (static_cast<int>(handle->workers.size()) < threads - 1) {
+    const int ns = handle->model->ns();
+    vmecpp::HotRestartState restart(handle->output->wout, *handle->model_indata);
+    handle->workers.push_back(std::make_unique<Model>(*handle->model_indata, ns, restart));
+  }
+  std::vector<std::string> errors(threads);
+  auto run = [&](int t) {
+    try {
+      Model& model = t == 0 ? *handle->model : *handle->workers[t - 1];
+      model.SetState(state);
+      model.Evaluate();
+      for (int task = t; task < tasks; task += threads) body(task, model);
+    } catch (const std::exception& e) {
+      errors[t] = e.what();
+    }
+  };
+  std::vector<std::thread> pool;
+  for (int t = 1; t < threads; ++t) pool.emplace_back(run, t);
+  run(0);
+  for (auto& thread : pool) thread.join();
+  for (const auto& e : errors) {
+    if (!e.empty()) throw std::runtime_error(e);
+  }
+}
 
 Eigen::VectorXd& Vector(vmecpp::VmecINDATA& in, const std::string& name) {
   if (name == "am") return in.am;
@@ -552,6 +601,9 @@ extern "C" int tiago_vmecpp_set_input(tiago_vmecpp* handle, const char* name, in
       in.niter_array.setConstant(static_cast<int>(value));
     } else if (key == "hot_restart") {
       handle->hot_restart = value != 0.0;
+    } else if (key == "threads") {
+      handle->threads = std::max(0, static_cast<int>(value));
+      handle->workers.clear();
     } else if (double* s = Scalar(in, key)) {
       *s = value;
     } else if (key == "rbc" || key == "zbs") {
@@ -646,6 +698,7 @@ extern "C" int tiago_vmecpp_solve(tiago_vmecpp* handle, int* converged) {
   return Guard([&] {
     handle->output.reset();
     handle->model.reset();
+    handle->workers.clear();
     handle->factorized = false;
     handle->status = 1;
     const int last = static_cast<int>(handle->indata.ns_array.size()) - 1;
@@ -662,19 +715,24 @@ extern "C" int tiago_vmecpp_solve(tiago_vmecpp* handle, int* converged) {
       indata.niter_array = Eigen::VectorXi::Constant(1, handle->indata.niter_array[last]);
       initial.emplace(*handle->last_wout, indata);
     }
-    auto result = vmecpp::run(indata, initial, 1, vmecpp::OutputMode::kSilent, nullptr, true);
+    const int threads = ThreadCount(handle);
+    auto result = vmecpp::run(indata, initial, threads, vmecpp::OutputMode::kSilent, nullptr, true);
     if (!result.ok() && initial) {
       indata = handle->indata;
-      result = vmecpp::run(indata, std::nullopt, 1, vmecpp::OutputMode::kSilent, nullptr, true);
+      result = vmecpp::run(indata, std::nullopt, threads, vmecpp::OutputMode::kSilent, nullptr,
+                           true);
     }
     if (!result.ok()) {
-      ErrorMessage() = std::string(result.status().message());
+      ErrorMessage() = result.status().ToString();
+      std::replace(ErrorMessage().begin(), ErrorMessage().end(), '\n', ' ');
+      std::replace(ErrorMessage().begin(), ErrorMessage().end(), '\t', ' ');
       return;
     }
     handle->output = std::move(*result);
     handle->last_wout = handle->output->wout;
     vmecpp::HotRestartState restart(handle->output->wout, indata);
     handle->model = std::make_unique<Model>(indata, ns, restart);
+    handle->model_indata = indata;
     handle->status = 0;
     *converged = 1;
   });
@@ -859,32 +917,119 @@ extern "C" int tiago_vmecpp_adjoint(tiago_vmecpp* handle, int ncot,
                         layout.l_cs}) {
         if (start >= 0) starts.push_back(start);
       }
-      Eigen::VectorXd probe = Eigen::VectorXd::Zero(state_size);
+      // prescribed entries (boundary, pinned gauge): their Hessian columns on
+      // the interior rows give the coupling (H^T x)[prescribed] of the adjoint
+      std::vector<int> prescribed_slot(state_size, -1);
+      for (int k = 0; k < static_cast<int>(handle->prescribed.size()); ++k) {
+        prescribed_slot[handle->prescribed[k]] = k;
+      }
+      std::vector<int> offset(ns + 1, 0);
+      for (int j = 0; j < ns; ++j) offset[j + 1] = offset[j] + size_of(j);
+      handle->coupling.assign(handle->prescribed.size(), {});
+      // Boundary columns are not local: VMEC's spectral-condensation
+      // constraint takes its reference geometry from the boundary (scaled in
+      // s), so they reach every surface and are probed one at a time
+      // (column = -1 - index); all other columns reach only the neighbouring
+      // surfaces.
+      std::vector<char> is_boundary(state_size, 0);
+      for (int i : boundary) is_boundary[i] = 1;
+      struct Task { int start, mode, color; };
+      std::vector<Task> tasks;
       for (int start : starts) {
         for (int mode = 0; mode < layout.modes; ++mode) {
-          for (int color = 0; color < 3; ++color) {
-            std::vector<int> columns;
-            for (int j = color; j < ns; j += 3) {
-              const int i = start + j * layout.modes + mode;
-              if (position[i] >= 0) columns.push_back(i);
-            }
-            if (columns.empty()) continue;
-            for (int i : columns) probe[i] = 1.0;
-            const Eigen::VectorXd result = model.HessianVectorProduct(probe);
-            for (int i : columns) probe[i] = 0.0;
+          for (int color = 0; color < 3; ++color) tasks.push_back({start, mode, color});
+        }
+      }
+      for (int i : boundary) tasks.push_back({-1 - i, 0, -1});
+      ParallelOverModels(handle, static_cast<int>(tasks.size()), [&](int t, Model& worker) {
+        if (tasks[t].start < 0) {  // one boundary column, all interior rows
+          const int i = -1 - tasks[t].start;
+          Eigen::VectorXd probe = Eigen::VectorXd::Zero(state_size);
+          probe[i] = 1.0;
+          const Eigen::VectorXd result = worker.HessianVectorProduct(probe);
+          auto& entries = handle->coupling[prescribed_slot[i]];
+          for (int r = 0; r < static_cast<int>(handle->interior.size()); ++r) {
+            const double value = result[handle->interior[r]];
+            if (value != 0.0) entries.emplace_back(r, value);
+          }
+          return;
+        }
+        std::vector<int> columns;
+        for (int j = tasks[t].color; j < ns; j += 3) {
+          const int i = tasks[t].start + j * layout.modes + tasks[t].mode;
+          if (position[i] >= 0 || (prescribed_slot[i] >= 0 && !is_boundary[i])) columns.push_back(i);
+        }
+        if (columns.empty()) return;
+        Eigen::VectorXd probe = Eigen::VectorXd::Zero(state_size);
+        for (int i : columns) probe[i] = 1.0;
+        const Eigen::VectorXd result = worker.HessianVectorProduct(probe);
+        for (int i : columns) {
+          const int j = surface_of(i);
+          if (position[i] >= 0) {
             // column i of H (surface j) holds row i of A = H^T in the blocks
             // (j, j - 1), (j, j) and (j, j + 1)
-            for (int i : columns) {
-              const int j = surface_of(i), c = position[i];
-              for (int r = 0; r < size_of(j); ++r) diagonal[j](c, r) = result[by_surface[j][r]];
-              if (j > 0) {
-                for (int r = 0; r < size_of(j - 1); ++r) lower[j](c, r) = result[by_surface[j - 1][r]];
-              }
-              if (j + 1 < ns) {
-                for (int r = 0; r < size_of(j + 1); ++r) upper[j](c, r) = result[by_surface[j + 1][r]];
+            const int c = position[i];
+            for (int r = 0; r < size_of(j); ++r) diagonal[j](c, r) = result[by_surface[j][r]];
+            if (j > 0) {
+              for (int r = 0; r < size_of(j - 1); ++r) lower[j](c, r) = result[by_surface[j - 1][r]];
+            }
+            if (j + 1 < ns) {
+              for (int r = 0; r < size_of(j + 1); ++r) upper[j](c, r) = result[by_surface[j + 1][r]];
+            }
+          } else {
+            auto& entries = handle->coupling[prescribed_slot[i]];
+            for (int k = std::max(j - 1, 0); k <= std::min(j + 1, ns - 1); ++k) {
+              for (int r = 0; r < size_of(k); ++r) {
+                const double value = result[by_surface[k][r]];
+                if (value != 0.0) entries.emplace_back(offset[k] + r, value);
               }
             }
           }
+        }
+      });
+      // TIAGO_VMECPP_VERIFY: check every extracted block row and coupling
+      // column against an isolated Hessian-vector product (one per unknown;
+      // for tests), so that a coupling beyond the assumed reach cannot pass
+      // unnoticed.
+      if (std::getenv("TIAGO_VMECPP_VERIFY")) {
+        model.SetState(state);
+        model.Evaluate();
+        auto check = [&](int i, auto&& compare) {
+          Eigen::VectorXd e = Eigen::VectorXd::Zero(state_size);
+          e[i] = 1.0;
+          const Eigen::VectorXd col = model.HessianVectorProduct(e);
+          const double scale = std::max(col.cwiseAbs().maxCoeff(), 1.0e-300);
+          if (compare(col) > 1.0e-10 * scale) {
+            throw std::runtime_error("adjoint verification failed for state entry " +
+                                     std::to_string(i));
+          }
+        };
+        for (int j = 0; j < ns; ++j) {
+          for (int c = 0; c < size_of(j); ++c) {
+            check(by_surface[j][c], [&](const Eigen::VectorXd& col) {
+              double d = 0.0;
+              for (int k = 0; k < ns; ++k) {
+                for (int r = 0; r < size_of(k); ++r) {
+                  const double stored = k == j ? diagonal[j](c, r)
+                                      : k == j - 1 ? lower[j](c, r)
+                                      : k == j + 1 ? upper[j](c, r) : 0.0;
+                  d = std::max(d, std::abs(stored - col[by_surface[k][r]]));
+                }
+              }
+              return d;
+            });
+          }
+        }
+        for (int k = 0; k < static_cast<int>(handle->prescribed.size()); ++k) {
+          check(handle->prescribed[k], [&](const Eigen::VectorXd& col) {
+            Eigen::VectorXd stored = Eigen::VectorXd::Zero(handle->interior.size());
+            for (const auto& [r, value] : handle->coupling[k]) stored[r] = value;
+            double d = 0.0;
+            for (int r = 0; r < static_cast<int>(handle->interior.size()); ++r) {
+              d = std::max(d, std::abs(stored[r] - col[handle->interior[r]]));
+            }
+            return d;
+          });
         }
       }
       handle->system.Factor(std::move(diagonal), std::move(lower), std::move(upper));
@@ -898,21 +1043,31 @@ extern "C" int tiago_vmecpp_adjoint(tiago_vmecpp* handle, int ncot,
     const int edge = ns - 1;
     const int mpol_geometry = v.s_.mpolGeometry;
     const int ntor_geometry = v.s_.ntorGeometry;
-    for (int c = 0; c < ncot; ++c) {
+    // one pass per cotangent, in parallel over worker models
+    std::vector<Eigen::VectorXd> fulls(ncot);
+    ParallelOverModels(handle, ncot, [&](int c, Model& worker) {
       // The Enzyme passes use the model's work buffers (and the cached primal)
       // as scratch; re-evaluate at the converged state before every cotangent.
-      model.SetState(state);
-      model.Evaluate();
+      worker.SetState(state);
+      worker.Evaluate();
       const Eigen::VectorXd state_bar =
-          model.GeometryStateVjp(geometry_bar + static_cast<size_t>(c) * coefficient_size);
+          worker.GeometryStateVjp(geometry_bar + static_cast<size_t>(c) * coefficient_size);
       Eigen::VectorXd rhs(n);
       for (int r = 0; r < n; ++r) rhs[r] = state_bar[handle->interior[r]];
       const Eigen::VectorXd adjoint = handle->system.Solve(rhs);
       Eigen::VectorXd embedded = Eigen::VectorXd::Zero(state_size);
       for (int r = 0; r < n; ++r) embedded[handle->interior[r]] = adjoint[r];
-      const Eigen::VectorXd coupling = model.HessianVectorProductTranspose(embedded);
       Eigen::VectorXd full = Eigen::VectorXd::Zero(state_size);
-      for (int i : handle->prescribed) full[i] = state_bar[i] - coupling[i];
+      for (int k = 0; k < static_cast<int>(handle->prescribed.size()); ++k) {
+        double coupling = 0.0;
+        for (const auto& [r, value] : handle->coupling[k]) coupling += value * adjoint[r];
+        full[handle->prescribed[k]] = state_bar[handle->prescribed[k]] - coupling;
+      }
+      worker.ProfileVjp(-embedded, profile_bar + static_cast<size_t>(c) * 3 * (ns - 1));
+      fulls[c] = std::move(full);
+    });
+    for (int c = 0; c < ncot; ++c) {
+      Eigen::VectorXd& full = fulls[c];
       // fold the pinned gauge back onto the boundary entries it derives from
       for (int i : handle->gauge) {
         const int surface = (i - layout.z_cs) / modes;
@@ -973,7 +1128,6 @@ extern "C" int tiago_vmecpp_adjoint(tiago_vmecpp* handle, int ncot,
           if (layout.lthreed) at(1, m, sn) -= sign * zbcs(m, target);
         }
       }
-      model.ProfileVjp(-embedded, profile_bar + static_cast<size_t>(c) * 3 * (ns - 1));
     }
 #endif
   });

@@ -1,6 +1,6 @@
 program test_vmecpp_equilibrium
     !! VMEC++ through Tiago's C adapter, without Python.
-    !! Usage: test_vmecpp_equilibrium <VMEC input (INDATA or JSON)> <workdir> [adjoint-only]
+    !! Usage: test_vmecpp_equilibrium <VMEC input (INDATA or JSON)> <workdir> [adjoint-only | FD step]
     !! (adjoint-only: checks 1-2 and the Jacobian timing, no finite differences,
     !! for timing large equilibria)
     !!  1. Tiago's edge field y equals VMEC++'s wout (1.5 b(ns) - 0.5 b(ns-1)).
@@ -19,7 +19,8 @@ program test_vmecpp_equilibrium
     real(dp), allocatable :: x0(:), x(:), y0(:), yp(:), ym(:), cot(:, :), jac(:, :), fd(:)
     real(dp), allocatable :: ref(:), b(:, :), coef_bar(:, :, :, :), dcoef(:, :, :, :)
     real(dp), allocatable :: iota_bar(:), current_bar(:), ybar(:), cp(:, :, :, :), cm(:, :, :, :)
-    real(dp) :: h, err, t0, t1, eps
+    real(dp) :: h, err, t0, t1, eps, step
+    integer :: ios
     real(dp), allocatable :: xp(:), yhot(:)
     integer :: failures, k, ns, nb, ng, mnq, mnmax
     logical :: ok
@@ -28,6 +29,9 @@ program test_vmecpp_equilibrium
     call get_command_argument(1, input)
     call get_command_argument(2, workdir)
     call get_command_argument(3, mode)
+    step = 1.0e-5_dp  ! relative FD step; larger for equilibria solved less precisely
+    read(mode, *, iostat=ios) step
+    if (ios /= 0) step = 1.0e-5_dp
     call execute_command_line('mkdir -p "'//trim(workdir)//'"')
     call eq%init(trim(input), trim(workdir), names)
     if (trim(mode) /= 'adjoint-only') then  ! else FTOL and NITER of the input
@@ -35,10 +39,16 @@ program test_vmecpp_equilibrium
         call eq%vmec%set_input('niter', 20000.0_dp)
     end if
     x0 = eq%values()
-    call cpu_time(t0)
-    call eq%solve(x0, ok)
-    call cpu_time(t1)
-    if (.not. ok) error stop 'VMEC++ did not converge'
+    t0 = wall()
+    block
+        character(len=:), allocatable :: message
+        call eq%solve(x0, ok, message)
+        t1 = wall()
+        if (.not. ok) then
+            write(error_unit, '(A)') 'VMEC++ did not converge: '//message
+            error stop 1
+        end if
+    end block
     print '(A,F7.2,A)', 'solve: ', t1 - t0, ' s'
 
     ! 1. edge field vs VMEC++'s own wout
@@ -116,21 +126,21 @@ program test_vmecpp_equilibrium
     allocate(cot(4, size(y0)))
     call random_number(cot)
     cot = (cot - 0.5_dp) / spread(max(abs(y0), 1.0e-3_dp * maxval(abs(y0))), 1, 4)
-    call cpu_time(t0)
+    t0 = wall()
     call eq%jacobian(x0, cot, jac)
-    call cpu_time(t1)
+    t1 = wall()
     print '(A,F7.2,A)', 'Jacobian (4 cotangents, incl. factorization): ', t1 - t0, ' s'
     if (trim(mode) == 'adjoint-only') then
-        call cpu_time(t0)
+        t0 = wall()
         call eq%jacobian(x0, cot, jac)
-        call cpu_time(t1)
+        t1 = wall()
         print '(A,F7.2,A)', 'Jacobian (4 cotangents, factorization cached): ', t1 - t0, ' s'
         call eq%vmec%destroy()
         if (failures > 0) error stop 1
         stop
     end if
     do k = 1, size(names)
-        h = 1.0e-5_dp * max(abs(x0(k)), 1.0e-2_dp)
+        h = step * max(abs(x0(k)), 1.0e-2_dp)
         x = x0
         x(k) = x0(k) + h
         call eq%solve(x, ok)
@@ -154,6 +164,12 @@ program test_vmecpp_equilibrium
     print '(A)', 'test_vmecpp_equilibrium passed'
 
 contains
+
+    real(dp) function wall()
+        integer(8) :: count, rate
+        call system_clock(count, rate)
+        wall = real(count, dp) / real(rate, dp)
+    end function wall
 
     subroutine check_vector(name, actual, expected, rtol)
         character(len=*), intent(in) :: name
