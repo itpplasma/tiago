@@ -8,7 +8,7 @@ include(FetchContent)
 find_package(Python3 COMPONENTS Interpreter REQUIRED)
 
 set(TIAGO_LIBNEO_GIT "git@github.com:itpplasma/libneo.git" CACHE STRING "libneo upstream to fetch")
-set(TIAGO_LIBNEO_TAG "main" CACHE STRING "libneo branch/tag used by Tiago")
+set(TIAGO_LIBNEO_TAG "f1bef44e80c4508f04594d4d2ca120eaf17564f8" CACHE STRING "libneo commit/branch/tag used by Tiago")
 set(LIBNEO_ENABLE_TESTS OFF CACHE BOOL "Disable libneo's own tests when vendored" FORCE)
 set(ENABLE_OPENMP OFF CACHE BOOL "Disable libneo OpenMP flags unless explicitly requested" FORCE)
 
@@ -21,15 +21,13 @@ find_package(OpenMP)
 FetchContent_Declare(libneo
     GIT_REPOSITORY ${TIAGO_LIBNEO_GIT}
     GIT_TAG        ${TIAGO_LIBNEO_TAG}
-    GIT_SHALLOW    TRUE
     SOURCE_SUBDIR  .)
 FetchContent_MakeAvailable(libneo)
 
 if(TIAGO_ENABLE_PLASMA)
     FetchContent_Declare(virtual_casing
         GIT_REPOSITORY "https://github.com/hiddenSymmetries/virtual-casing.git"
-        GIT_TAG        "master"
-        GIT_SHALLOW    TRUE)
+        GIT_TAG        4e8810a576208b9d15881c41a5a337d1d16a916b)
     FetchContent_MakeAvailable(virtual_casing)
 
     # OpenMP is already found above, add to module path for FFTW
@@ -46,7 +44,8 @@ if(TIAGO_ENABLE_PLASMA)
 
     # Create static library from virtual-casing source
     add_library(vc_static STATIC EXCLUDE_FROM_ALL
-        ${virtual_casing_SOURCE_DIR}/src/virtual-casing.cpp)
+        ${virtual_casing_SOURCE_DIR}/src/virtual-casing.cpp
+        src/solver/vc_offsurf_shim.cpp)
     target_include_directories(vc_static PRIVATE
         ${virtual_casing_SOURCE_DIR}/include
         ${virtual_casing_SOURCE_DIR}/extern/SCTL/include
