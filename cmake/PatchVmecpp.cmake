@@ -1,6 +1,8 @@
 # Applied to the fetched VMEC++ sources (FetchContent PATCH_COMMAND):
 #  - drop the pybind11 extension module, so that no Python is configured or
 #    built; Tiago uses the C++ core through src/equilibrium/vmecpp_adapter.cc;
+#  - drop the registration of VMEC++'s own Enzyme tests (their executables are
+#    not built with Tiago), so that Tiago's ctest lists only Tiago's tests;
 #  - optionally replace the HDF5 and netCDF-C source archives by mirrors
 #    (-DHDF5_URL=..., -DNETCDF_URL=...; the upstream hashes are then dropped).
 # Idempotent: a second application finds nothing left to change.
@@ -17,6 +19,9 @@ if(begin GREATER -1 AND end GREATER begin)
     string(SUBSTRING "${text}" ${end} -1 tail)
     set(text "${head}# (pybind11 module removed by Tiago's PatchVmecpp.cmake)${tail}")
 endif()
+
+string(REGEX REPLACE "\n[ \t]*add_test\\(NAME (jacobian_kernel_autodiff|local_force_hessian) [^\n]*"
+    "" text "${text}")
 
 if(HDF5_URL)
     string(REGEX REPLACE "URL \"https://github.com/HDFGroup/hdf5/archive/refs/tags/[^\"]*\""

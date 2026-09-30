@@ -1,0 +1,5 @@
+parameter     seeds     mean      std
+PRES_SCALE       20   -0.276    0.984
+PHIEDGE          20   -0.245    0.905
+AC(1)            20   -0.285    1.095
+CURTOR           20    0.392    0.725

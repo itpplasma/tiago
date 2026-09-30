@@ -172,6 +172,8 @@ end module tiago_vmecpp_paths
     target_link_libraries(test_vmecpp_equilibrium PRIVATE tiago_reconstruction)
     add_executable(tiago_reconstruct src/cli/tiago_reconstruct.f90)
     target_link_libraries(tiago_reconstruct PRIVATE tiago_reconstruction tiago_build_config)
+    add_executable(tiago_plot_pulls benchmarks/reconstruction/plot_pulls.f90)
+    target_link_libraries(tiago_plot_pulls PRIVATE fortplot::fortplot)
 endif()
 
 enable_testing()
@@ -246,3 +248,23 @@ add_test(NAME tiago_diag_lint_invalid
             ${CMAKE_SOURCE_DIR}/tests/data/fluxloop_invalid.diagno
             --kind flux)
 set_tests_properties(tiago_diag_lint_invalid PROPERTIES WILL_FAIL TRUE)
+
+if(TIAGO_ENABLE_RECONSTRUCTION)
+    # VMEC++ equilibrium chain (edge field, edge reverse mode, full Jacobian vs
+    # re-solved equilibria) and a noise-free reconstruction on LI383 (pinned input).
+    set(TIAGO_INPUT_LI383 ${CMAKE_BINARY_DIR}/tests/cases/input.li383_low_res)
+    add_test(NAME tiago_download_input_li383
+        COMMAND ${CMAKE_COMMAND}
+            -DURL=https://raw.githubusercontent.com/hiddenSymmetries/simsopt/9e027eac38028d57aa23777be52a781aa860e347/tests/test_files/input.li383_low_res
+            -DDEST=${TIAGO_INPUT_LI383} -P ${CMAKE_SOURCE_DIR}/cmake/DownloadFile.cmake)
+    set_tests_properties(tiago_download_input_li383 PROPERTIES FIXTURES_SETUP input_li383 TIMEOUT 120)
+    add_test(NAME tiago_vmecpp_equilibrium
+        COMMAND $<TARGET_FILE:test_vmecpp_equilibrium> ${TIAGO_INPUT_LI383}
+                ${CMAKE_BINARY_DIR}/tests/vmecpp_equilibrium)
+    add_test(NAME tiago_reconstruct_exact
+        COMMAND ${CMAKE_SOURCE_DIR}/tests/reconstruct_exact.sh $<TARGET_FILE:tiago_reconstruct>
+                ${TIAGO_INPUT_LI383} ${CMAKE_SOURCE_DIR}/benchmarks/reconstruction/sensors.awk
+                ${CMAKE_BINARY_DIR}/tests/reconstruct_exact)
+    set_tests_properties(tiago_vmecpp_equilibrium tiago_reconstruct_exact PROPERTIES
+        FIXTURES_REQUIRED input_li383 TIMEOUT 600)
+endif()

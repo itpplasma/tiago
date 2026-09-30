@@ -26,13 +26,14 @@ program tiago_reconstruct
     real(dp) :: sigma_relative = 0.01_dp, sigma_flux = 0.0_dp, sigma_segrog = 0.0_dp
     real(dp) :: sigma_bprobe = 0.0_dp, fd_step = 1.0e-4_dp, vmec_ftol = 1.0e-14_dp
     integer :: samples = 4, plasma_nphi = 32, plasma_ntheta = 32, max_iterations = 20, seed = 1
+    integer :: vmec_niter = 20000
     logical :: gauss = .true., synthesize_measurements = .false., check_jacobian = .false., &
         add_noise = .true.
     logical :: rphiz = .false.
     namelist /reconstruction/ vmec_input, output_dir, coils, coil_extcur, &
         flux, segrog, bprobes, measurements, consistency_points, parameters, start_values, &
         truth_values, parameter_scale, prior_values, prior_sigma, consistency_sigma, seg_area, &
-        sigma_relative, sigma_flux, sigma_segrog, sigma_bprobe, fd_step, vmec_ftol, samples, plasma_nphi, &
+        sigma_relative, sigma_flux, sigma_segrog, sigma_bprobe, fd_step, vmec_ftol, vmec_niter, samples, plasma_nphi, &
         plasma_ntheta, max_iterations, seed, gauss, synthesize_measurements, add_noise, check_jacobian, rphiz
 
     character(len=512) :: input_file
@@ -148,6 +149,7 @@ contains
         call execute_command_line('mkdir -p "'//workdir//'"')
         call rec%eq%init(trim(vmec_input), workdir, eq_names)
         call rec%eq%vmec%set_input('ftol', vmec_ftol)
+        call rec%eq%vmec%set_input('niter', real(vmec_niter, dp))
         rec%rule%samples_per_segment = samples
         rec%rule%gauss = gauss
         rec%nphi = plasma_nphi
@@ -431,7 +433,7 @@ contains
         open(newunit=unit, file=trim(output_dir)//'/parameters.csv', status='replace')
         write(unit, '(A)') 'name,start,fitted,sigma,truth,prior,prior_sigma'
         do k = 1, rec%n
-            write(unit, '(A,6(",",ES24.16))') trim(rec%names(k)), x_start(k), x(k), &
+            write(unit, '(A,6(",",ES24.16))') '"'//trim(rec%names(k))//'"', x_start(k), x(k), &
                 sqrt(max(diag(k), 0.0_dp)), merge(x_truth(k), 0.0_dp, have_truth), rec%prior(k), &
                 rec%prior_sigma(k)
         end do

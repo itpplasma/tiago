@@ -13,6 +13,9 @@ module tiago_reconstruction_plots
     real(dp), parameter :: c_initial(3) = [0.6_dp, 0.6_dp, 0.6_dp]
     real(dp), parameter :: c_truth(3) = [0.0_dp, 0.0_dp, 0.0_dp]
     real(dp), parameter :: c_meas(3) = [0.85_dp, 0.37_dp, 0.0_dp]
+    real(dp), parameter :: c_fit2(3) = [0.84_dp, 0.15_dp, 0.16_dp]
+    ! uncertainty bands, pre-blended with white (the raster backend fills opaquely)
+    character(len=*), parameter :: band_orange = '#f9cfa8', band_blue = '#c6dbef'
 
     type, public :: equilibrium_profiles_t
         logical :: present = .false.
@@ -82,27 +85,56 @@ contains
     end subroutine read_profiles
 
     subroutine plot_signals(path, title, ylabel, measured, sigma, initial, fitted)
-        !! Measured +- sigma (band) and the initial and fitted model per signal.
+        !! Measured +- 2 sigma (band) and the initial and fitted model per signal.
+        !! ylabel is 'quantity [unit]'; values are scaled by a power of 1000 that
+        !! is put into the unit.
         character(len=*), intent(in) :: path, title, ylabel
         real(dp), intent(in) :: measured(:), sigma(:), initial(:), fitted(:)
         type(figure_t) :: fig
         real(dp), allocatable :: index(:)
+        real(dp) :: scale
+        character(len=:), allocatable :: label
         integer :: i
 
         if (size(measured) == 0) return
+        call engineering_scale(maxval(abs(measured)), ylabel, scale, label)
         index = [(real(i, dp), i = 1, size(measured))]
         call fig%initialize(900, 500)
-        call fig%add_fill_between(index, measured - 2 * sigma, measured + 2 * sigma, &
-            color='orange', alpha=0.35_dp)
-        call fig%add_plot(index, measured, label='measured (band: 2 sigma)', color=c_meas)
-        call fig%scatter(index, initial, label='initial model', color=c_initial, marker='s')
-        call fig%scatter(index, fitted, label='fitted model', color=c_fit, marker='o')
+        call fig%add_fill_between(index, (measured - 2 * sigma) / scale, &
+            (measured + 2 * sigma) / scale, color=band_orange)
+        call fig%add_plot(index, measured / scale, label='measured (band: 2 sigma)', color=c_meas)
+        call fig%scatter(index, initial / scale, label='initial model', color=c_initial, marker='s')
+        call fig%scatter(index, fitted / scale, label='fitted model', color=c_fit, marker='o')
         call fig%set_xlabel('signal index')
-        call fig%set_ylabel(ylabel)
+        call fig%set_ylabel(label)
         call fig%set_title(title)
         call fig%legend()
         call fig%savefig(path)
     end subroutine plot_signals
+
+    subroutine engineering_scale(largest, ylabel, scale, label)
+        !! scale = 1000^k with largest / scale in [1, 1000); the prefix goes into
+        !! the unit of 'quantity [unit]', e.g. 'signal [1e-6 T m^3]'.
+        real(dp), intent(in) :: largest
+        character(len=*), intent(in) :: ylabel
+        real(dp), intent(out) :: scale
+        character(len=:), allocatable, intent(out) :: label
+        character(len=16) :: prefix
+        integer :: k, open
+
+        k = 0
+        if (largest > 0.0_dp) k = 3 * floor(log10(largest) / 3.0_dp)
+        scale = 10.0_dp**k
+        label = ylabel
+        if (k == 0) return
+        write(prefix, '(A,I0,A)') '1e', k, ' '
+        open = index(ylabel, '[')
+        if (open > 0) then
+            label = ylabel(:open)//trim(prefix)//' '//ylabel(open + 1:)
+        else
+            label = ylabel//' ['//trim(prefix)//']'
+        end if
+    end subroutine engineering_scale
 
     subroutine plot_residuals(path, initial, fitted)
         !! Normalized residuals (S - m) / sigma before and after the fit.
@@ -164,7 +196,7 @@ contains
         call fig%initialize(800, 500)
         if (present(pres_sigma)) then
             call fig%add_fill_between(fitted%s, (fitted%pres - pres_sigma) / 1.0e3_dp, &
-                (fitted%pres + pres_sigma) / 1.0e3_dp, color='steelblue', alpha=0.3_dp)
+                (fitted%pres + pres_sigma) / 1.0e3_dp, color=band_blue)
         end if
         if (truth%present) call fig%add_plot(truth%s, truth%pres / 1.0e3_dp, label='truth', &
             linestyle='--', color=c_truth)
@@ -199,7 +231,7 @@ contains
             label='initial', color=c_initial)
         call fig%add_plot(fitted%s, fitted%jcurv / 1.0e3_dp, label='fitted', color=c_fit)
         call fig%set_xlabel('s (normalized toroidal flux)')
-        call fig%set_ylabel('toroidal current density <j.grad phi>-like jcurv [kA/m^2]')
+        call fig%set_ylabel('toroidal current density jcurv [kA/m^2]')
         call fig%set_title('Toroidal current density')
         call fig%legend()
         name = path(:len(path) - 4)//'_current.png'
@@ -219,9 +251,9 @@ contains
         do plane = 0, 1
             phi = plane * acos(-1.0_dp) / real(fitted%nfp, dp)
             tag = merge(' phi=0     ', ' phi=pi/nfp', plane == 0)
+            if (initial%present) call curve(initial, 'initial'//trim(tag), c_initial, '-')
+            call curve(fitted, 'fitted'//trim(tag), merge(c_fit, c_fit2, plane == 0), '-')
             if (truth%present) call curve(truth, 'truth'//trim(tag), c_truth, '--')
-            if (initial%present) call curve(initial, 'initial'//trim(tag), c_initial, ':')
-            call curve(fitted, 'fitted'//trim(tag), c_fit, '-')
         end do
         call fig%set_xlabel('R [m]')
         call fig%set_ylabel('Z [m]')

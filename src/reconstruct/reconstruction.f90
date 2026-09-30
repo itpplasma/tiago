@@ -18,7 +18,7 @@ module tiago_reconstruction
     !! idia = 1 phiedge term is added analytically.
     use, intrinsic :: iso_fortran_env, only: dp => real64, i32 => int32, error_unit
     use, intrinsic :: ieee_arithmetic, only: ieee_value, ieee_quiet_nan
-    use fortnum_status, only: fortnum_status_t, status_set, FORTNUM_OK
+    use fortnum_status, only: fortnum_status_t, status_set, FORTNUM_OK, FORTNUM_CONVERGENCE_ERROR
     use fortopt_least_squares, only: least_squares_t, levenberg_marquardt_t, &
         least_squares_options_t, least_squares_result_t
     use tiago_diagnostic_types, only: flux_loop_t, segmented_rogowski_t, bprobe_t
@@ -387,19 +387,32 @@ contains
 
         call problem%initialize(rec%n, n_rows(), value_cb, jvp_cb, vjp_cb, status)
         options%max_iterations = max_iterations
+        ! Stop at VMEC++'s noise floor: with FTOL ~ 1e-14 chi^2 is reproducible
+        ! to ~1e-3, so smaller changes (and steps below 1e-4 of the parameter
+        ! scales) carry no information.
         options%gradient_tolerance = 1.0e-10_dp
-        options%step_tolerance = 1.0e-10_dp
-        options%objective_tolerance = 1.0e-10_dp
+        options%step_tolerance = 1.0e-4_dp
+        options%objective_tolerance = 1.0e-3_dp
         ! A rejected step raises the damping after one halving instead of halving
         ! a Gauss-Newton-like step many times: every trial is a VMEC++ solve.
         options%max_backtracking = 2
+        options%max_damping_attempts = 6
         z = x / rec%scale
         call lm%minimize(problem, z, options, result, status)
         x = parameters_of(z)
         steps = result%accepted_steps
         message = trim(status%msg)
         if (status%code /= FORTNUM_OK) then
-            write(error_unit, '(A)') 'WARNING: Levenberg-Marquardt: '//message
+            if (steps > 0 .and. status%code == FORTNUM_CONVERGENCE_ERROR) then
+                ! no decrease left at the noise floor of the equilibrium solves
+                message = 'converged (no further decrease of chi^2)'
+            else
+                write(error_unit, '(A)') 'WARNING: Levenberg-Marquardt: '//message
+            end if
+        else if (result%state%converged) then
+            message = 'converged'
+        else
+            message = 'iteration limit reached'
         end if
     end subroutine fit
 
