@@ -45,6 +45,15 @@ while `--flux-turns` / `--segrog-turns` accept text files of `label scale`
 pairs so Tiago mirrors DIAGNO's namelist-based `flux_turns` and
 `segrog_turns` arrays.
 
+## Magnetic probes and response matrices
+`--bprobes file` evaluates DIAGNO magnetic probes (`x y z theta_inc phi_inc
+eff_area` per row, angles in degrees; `--rphiz` for `R phi z`), written to
+`tiago_bprobes.csv` as `eff_area * B . n`. `--response-out file` writes every
+signal per unit EXTCUR of each coil group (`kind,label,group,value`, as
+DIAGNO's `-mutual`), so for other coil currents the vacuum signals are
+`sum_g M_g EXTCUR_g` without re-running Biot–Savart; this makes fitting coil
+currents a linear least-squares problem.
+
 ## Plasma response
 `--plasma-wout wout.nc` adds the field of the plasma currents of a VMEC
 equilibrium to every flux loop and segmented Rogowski. The VMEC boundary is a

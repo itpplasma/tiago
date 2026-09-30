@@ -4,7 +4,7 @@ module tiago_vacuum_forward
     use tiago_coil_loader, only: load_coils_into_field
     use neo_biotsavart, only: coils_init
     use tiago_diagnostic_types, only: flux_loop_t, segmented_rogowski_t, &
-        loop_point_t
+        loop_point_t, bprobe_t
     use tiago_plasma_support, only: plasma_support_t
     implicit none
     private
@@ -27,6 +27,8 @@ module tiago_vacuum_forward
         logical :: is_ready = .false.
         integer(i32) :: nfp = 1_i32
         type(plasma_support_t) :: plasma
+        integer, allocatable :: group(:)           !! coil group of every coil point
+        real(dp), allocatable :: unit_current(:)   !! current per unit EXTCUR (statamp)
     contains
         procedure :: init => vacuum_solver_init
         procedure :: finalize => vacuum_solver_finalize
@@ -35,6 +37,9 @@ module tiago_vacuum_forward
         procedure :: set_nfp => vacuum_solver_set_nfp
         procedure :: flux_and_segrog => vacuum_solver_flux_and_segrog
         procedure :: enable_plasma_from_vmec => vacuum_solver_enable_plasma_from_vmec
+        procedure :: bprobes => vacuum_solver_bprobes
+        procedure :: response => vacuum_solver_response
+        procedure :: n_groups => vacuum_solver_n_groups
     end type vacuum_solver_t
 
     public :: vacuum_solver_t
@@ -50,21 +55,21 @@ contains
         if (len_trim(coil_file) == 0) then
             ! No coils: plasma-only evaluation.
             call coils_init(no_points, no_points, no_points, no_points, self%field%coils)
+            allocate(self%group(0), self%unit_current(0))
             self%is_ready = .true.
             return
         end if
 
         if (present(coil_extcur)) then
-            if (len_trim(coil_extcur) > 0) then
-                call load_coils_into_field(self%field, trim(coil_file), trim(coil_extcur))
-            else
-                call load_coils_into_field(self%field, trim(coil_file))
-            end if
+            call load_coils_into_field(self%field, trim(coil_file), trim(coil_extcur), &
+                self%group, self%unit_current)
         else
-            call load_coils_into_field(self%field, trim(coil_file))
+            call load_coils_into_field(self%field, trim(coil_file), groups=self%group, &
+                unit_current=self%unit_current)
         end if
 
         call scale_coils_to_cgs(self%field)
+        self%unit_current = self%unit_current * amps_to_statamp
         self%is_ready = .true.
     end subroutine vacuum_solver_init
 
@@ -184,6 +189,121 @@ contains
             call add_plasma_segrog(self, diagnostics, voltages, q)
         end if
     end subroutine vacuum_solver_flux_and_segrog
+
+    integer function vacuum_solver_n_groups(self)
+        class(vacuum_solver_t), intent(in) :: self
+        vacuum_solver_n_groups = 0
+        if (allocated(self%group)) then
+            if (size(self%group) > 0) vacuum_solver_n_groups = maxval(self%group)
+        end if
+    end function vacuum_solver_n_groups
+
+    subroutine vacuum_solver_bprobes(self, probes, signals)
+        !! eff_area * B . normal at every probe (coils + plasma), before turns.
+        class(vacuum_solver_t), intent(in) :: self
+        type(bprobe_t), intent(in) :: probes(:)
+        real(dp), allocatable, intent(out) :: signals(:)
+        real(dp) :: points(size(probes), 3), bplasma(size(probes), 3)
+        integer :: i
+
+        call assert_ready(self)
+        allocate(signals(size(probes)))
+!$omp parallel do default(shared) private(i) schedule(dynamic)
+        do i = 1, size(probes)
+            signals(i) = probes(i)%eff_area * &
+                dot_product(coil_bfield(self%field, probes(i)%position), probes(i)%normal)
+        end do
+!$omp end parallel do
+        if (self%plasma%has_data()) then
+            do i = 1, size(probes)
+                points(i, :) = probes(i)%position
+            end do
+            call self%plasma%sample_bfield(points, bplasma)
+            do i = 1, size(probes)
+                signals(i) = signals(i) + probes(i)%eff_area * dot_product(bplasma(i, :), &
+                    probes(i)%normal)
+            end do
+        end if
+    end subroutine vacuum_solver_bprobes
+
+    subroutine vacuum_solver_response(self, loops, segs, probes, flux_resp, seg_resp, &
+            probe_resp, rule)
+        !! Coil signals per unit EXTCUR of each coil group, column g = group g
+        !! (DIAGNO -mutual). Vacuum only: the plasma part is not linear in EXTCUR.
+        !! Before turns/idia post-processing, which the caller applies per column.
+        class(vacuum_solver_t), intent(in) :: self
+        type(flux_loop_t), allocatable, intent(in) :: loops(:)
+        type(segmented_rogowski_t), allocatable, intent(in) :: segs(:)
+        type(bprobe_t), allocatable, intent(in) :: probes(:)
+        real(dp), allocatable, intent(out) :: flux_resp(:, :), seg_resp(:, :), probe_resp(:, :)
+        type(quadrature_rule_t), intent(in), optional :: rule
+
+        type(vacuum_solver_t) :: unit_solver
+        real(dp), allocatable :: values(:)
+        integer :: g, ng
+
+        call assert_ready(self)
+        ng = self%n_groups()
+        unit_solver%field = self%field
+        unit_solver%nfp = self%nfp
+        unit_solver%is_ready = .true.
+        allocate(flux_resp(0, 0), seg_resp(0, 0), probe_resp(0, 0))
+        if (allocated(loops)) then
+            deallocate(flux_resp)
+            allocate(flux_resp(size(loops), ng))
+        end if
+        if (allocated(segs)) then
+            deallocate(seg_resp)
+            allocate(seg_resp(size(segs), ng))
+        end if
+        if (allocated(probes)) then
+            deallocate(probe_resp)
+            allocate(probe_resp(size(probes), ng))
+        end if
+        do g = 1, ng
+            unit_solver%field%coils%current = merge(self%unit_current, 0.0_dp, self%group == g)
+            if (allocated(loops)) then
+                call unit_solver%flux_loops(loops, values, rule)
+                flux_resp(:, g) = values
+            end if
+            if (allocated(segs)) then
+                call unit_solver%segrog(segs, values, rule)
+                seg_resp(:, g) = values
+            end if
+            if (allocated(probes)) then
+                call unit_solver%bprobes(probes, values)
+                probe_resp(:, g) = values
+            end if
+        end do
+    end subroutine vacuum_solver_response
+
+    function coil_bfield(field, x) result(b)
+        !! Coil field [T] at x [m] (Hanson-Hirshman, all coil segments).
+        type(biotsavart_field_t), intent(in) :: field
+        real(dp), intent(in) :: x(3)
+        real(dp) :: b(3)
+        real(dp) :: xc(3), dl(3), ri(3), rf(3), l, r_i, r_f, eps
+        integer :: k
+
+        b = 0.0_dp
+        xc = x * meters_to_cm
+        do k = 1, size(field%coils%x) - 1
+            if (field%coils%current(k) == 0.0_dp) cycle
+            dl = [field%coils%x(k + 1) - field%coils%x(k), field%coils%y(k + 1) - &
+                field%coils%y(k), field%coils%z(k + 1) - field%coils%z(k)]
+            l = norm2(dl)
+            if (l == 0.0_dp) cycle
+            ri = xc - [field%coils%x(k), field%coils%y(k), field%coils%z(k)]
+            rf = ri - dl
+            r_i = norm2(ri)
+            r_f = norm2(rf)
+            eps = l / (r_i + r_f)
+            b = b + field%coils%current(k) / 2.99792458e10_dp * &
+                [dl(2) * ri(3) - dl(3) * ri(2), dl(3) * ri(1) - dl(1) * ri(3), &
+                 dl(1) * ri(2) - dl(2) * ri(1)] / (l * r_i * r_f) * 2.0_dp * eps / (1.0_dp - eps**2)
+        end do
+        b = b * gauss_to_tesla
+    end function coil_bfield
 
     subroutine assert_ready(self)
         class(vacuum_solver_t), intent(in) :: self

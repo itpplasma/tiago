@@ -7,6 +7,7 @@ Suites
   semantics  targeted DIAGNO-format features (open loops, iflflg, idia, EXTCUR, ...)
   plasma     plasma response of the NCSX VMEC equilibrium (xdiagno -vmec), plus an
              Ampere check against the VMEC toroidal current
+  features   magnetic probes and per-coil-group response matrices (xdiagno -mutual)
 
 Both codes always receive identical coil, EXTCUR and diagnostic files. Results
 are printed as Markdown and written to _work/results/.
@@ -17,6 +18,7 @@ from __future__ import annotations
 import argparse
 import csv
 import json
+import re
 import os
 import shutil
 import subprocess
@@ -365,6 +367,90 @@ def suite_semantics(r: Runner):
     ]
 
 
+def probe_set(R0, rs, n, seed=1):
+    """Probes on the sensor torus with pseudo-random orientations (degrees)."""
+    rng = np.random.default_rng(seed)
+    rows = []
+    for k in range(n):
+        ph, th = 2 * np.pi * k / n, 2 * np.pi * rng.random()
+        rows.append(torus(R0, rs, ph, th) + [360 * rng.random(), 180 * rng.random(), 1.0e-3])
+    return rows
+
+
+def write_probes(path: Path, rows) -> None:
+    path.write_text(f"{len(rows)}\n" + "".join(
+        " ".join(f"{v: .12E}" for v in row) + "\n" for row in rows))
+
+
+def read_probe_out(path: Path) -> dict:
+    """diagno_bth.<id>: i x y z |B| signal."""
+    out = {}
+    for line in path.read_text().splitlines():
+        parts = line.split()
+        if len(parts) == 6 and parts[0].isdigit():
+            out[f"PROBE_{int(parts[0]):04d}"] = float(parts[5])
+    return out
+
+
+def read_mut(path: Path, labels) -> dict:
+    """DIAGNO *_mut_file: 'nfl ncg' then 'i ig value' rows."""
+    out = {}
+    for line in path.read_text().splitlines()[1:]:
+        parts = line.split()
+        if len(parts) == 3:
+            i, g = int(parts[0]), int(parts[1])
+            out[(labels[i - 1], g)] = float(parts[2])
+    return out
+
+
+def suite_features(r: Runner):
+    """B-probes (vacuum) and response matrices on the NCSX coil set."""
+    import csv
+    d = prepare("features_ncsx")
+    coil = d / "coils.in"
+    shutil.copy(DATA / "coils.NCSX", coil)
+    extcur_from_coils(coil, d / "input.")
+    flux, seg = sensor_set(1.44, 0.50, 6, 2)
+    write_diag(d / "flux.diagno", flux, False)
+    write_diag(d / "seg.diagno", seg, True)
+    write_probes(d / "probes.diagno", probe_set(1.44, 0.50, 40))
+    # Separate controls: naming any *_mut_file makes stock DIAGNO try to read
+    # every mutual file, including the unnamed probe one (see patches/).
+    common = ("&diagno_in\n  flux_diag_file = 'flux.diagno',\n  seg_rog_file = 'seg.diagno',\n"
+              "  int_type = 'midpoint', int_step = 6,\n  luse_extcur = .true., units = 1.0,\n")
+
+    def run(control, extra):
+        (d / "diagno.control").write_text(common + control + "/\n")
+        subprocess.run([r.xdiagno, "-vac", "-coil", "coils.in", "-noverb"] + extra, cwd=d, env=ENV,
+                       check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+    run("  bprobes_file = 'probes.diagno',\n", [])
+    x_probe = read_probe_out(d / "diagno_bth.")
+    run("  flux_mut_file = 'flux.mut',\n  rog_mut_file = 'seg.mut',\n", ["-mutual"])
+    x_resp = {**{("flux", *k): v for k, v in read_mut(d / "flux.mut", [l for l, _ in flux]).items()},
+              **{("segrog", *k): v for k, v in read_mut(d / "seg.mut", [l for l, _ in seg]).items()}}
+
+    out = d / "tiago"
+    subprocess.run([r.tiago, str(coil), str(d / "flux.diagno"), str(d / "seg.diagno"),
+                    "--coil-extcur", str(d / "input."), "--samples", "6",
+                    "--bprobes", str(d / "probes.diagno"), "--response-out", "response.csv",
+                    "--output-dir", str(out)], env=ENV, check=True,
+                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    t_probe = read_tiago_csv(out / "tiago_bprobes.csv")
+    with (out / "response.csv").open() as f:
+        t_resp = {(row["kind"], row["label"], int(row["group"])): float(row["value"])
+                  for row in csv.DictReader(f)}
+    t_resp = {k: v for k, v in t_resp.items() if k[0] != "bprobe"}
+    # response columns must add up to the signals: sum_g M_g EXTCUR_g
+    extcur = [float(v) for v in re.findall(r"=\s*(\S+)", (d / "input.").read_text())]
+    t_flux = read_tiago_csv(out / "tiago_flux.csv")
+    recon = {l: sum(t_resp[("flux", l, g + 1)] * extcur[g] for g in range(len(extcur))) for l in t_flux}
+    return dict(case="features_ncsx", probes=compare(t_probe, x_probe),
+                response=compare({"|".join(map(str, k)): v for k, v in t_resp.items()},
+                                 {"|".join(map(str, k)): v for k, v in x_resp.items()}),
+                n_response=len(x_resp), recon=compare(recon, t_flux))
+
+
 def suite_plasma(r: Runner):
     """Plasma-only signals of the NCSX equilibrium (STELLOPT DIAGNO_TEST).
 
@@ -391,10 +477,12 @@ def suite_plasma(r: Runner):
     flags = [(0, 1) if label.startswith("DIA") else (0, 0) for label, _ in flux]
     write_diag(d / "flux.diagno", flux, False, flags)
     write_diag(d / "seg.diagno", seg, True)
+    write_probes(d / "probes.diagno", probe_set(1.40, 0.85, 20))
     inp = (DATA / "input.ncsx").read_text()
     inp = re.sub(r"&DIAGNO_IN.*?/", "&DIAGNO_IN\n NU = 128\n NV = 32\n units = 1.\n"
                  " int_type = 'midpoint'\n int_step = 4\n flux_diag_file = 'flux.diagno'\n"
-                 " seg_rog_file = 'seg.diagno'\n vc_adapt_tol = 1.0E-6\n vc_adapt_rel = 1.0E-5\n/",
+                 " seg_rog_file = 'seg.diagno'\n bprobes_file = 'probes.diagno'\n"
+                 " vc_adapt_tol = 1.0E-6\n vc_adapt_rel = 1.0E-5\n/",
                  inp, flags=re.S | re.I)
     (d / "input.ncsx").write_text(inp)
 
@@ -404,6 +492,7 @@ def suite_plasma(r: Runner):
     subprocess.run(cmd, cwd=d, env=ENV, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     t_xd = time.perf_counter() - t0
     x = merged(read_diagno_out(d / "diagno_flux.ncsx"), read_diagno_out(d / "diagno_seg.ncsx"))
+    x_probe = read_probe_out(d / "diagno_bth.ncsx")
 
     rows = []
     for grid in (32, 64):
@@ -411,7 +500,8 @@ def suite_plasma(r: Runner):
         t0 = time.perf_counter()
         subprocess.run([r.tiago, "", str(d / "flux.diagno"), str(d / "seg.diagno"),
                         "--plasma-wout", str(d / "wout_ncsx.nc"), "--plasma-nphi", str(grid),
-                        "--plasma-ntheta", str(grid), "--samples", "4", "--output-dir", str(out)],
+                        "--plasma-ntheta", str(grid), "--samples", "4",
+                        "--bprobes", str(d / "probes.diagno"), "--output-dir", str(out)],
                        env=dict(ENV, OMP_NUM_THREADS=str(r.ncpu)), check=True,
                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         dt = time.perf_counter() - t0
@@ -421,9 +511,10 @@ def suite_plasma(r: Runner):
                                       {k: v for k, v in x.items() if k.startswith("flux")}),
                          seg=compare({k: v for k, v in tv.items() if k.startswith("seg")},
                                      {k: v for k, v in x.items() if k.startswith("seg")}),
+                         probes=compare(read_tiago_csv(out / "tiago_bprobes.csv"), x_probe),
                          ampere_tiago=tv["seg:AMPERE"]))
     area = SEG_AREA / 100   # AMPERE has 101 points, eff_area per segment
-    return dict(case="plasma_ncsx", nflux=len(flux), nseg=len(seg), t_xdiagno_n=t_xd,
+    return dict(case="plasma_ncsx", nflux=len(flux), nseg=len(seg), nprobe=20, t_xdiagno_n=t_xd,
                 ampere_exact=4e-7 * np.pi * abs(ctor) * area, ampere_xdiagno=x["seg:AMPERE"],
                 rows=rows)
 
@@ -457,18 +548,31 @@ def report(results, ncpu) -> str:
                     f"| {fmt(v['med'])} / {fmt(v['max'])} | {v['missing']} / {v['nonfinite']} "
                     f"| {fmt(row['quad_err_xdiagno'])} / {fmt(row['quad_err_tiago'])} |")
         out.append("")
+    if "features" in results:
+        f = results["features"]
+        out += ["### Magnetic probes and response matrices (NCSX coils, vacuum)", "",
+                "| quantity | Tiago vs xdiagno median / max | missing / non-finite |", "|---|---|---|",
+                f"| 40 B-probes | {fmt(f['probes']['med'])} / {fmt(f['probes']['max'])} "
+                f"| {f['probes']['missing']} / {f['probes']['nonfinite']} |",
+                f"| response matrix ({f['n_response']} entries, xdiagno -mutual) | "
+                f"{fmt(f['response']['med'])} / {fmt(f['response']['max'])} "
+                f"| {f['response']['missing']} / {f['response']['nonfinite']} |",
+                f"| sum_g M_g EXTCUR_g vs Tiago signals | {fmt(f['recon']['med'])} / "
+                f"{fmt(f['recon']['max'])} | {f['recon']['missing']} / {f['recon']['nonfinite']} |", ""]
     if "plasma" in results:
         p = results["plasma"]
         out += ["### Plasma response (NCSX, plasma only)", "",
-                f"{p['nflux']} flux loops and {p['nseg']} segmented Rogowskis; xdiagno -vmec "
+                f"{p['nflux']} flux loops, {p['nseg']} segmented Rogowskis and {p['nprobe']} "
+                "B-probes; xdiagno -vmec "
                 f"(adaptive virtual casing, tol 1e-6) on {ncpu} ranks took {p['t_xdiagno_n']:.0f} s. "
                 "Tiago uses the VMEC boundary sheet current on a grid of `grid` x `grid` points "
                 "per field period.", "",
-                "| grid | Tiago n threads | flux: median / max vs xdiagno | Rogowski: median / max vs xdiagno |",
-                "|---:|---:|---|---|"]
+                "| grid | Tiago n threads | flux: median / max vs xdiagno | Rogowski: median / max "
+                "| B-probe: median / max |", "|---:|---:|---|---|---|"]
         for row in p["rows"]:
             out.append(f"| {row['grid']} | {row['t_tiago_n']:.2f} | {fmt(row['flux']['med'])} / "
-                       f"{fmt(row['flux']['max'])} | {fmt(row['seg']['med'])} / {fmt(row['seg']['max'])} |")
+                       f"{fmt(row['flux']['max'])} | {fmt(row['seg']['med'])} / {fmt(row['seg']['max'])} "
+                       f"| {fmt(row['probes']['med'])} / {fmt(row['probes']['max'])} |")
         out += ["", f"Ampere loop around the plasma (x eff_area): mu0 I_tor = {p['ampere_exact']:.6e}, "
                 f"xdiagno {p['ampere_xdiagno']:.6e}, Tiago {p['rows'][-1]['ampere_tiago']:.6e}.", ""]
     if "semantics" in results:
@@ -487,15 +591,16 @@ def report(results, ncpu) -> str:
 
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("suites", nargs="*", help="repo, geometry, semantics, plasma (default: all)")
+    ap.add_argument("suites", nargs="*",
+                    help="repo, geometry, semantics, features, plasma (default: all)")
     ap.add_argument("--tiago", default=str(ROOT / "build/tiago_vacuum_cli"))
     ap.add_argument("--xdiagno", default=str(WORK / "bin/xdiagno"))
     ap.add_argument("--xdiagno-patched", default=str(WORK / "bin/xdiagno_patched"))
     ap.add_argument("--ncpu", type=int, default=os.cpu_count() or 1)
     ap.add_argument("--quick", action="store_true", help="one sample count (6) instead of 2/6/16")
     args = ap.parse_args()
-    args.suites = args.suites or ["repo", "geometry", "semantics", "plasma"]
-    unknown = set(args.suites) - {"repo", "geometry", "semantics", "plasma"}
+    args.suites = args.suites or ["repo", "geometry", "semantics", "features", "plasma"]
+    unknown = set(args.suites) - {"repo", "geometry", "semantics", "features", "plasma"}
     if unknown:
         ap.error(f"unknown suite(s): {', '.join(sorted(unknown))}")
 
@@ -509,6 +614,8 @@ def main() -> None:
         results["semantics"] = suite_semantics(r)
     if "plasma" in args.suites:
         results["plasma"] = suite_plasma(r)
+    if "features" in args.suites:
+        results["features"] = suite_features(r)
 
     md = report(results, args.ncpu)
     res_dir = WORK / "results"

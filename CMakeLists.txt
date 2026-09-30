@@ -19,7 +19,8 @@ FetchContent_MakeAvailable(libneo)
 add_library(tiago_diagnostics STATIC
     src/diagnostics/diagnostic_types.f90
     src/diagnostics/flux_loops.f90
-    src/diagnostics/segmented_rogowski.f90)
+    src/diagnostics/segmented_rogowski.f90
+    src/diagnostics/bprobes.f90)
 set_target_properties(tiago_diagnostics PROPERTIES
     Fortran_STANDARD 2018
     Fortran_STANDARD_REQUIRED YES)

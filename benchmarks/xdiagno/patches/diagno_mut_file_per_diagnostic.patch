@@ -1,0 +1,26 @@
+diff --git a/DIAGNO/Sources/diagno_bprobes.f90 b/DIAGNO/Sources/diagno_bprobes.f90
+index 87090ac6..5623754f 100644
+--- a/DIAGNO/Sources/diagno_bprobes.f90
++++ b/DIAGNO/Sources/diagno_bprobes.f90
+@@ -150,7 +150,7 @@
+       
+       ! Read the mutual induction file if present
+       iunit = 36
+-      IF (luse_mut) THEN
++      IF (luse_mut .and. LEN_TRIM(bprobes_mut_file) > 1) THEN
+          CALL safe_open(iunit,ier,TRIM(bprobes_mut_file),'old','formatted')
+          READ(iunit,'(2I4)') ncoils, nextcur
+          IF (ALLOCATED(bx_mut)) DEALLOCATE(bx_mut)
+diff --git a/DIAGNO/Sources/diagno_mirnov.f90 b/DIAGNO/Sources/diagno_mirnov.f90
+index b8f1046a..bfb2aa1d 100644
+--- a/DIAGNO/Sources/diagno_mirnov.f90
++++ b/DIAGNO/Sources/diagno_mirnov.f90
+@@ -169,7 +169,7 @@
+       
+       ! Read the mutual induction file if present
+       iunit = 36
+-      IF (luse_mut) THEN
++      IF (luse_mut .and. LEN_TRIM(mir_mut_file) > 1) THEN
+          CALL safe_open(iunit,ier,TRIM(mir_mut_file),'old','formatted')
+          READ(iunit,'(2I4)') nseg, nextcur
+          IF (ALLOCATED(flux_mut)) DEALLOCATE(flux_mut)

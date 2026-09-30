@@ -1,9 +1,10 @@
 program tiago_vacuum_cli
     use, intrinsic :: iso_fortran_env, only: dp => real64, i32 => int32, &
         error_unit
-    use tiago_diagnostic_types, only: flux_loop_t, segmented_rogowski_t
+    use tiago_diagnostic_types, only: flux_loop_t, segmented_rogowski_t, bprobe_t
     use tiago_flux_loops, only: read_flux_loop_file, finalize_flux_signals
     use tiago_segmented_rogowski, only: read_segmented_rogowski_file
+    use tiago_bprobes, only: read_bprobe_file
     use tiago_vacuum_forward, only: vacuum_solver_t, quadrature_rule_t
     use tiago_build_config, only: simsopt_sample_path, simsopt_sample_url, &
         download_script_path
@@ -28,6 +29,10 @@ program tiago_vacuum_cli
     integer :: argc
     character(len=512) :: coil_extcur_path
     logical :: use_plasma_sample
+    ! Magnetic probes and response matrices (set in parse_options by host association)
+    character(len=512) :: bprobe_path = '', bprobe_out_path = 'tiago_bprobes.csv'
+    character(len=512) :: bprobe_turn_path = '', response_out_path = ''
+    logical :: rphiz = .false.
 
     argc = command_argument_count()
     call check_help(argc)
@@ -150,6 +155,24 @@ subroutine parse_options(argc, output_dir, flux_out_path, segrog_out_path, &
             plasma_ntheta = parse_int(arg, '--plasma-ntheta')
         case ('--plasma-sample')
             use_plasma_sample = .true.
+        case ('--bprobes')
+            i = i + 1
+            call ensure_arg(argc, i, '--bprobes')
+            call get_command_argument(i, bprobe_path)
+        case ('--bprobe-out')
+            i = i + 1
+            call ensure_arg(argc, i, '--bprobe-out')
+            call get_command_argument(i, bprobe_out_path)
+        case ('--bprobe-turns')
+            i = i + 1
+            call ensure_arg(argc, i, '--bprobe-turns')
+            call get_command_argument(i, bprobe_turn_path)
+        case ('--rphiz')
+            rphiz = .true.
+        case ('--response-out')
+            i = i + 1
+            call ensure_arg(argc, i, '--response-out')
+            call get_command_argument(i, response_out_path)
         case default
             call die('unknown option: '//trim(arg))
         end select
@@ -173,15 +196,20 @@ subroutine ensure_paths(output_dir, flux_out_path, segrog_out_path)
     character(len=*), intent(inout) :: flux_out_path
     character(len=*), intent(inout) :: segrog_out_path
 
-    if (len_trim(output_dir) > 0) then
-        if (index(flux_out_path, '/') == 0) then
-            flux_out_path = trim(output_dir)//'/'//trim(flux_out_path)
-        end if
-        if (index(segrog_out_path, '/') == 0) then
-            segrog_out_path = trim(output_dir)//'/'//trim(segrog_out_path)
-        end if
-    end if
+    call in_output_dir(output_dir, flux_out_path)
+    call in_output_dir(output_dir, segrog_out_path)
+    call in_output_dir(output_dir, bprobe_out_path)
+    if (len_trim(response_out_path) > 0) call in_output_dir(output_dir, response_out_path)
 end subroutine ensure_paths
+
+subroutine in_output_dir(output_dir, path)
+    !! Bare file names go into the output directory.
+    character(len=*), intent(in) :: output_dir
+    character(len=*), intent(inout) :: path
+    if (len_trim(output_dir) > 0 .and. index(path, '/') == 0) then
+        path = trim(output_dir)//'/'//trim(path)
+    end if
+end subroutine in_output_dir
 
 subroutine prepare_plasma_support(plasma_wout, use_plasma_sample)
     use, intrinsic :: iso_fortran_env, only: error_unit
@@ -268,6 +296,7 @@ subroutine run_solver(coil_path, flux_path, segrog_path, output_dir, &
     use tiago_flux_loops, only: read_flux_loop_file, finalize_flux_signals
     use tiago_segmented_rogowski, only: read_segmented_rogowski_file
     use tiago_vacuum_forward, only: vacuum_solver_t, quadrature_rule_t
+    use tiago_bprobes, only: read_bprobe_file
     character(len=*), intent(in) :: coil_path
     character(len=*), intent(in) :: flux_path
     character(len=*), intent(in) :: segrog_path
@@ -292,6 +321,8 @@ subroutine run_solver(coil_path, flux_path, segrog_path, output_dir, &
     type(segmented_rogowski_t), allocatable :: segs(:)
     real(dp), allocatable :: fluxes(:)
     real(dp), allocatable :: voltages(:)
+    type(bprobe_t), allocatable :: probes(:)
+    real(dp), allocatable :: probe_values(:)
     integer(i32) :: ierr
     character(len=:), allocatable :: message
 
@@ -344,11 +375,96 @@ subroutine run_solver(coil_path, flux_path, segrog_path, output_dir, &
         call write_segrog(segrog_out_path, segs, voltages)
     end if
 
+    if (len_trim(bprobe_path) > 0) then
+        call read_bprobe_file(trim(bprobe_path), probes, ierr, message, rphiz)
+        if (ierr /= 0_i32) call die('B-probe parse failed: '//trim(message))
+        call apply_bprobe_turns(trim(bprobe_turn_path), probes)
+        call solver%bprobes(probes, probe_values)
+        probe_values = probe_values * probes%turn_scale
+        call write_values(bprobe_out_path, probe_labels(probes), probe_values)
+    end if
+
+    if (len_trim(response_out_path) > 0) then
+        call write_response(solver, rule, loops, segs, probes, trim(response_out_path))
+    end if
+
     call solver%finalize()
 
     if (have_flux) call check_finite('flux', loops_labels(loops), fluxes)
     if (have_seg) call check_finite('segrog', segrog_labels(segs), voltages)
+    if (allocated(probes)) call check_finite('B-probe', probe_labels(probes), probe_values)
 end subroutine run_solver
+
+subroutine write_response(solver, rule, loops, segs, probes, path)
+    !! kind,label,group,value: signal per unit EXTCUR of each coil group, with
+    !! the same turns/idia post-processing as the signals (no plasma part).
+    type(vacuum_solver_t), intent(in) :: solver
+    type(quadrature_rule_t), intent(in) :: rule
+    type(flux_loop_t), allocatable, intent(in) :: loops(:)
+    type(segmented_rogowski_t), allocatable, intent(in) :: segs(:)
+    type(bprobe_t), allocatable, intent(in) :: probes(:)
+    character(len=*), intent(in) :: path
+    real(dp), allocatable :: flux_resp(:, :), seg_resp(:, :), probe_resp(:, :)
+    integer :: unit, g, i
+
+    call solver%response(loops, segs, probes, flux_resp, seg_resp, probe_resp, rule)
+    open(newunit=unit, file=path, action='write', status='replace')
+    write(unit, '(A)') 'kind,label,group,value'
+    do g = 1, solver%n_groups()
+        if (allocated(loops)) then
+            call finalize_flux_signals(loops, flux_resp(:, g))
+            do i = 1, size(loops)
+                write(unit, '(A,",",I0,",",ES24.16)') 'flux,'//loops(i)%label, g, flux_resp(i, g)
+            end do
+        end if
+        if (allocated(segs)) then
+            do i = 1, size(segs)
+                write(unit, '(A,",",I0,",",ES24.16)') 'segrog,'//segs(i)%label, g, &
+                    seg_resp(i, g) * segs(i)%turn_scale
+            end do
+        end if
+        if (allocated(probes)) then
+            do i = 1, size(probes)
+                write(unit, '(A,",",I0,",",ES24.16)') 'bprobe,'//probes(i)%label, g, &
+                    probe_resp(i, g) * probes(i)%turn_scale
+            end do
+        end if
+    end do
+    close(unit)
+end subroutine write_response
+
+subroutine apply_bprobe_turns(path, probes)
+    character(len=*), intent(in) :: path
+    type(bprobe_t), intent(inout) :: probes(:)
+    real(dp), allocatable :: scales(:)
+
+    if (len_trim(path) == 0) return
+    call read_turn_file(path, probe_labels(probes), scales)
+    probes%turn_scale = scales
+end subroutine apply_bprobe_turns
+
+function probe_labels(probes) result(labels)
+    type(bprobe_t), intent(in) :: probes(:)
+    character(len=128) :: labels(size(probes))
+    integer :: i
+    do i = 1, size(probes)
+        labels(i) = probes(i)%label
+    end do
+end function probe_labels
+
+subroutine write_values(path, labels, values)
+    character(len=*), intent(in) :: path
+    character(len=*), intent(in) :: labels(:)
+    real(dp), intent(in) :: values(:)
+    integer :: unit, i
+
+    open(newunit=unit, file=path, action='write', status='replace')
+    write(unit, '(A)') 'label,value'
+    do i = 1, size(values)
+        write(unit, '(A,",",ES24.16)') trim(labels(i)), values(i)
+    end do
+    close(unit)
+end subroutine write_values
 
 logical function any_missing_area(segs)
     type(segmented_rogowski_t), intent(in) :: segs(:)
@@ -497,6 +613,8 @@ subroutine usage_and_stop(status)
     write(error_unit, '(A)') '       [--flux-turns file] [--segrog-turns file]'
     write(error_unit, '(A)') '       [--plasma-wout file] [--plasma-sample]'
     write(error_unit, '(A)') '       [--plasma-nphi N_per_period] [--plasma-ntheta N] (default 64 64)'
+    write(error_unit, '(A)') '       [--bprobes file [--rphiz] [--bprobe-out file] [--bprobe-turns file]]'
+    write(error_unit, '(A)') '       [--response-out file]  (signals per unit EXTCUR per coil group)'
     if (status == 0) stop
     stop 1
 end subroutine usage_and_stop

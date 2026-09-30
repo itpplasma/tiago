@@ -5,7 +5,7 @@ program test_vacuum_semantics
     use tiago_diagnostic_types, only: flux_loop_t
     use tiago_flux_loops, only: read_flux_loop_file, finalize_flux_signals, lint_flux_loops
     use tiago_segmented_rogowski, only: read_segmented_rogowski_file
-    use tiago_diagnostic_types, only: segmented_rogowski_t
+    use tiago_diagnostic_types, only: segmented_rogowski_t, bprobe_t
     use tiago_vacuum_forward, only: vacuum_solver_t, quadrature_rule_t
     implicit none
 
@@ -27,6 +27,8 @@ program test_vacuum_semantics
     call test_idia()
     call test_duplicate_coil_point()
     call test_file_formats()
+    call test_bprobe_square_center()
+    call test_response_reconstructs_signals()
 
     call solver%finalize()
     if (failures > 0) then
@@ -192,6 +194,50 @@ contains
             failures = failures + 1
         end if
     end subroutine check_true
+
+    subroutine test_bprobe_square_center()
+        !! Field at the centre of a square loop (side a, current I):
+        !! B_z = 2 sqrt(2) mu0 I / (pi a). coils_sample.coils: a = 1 m, I = 1 A.
+        type(bprobe_t) :: probes(1)
+        real(dp), allocatable :: signal(:)
+        real(dp), parameter :: pi = acos(-1.0_dp)
+
+        probes(1)%label = 'CENTER'
+        probes(1)%position = [0.5_dp, 0.5_dp, 0.0_dp]
+        probes(1)%normal = [0.0_dp, 0.0_dp, 1.0_dp]
+        call solver%bprobes(probes, signal)
+        call check_close('B-probe at square-loop centre', signal(1), &
+            2.0_dp * sqrt(2.0_dp) * 4.0e-7_dp * pi / pi, 1.0e-7_dp)  ! CGS constants: 1.4e-8 off
+    end subroutine test_bprobe_square_center
+
+    subroutine test_response_reconstructs_signals()
+        !! Two groups with EXTCUR 3 and -2: sum_g M_g EXTCUR_g equals the signals.
+        type(vacuum_solver_t) :: two
+        type(flux_loop_t), allocatable :: loops(:)
+        type(segmented_rogowski_t), allocatable :: segs(:)
+        type(bprobe_t), allocatable :: probes(:)
+        real(dp), allocatable :: flux(:), fr(:, :), sr(:, :), pr(:, :)
+        integer :: ierr
+        character(len=:), allocatable :: message
+
+        call write_text('response.coils', 'periods 1' // new_line('a') // 'begin filament' // &
+            new_line('a') // 'mirror NIL' // new_line('a') // &
+            ' 0 0 0 1' // new_line('a') // ' 1 0 0 1' // new_line('a') // ' 1 1 0 1' // &
+            new_line('a') // ' 0 1 0 1' // new_line('a') // ' 0 0 0 0 1 A' // new_line('a') // &
+            ' 0 0 0.1 5' // new_line('a') // ' 1 0 0.1 5' // new_line('a') // ' 1 1 0.1 5' // &
+            new_line('a') // ' 0 1 0.1 5' // new_line('a') // ' 0 0 0.1 0 2 B' // &
+            new_line('a') // 'end')
+        call write_text('response.extcur', '&INDATA EXTCUR = 3.0, -2.0 /')
+        call two%init('response.coils', 'response.extcur')
+        call write_text('response.diagno', '1' // new_line('a') // '4 0 0 SQ' // new_line('a') // &
+            square_rows)
+        call read_flux_loop_file('response.diagno', loops, ierr, message)
+        call two%flux_loops(loops, flux, rule)
+        call two%response(loops, segs, probes, fr, sr, pr, rule)
+        call check_close('response: sum_g M_g EXTCUR_g = signal', &
+            3.0_dp * fr(1, 1) - 2.0_dp * fr(1, 2), flux(1), 1.0e-12_dp)
+        call two%finalize()
+    end subroutine test_response_reconstructs_signals
 
     subroutine write_symmetric_coils(path, nfp)
         !! nfp tilted square coils, rotated copies of each other.

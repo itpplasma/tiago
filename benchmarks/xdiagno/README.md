@@ -19,7 +19,7 @@ sudo apt-get install gfortran libopenmpi-dev openmpi-bin libscalapack-openmpi-de
 ./build_xdiagno.sh --patched
 # 3. Download the public coil sets (pinned commits) -> _work/data/
 ./fetch_data.sh
-# 4. Run everything, or pick suites: repo geometry semantics plasma
+# 4. Run everything, or pick suites: repo geometry semantics features plasma
 python3 bench.py                 # add --quick for one sample count only
 ```
 
@@ -42,6 +42,7 @@ xdiagno runs with `-vac -coil <file>`, `int_type='midpoint'`, and
 | `repo` | the cases in `tests/`: toy square coil (3 current variants), NCSX nfp=1, NCSX nfp=3 |
 | `geometry` | generated sensor sets on a torus between plasma and coils: 12–16 poloidal (diamagnetic) loops, 5 toroidal loops, 96–128 saddle loops, 96–128 segmented Rogowskis. Coil sets: NCSX (18.7k points, 10 groups) and M16N08 (33k points, 256 groups) |
 | `semantics` | one small input per DIAGNO-format feature. Checks marked "DIFFER" are open Tiago issues |
+| `features` | 40 magnetic probes and the per-coil-group response matrix (350 entries, `xdiagno -mutual`) on the NCSX coils |
 | `plasma` | plasma-only signals of the NCSX equilibrium from STELLOPT's `DIAGNO_TEST` (`xdiagno -vmec`, adaptive virtual casing): 35 flux loops (diamagnetic loops with `idia=1`), 25 Rogowskis, and a closed loop checked against Ampère's law with the VMEC toroidal current. xdiagno needs about 6 minutes on 4 ranks here |
 
 Metrics:
@@ -69,6 +70,7 @@ DIAGNO fails: the `ncsx_nfp3` repo case and the `iflflg_period` check.
 | `diagno_vac_nfp.patch` | `-vac` leaves `nfp = 0`, so every `iflflg=1` flux loop is NaN |
 | `diagno_segrog_without_coils.patch` | segmented Rogowskis crash without a coil file (`coil_group` not allocated) |
 | `diagno_nextcur_exceeds_coil_groups.patch` | `-vmec` with a coil file crashes when the wout has more EXTCUR values than coil groups |
+| `diagno_mut_file_per_diagnostic.patch` | naming any `*_mut_file` makes the B-probe and Mirnov routines read their (unnamed) matrix files and crash |
 
 The `plasma` suite works around the last two with stock xdiagno by passing a
 zero-current coil file with one group per EXTCUR value.

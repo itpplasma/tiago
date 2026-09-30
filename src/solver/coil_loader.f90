@@ -11,19 +11,30 @@ module tiago_coil_loader
 
 contains
 
-    subroutine load_coils_into_field(field, coil_path, extcur_path)
+    subroutine load_coils_into_field(field, coil_path, extcur_path, groups, unit_current)
+        !! groups/unit_current (optional): coil group of every point and its
+        !! current per unit EXTCUR of that group, for response matrices. Files
+        !! without groups (libneo format) form a single group with EXTCUR = 1.
         type(biotsavart_field_t), intent(inout) :: field
         character(len=*), intent(in) :: coil_path
         character(len=*), intent(in), optional :: extcur_path
+        integer, allocatable, intent(out), optional :: groups(:)
+        real(dp), allocatable, intent(out), optional :: unit_current(:)
 
         logical :: is_stellopt
         character(len=:), allocatable :: trimmed_extcur
-        real(dp), allocatable :: x(:), y(:), z(:), current(:)
+        real(dp), allocatable :: x(:), y(:), z(:), current(:), unit(:)
+        integer, allocatable :: group_ids(:)
 
         call determine_format(trim(coil_path), is_stellopt)
 
         if (.not. is_stellopt) then
             call field%biotsavart_field_init(trim(coil_path))
+            if (present(groups)) then
+                allocate(groups(size(field%coils%current)))
+                groups = 1
+            end if
+            if (present(unit_current)) unit_current = field%coils%current
             return
         end if
 
@@ -32,16 +43,18 @@ contains
         end if
 
         if (allocated(trimmed_extcur)) then
-            call read_stellopt_coils(trim(coil_path), x, y, z, current, trimmed_extcur)
+            call read_stellopt_coils(trim(coil_path), x, y, z, current, group_ids, unit, &
+                trimmed_extcur)
         else
-            call read_stellopt_coils(trim(coil_path), x, y, z, current)
+            call read_stellopt_coils(trim(coil_path), x, y, z, current, group_ids, unit)
         end if
 
         if (allocated(field%coils%x)) then
             call coils_deinit(field%coils)
         end if
         call coils_init(x, y, z, current, field%coils)
-        deallocate(x, y, z, current)
+        if (present(groups)) call move_alloc(group_ids, groups)
+        if (present(unit_current)) call move_alloc(unit, unit_current)
     end subroutine load_coils_into_field
 
     subroutine determine_format(path, is_stellopt)
@@ -81,12 +94,14 @@ contains
         close(unit)
     end subroutine determine_format
 
-    subroutine read_stellopt_coils(path, x, y, z, current, extcur_path)
+    subroutine read_stellopt_coils(path, x, y, z, current, groups, unit_current, extcur_path)
         character(len=*), intent(in) :: path
         real(dp), allocatable, intent(out) :: x(:)
         real(dp), allocatable, intent(out) :: y(:)
         real(dp), allocatable, intent(out) :: z(:)
         real(dp), allocatable, intent(out) :: current(:)
+        integer, allocatable, intent(out) :: groups(:)
+        real(dp), allocatable, intent(out) :: unit_current(:)
         character(len=:), allocatable, intent(in), optional :: extcur_path
 
         integer :: unit, ios, n_points, capacity, coil_start
@@ -167,6 +182,16 @@ contains
             end if
         end if
 
+        ! Current per unit EXTCUR of the point's group (response matrices).
+        allocate(unit_current(n_points))
+        unit_current = 0.0_dp
+        do i = 1, n_points
+            if (group_ids(i) < 1) cycle
+            if (ref_current(group_ids(i)) /= 0.0_dp) then
+                unit_current(i) = tmp_current(i) / ref_current(group_ids(i))
+            end if
+        end do
+
         ! EXTCUR(g) replaces the file current of group g, keeping relative
         ! currents within the group; groups without EXTCUR keep the file currents.
         do i = 1, n_points
@@ -182,7 +207,8 @@ contains
         call move_alloc(tmp_y, y)
         call move_alloc(tmp_z, z)
         call move_alloc(tmp_current, current)
-        deallocate(group_ids, ref_current, target_extcur, given)
+        call move_alloc(group_ids, groups)
+        deallocate(ref_current, target_extcur, given)
     end subroutine read_stellopt_coils
 
     subroutine parse_coil_line(line, x, y, z, current, has_group, group_id)

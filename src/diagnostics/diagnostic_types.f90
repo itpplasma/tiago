@@ -30,7 +30,17 @@ module tiago_diagnostic_types
     end type segmented_rogowski_t
 
 
+    type :: bprobe_t
+        !> DIAGNO magnetic probe: signal = eff_area * B . normal * turn_scale
+        character(len=:), allocatable :: label
+        real(dp) :: position(3) = 0.0_dp
+        real(dp) :: normal(3) = 0.0_dp
+        real(dp) :: eff_area = 1.0_dp
+        real(dp) :: turn_scale = 1.0_dp
+    end type bprobe_t
+
     public :: loop_point_t
     public :: flux_loop_t
     public :: segmented_rogowski_t
+    public :: bprobe_t
 end module tiago_diagnostic_types
