@@ -23,10 +23,11 @@ module tiago_diagnostic_types
 
     type :: segmented_rogowski_t
         character(len=:), allocatable :: label
-        real(dp) :: effective_area = 0.0_dp
         integer(i32) :: segments = 0_i32
         real(dp) :: turn_scale = 1.0_dp
         type(loop_point_t), allocatable :: path(:)
+        !> DIAGNO eff_area of each path segment (segment j uses point j's value)
+        real(dp), allocatable :: segment_area(:)
     end type segmented_rogowski_t
 
     type :: metadata_entry_t

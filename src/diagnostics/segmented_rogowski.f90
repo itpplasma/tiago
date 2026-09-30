@@ -1,7 +1,7 @@
 module tiago_segmented_rogowski
     use, intrinsic :: iso_fortran_env, only: dp => real64, i32 => int32
-    use tiago_diagnostic_types, only: flux_loop_t, segmented_rogowski_t
-    use tiago_flux_loops, only: read_flux_loop_file
+    use tiago_diagnostic_types, only: loop_point_t, segmented_rogowski_t
+    use tiago_flux_loops, only: parse_diag_header, check_no_trailing_data
     implicit none
     private
 
@@ -11,37 +11,82 @@ module tiago_segmented_rogowski
 contains
     subroutine read_segmented_rogowski_file(path, diagnostics, ierr, message, &
             default_area)
+        !! DIAGNO segmented Rogowski file: header as for flux loops, then rows
+        !! "x y z eff_area". Segment j is weighted with eff_area of point j. For
+        !! rows without eff_area, default_area / (npts - 1) is used per segment;
+        !! without default_area the areas stay zero (checked by the caller).
         character(len=*), intent(in) :: path
         type(segmented_rogowski_t), allocatable, intent(out) :: diagnostics(:)
         integer(i32), intent(out) :: ierr
         character(len=:), allocatable, intent(out) :: message
         real(dp), intent(in), optional :: default_area
 
-        type(flux_loop_t), allocatable :: loops(:)
-        integer(i32) :: i
-        real(dp) :: area_value
+        integer :: unit, ios, i, j
+        integer(i32) :: count, npts, flag1, flag2
+        character(len=512) :: line
+        character(len=:), allocatable :: label
+        real(dp) :: row(4)
+        logical :: has_area
 
         ierr = 0_i32
         message = ''
-        if (allocated(diagnostics)) deallocate(diagnostics)
+        open(newunit=unit, file=path, status='old', action='read', iostat=ios)
+        if (ios /= 0) then
+            ierr = 1_i32
+            message = 'unable to open segmented Rogowski file: '//trim(path)
+            return
+        end if
+        read(unit, *, iostat=ios) count
+        if (ios /= 0 .or. count <= 0) then
+            ierr = 2_i32
+            message = 'invalid diagnostic count in '//trim(path)
+            close(unit)
+            return
+        end if
 
-        call read_flux_loop_file(path, loops, ierr, message)
-        if (ierr /= 0_i32) return
-
-        allocate(diagnostics(size(loops)))
-        area_value = 0.0_dp
-        if (present(default_area)) area_value = default_area
-
-        do i = 1, size(loops)
-            diagnostics(i)%label = loops(i)%label
-            diagnostics(i)%segments = max(1_i32, &
-                size(loops(i)%points) - 1_i32)
-            diagnostics(i)%effective_area = area_value
-            diagnostics(i)%turn_scale = 1.0_dp
-            allocate(diagnostics(i)%path(size(loops(i)%points)))
-            diagnostics(i)%path = loops(i)%points
+        allocate(diagnostics(count))
+        do i = 1, count
+            read(unit, '(A)', iostat=ios) line
+            if (ios == 0) call parse_diag_header(line, npts, flag1, flag2, label, ios, message)
+            if (ios /= 0 .or. npts < 2) then
+                ierr = 4_i32
+                if (len(message) == 0) message = 'invalid segmented Rogowski header: '//trim(line)
+                close(unit)
+                return
+            end if
+            diagnostics(i)%label = label
+            diagnostics(i)%segments = npts - 1
+            allocate(diagnostics(i)%path(npts), diagnostics(i)%segment_area(npts - 1))
+            diagnostics(i)%segment_area = 0.0_dp
+            if (present(default_area)) diagnostics(i)%segment_area = default_area / real(npts - 1, dp)
+            do j = 1, npts
+                read(unit, '(A)', iostat=ios) line
+                if (ios == 0) call read_row(line, row, has_area, ios)
+                if (ios /= 0) then
+                    ierr = 5_i32
+                    message = 'insufficient coordinate rows for '//trim(label)
+                    close(unit)
+                    return
+                end if
+                diagnostics(i)%path(j) = loop_point_t(row(1), row(2), row(3))
+                if (has_area .and. j < npts) diagnostics(i)%segment_area(j) = row(4)
+            end do
         end do
+        call check_no_trailing_data(unit, count, ierr, message)
+        close(unit)
     end subroutine read_segmented_rogowski_file
+
+    subroutine read_row(line, row, has_area, ios)
+        character(len=*), intent(in) :: line
+        real(dp), intent(out) :: row(4)
+        logical, intent(out) :: has_area
+        integer, intent(out) :: ios
+
+        row = 0.0_dp
+        read(line, *, iostat=ios) row
+        has_area = (ios == 0)
+        if (.not. has_area) read(line, *, iostat=ios) row(1:3)
+    end subroutine read_row
 
     logical function lint_segmented_rogowski(diagnostics, report) result(ok)
         type(segmented_rogowski_t), allocatable, intent(in) :: diagnostics(:)
@@ -74,7 +119,10 @@ contains
                 call append_line(report, build_issue(i, 'path coordinates missing'))
                 ok = .false.
             end if
-            if (diagnostics(i)%effective_area <= 0.0_dp) then
+            if (.not. allocated(diagnostics(i)%segment_area)) then
+                call append_line(report, build_issue(i, 'segment areas missing'))
+                ok = .false.
+            else if (any(diagnostics(i)%segment_area <= 0.0_dp)) then
                 call append_line(report, build_issue(i, &
                     'effective area must be provided and positive'))
                 ok = .false.

@@ -327,12 +327,15 @@ subroutine run_solver(coil_path, flux_path, segrog_path, output_dir, &
     end if
 
     if (have_seg) then
-        if (seg_area <= 0.0_dp) then
-            call die('--seg-area is required for segmented Rogowski diagnostics')
+        if (seg_area > 0.0_dp) then
+            call read_segmented_rogowski_file(segrog_path, segs, ierr, message, seg_area)
+        else
+            call read_segmented_rogowski_file(segrog_path, segs, ierr, message)
         end if
-        call read_segmented_rogowski_file(segrog_path, segs, ierr, message, &
-            seg_area)
         if (ierr /= 0_i32) call die('segrog parse failed: '//trim(message))
+        if (any_missing_area(segs)) then
+            call die('segmented Rogowski file has no eff_area column; pass --seg-area')
+        end if
         call apply_segrog_turns(trim(segrog_turn_path), segs)
     end if
 
@@ -357,6 +360,16 @@ subroutine run_solver(coil_path, flux_path, segrog_path, output_dir, &
     if (have_flux) call check_finite('flux', loops_labels(loops), fluxes)
     if (have_seg) call check_finite('segrog', segrog_labels(segs), voltages)
 end subroutine run_solver
+
+logical function any_missing_area(segs)
+    type(segmented_rogowski_t), intent(in) :: segs(:)
+    integer :: i
+
+    any_missing_area = .false.
+    do i = 1, size(segs)
+        if (all(segs(i)%segment_area == 0.0_dp)) any_missing_area = .true.
+    end do
+end function any_missing_area
 
 subroutine check_finite(kind, labels, values)
     !! Outputs are written first; a non-finite value (e.g. a sensor point exactly on a

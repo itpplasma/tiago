@@ -3,7 +3,9 @@ program test_vacuum_semantics
     !! Usage: test_vacuum_semantics <coils_sample.coils>
     use, intrinsic :: iso_fortran_env, only: dp => real64, error_unit
     use tiago_diagnostic_types, only: flux_loop_t
-    use tiago_flux_loops, only: read_flux_loop_file, finalize_flux_signals
+    use tiago_flux_loops, only: read_flux_loop_file, finalize_flux_signals, lint_flux_loops
+    use tiago_segmented_rogowski, only: read_segmented_rogowski_file
+    use tiago_diagnostic_types, only: segmented_rogowski_t
     use tiago_vacuum_forward, only: vacuum_solver_t, quadrature_rule_t
     implicit none
 
@@ -24,6 +26,7 @@ program test_vacuum_semantics
     call test_one_period_loop()
     call test_idia()
     call test_duplicate_coil_point()
+    call test_file_formats()
 
     call solver%finalize()
     if (failures > 0) then
@@ -131,6 +134,64 @@ contains
         call check_close('duplicated coil point is harmless', flux(1), ref(1), 1.0e-14_dp)
         call dup%finalize()
     end subroutine test_duplicate_coil_point
+
+    subroutine test_file_formats()
+        !! DIAGNO (3I6,A48) headers, labels with blanks, per-point segrog areas,
+        !! trailing data and duplicate labels.
+        character(len=*), parameter :: fixed = '     2' // new_line('a') // &
+            '     4     0     0 Loop A/upper, 1' // new_line('a') // square_rows // &
+            '4 0 0 free label' // new_line('a') // square_rows
+        character(len=*), parameter :: trailing = '1' // new_line('a') // &
+            '4 0 0 ONE' // new_line('a') // square_rows // '4 0 0 EXTRA' // new_line('a')
+        character(len=*), parameter :: dup = '2' // new_line('a') // &
+            '4 0 0 SAME' // new_line('a') // square_rows // '4 0 0 SAME' // new_line('a') // square_rows
+        character(len=*), parameter :: seg = '     1' // new_line('a') // &
+            '     3     0     0 SEG' // new_line('a') // &
+            '0 0 0 1.0e-4' // new_line('a') // '0 0 1 5.0e-4' // new_line('a') // '0 0 2 0.0'
+        type(flux_loop_t), allocatable :: loops(:)
+        type(segmented_rogowski_t), allocatable :: segs(:)
+        integer :: ierr
+        character(len=:), allocatable :: message, report
+
+        call write_text('formats_fixed.diagno', fixed)
+        call read_flux_loop_file('formats_fixed.diagno', loops, ierr, message)
+        call check_true('fixed-width header keeps full label', ierr == 0 .and. &
+            loops(1)%label == 'Loop A/upper, 1' .and. loops(2)%label == 'free label')
+
+        call write_text('formats_trailing.diagno', trailing)
+        call read_flux_loop_file('formats_trailing.diagno', loops, ierr, message)
+        call check_true('data beyond the header count is rejected', ierr /= 0)
+
+        call write_text('formats_dup.diagno', dup)
+        call read_flux_loop_file('formats_dup.diagno', loops, ierr, message)
+        call check_true('duplicate labels fail lint', .not. lint_flux_loops(loops, report))
+
+        call write_text('formats_seg.diagno', seg)
+        call read_segmented_rogowski_file('formats_seg.diagno', segs, ierr, message, 9.0_dp)
+        call check_true('per-point eff_area overrides the default', ierr == 0 .and. &
+            all(segs(1)%segment_area == [1.0e-4_dp, 5.0e-4_dp]))
+    end subroutine test_file_formats
+
+    subroutine write_text(path, text)
+        character(len=*), intent(in) :: path, text
+        integer :: unit
+
+        open(newunit=unit, file=path, status='replace', action='write')
+        write(unit, '(A)') text
+        close(unit)
+    end subroutine write_text
+
+    subroutine check_true(name, condition)
+        character(len=*), intent(in) :: name
+        logical, intent(in) :: condition
+
+        if (condition) then
+            print '(A)', 'ok   '//name
+        else
+            write(error_unit, '(A)') 'FAIL '//name
+            failures = failures + 1
+        end if
+    end subroutine check_true
 
     subroutine write_symmetric_coils(path, nfp)
         !! nfp tilted square coils, rotated copies of each other.

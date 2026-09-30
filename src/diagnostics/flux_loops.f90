@@ -8,6 +8,8 @@ module tiago_flux_loops
     public :: read_flux_loop_file
     public :: lint_flux_loops
     public :: finalize_flux_signals
+    public :: parse_diag_header
+    public :: check_no_trailing_data
 
 contains
     subroutine read_flux_loop_file(path, loops, ierr, message)
@@ -34,10 +36,96 @@ contains
 
         allocate(loops(loop_count))
         call populate_loops(unit, loops, ierr, message)
+        if (ierr == 0_i32) call check_no_trailing_data(unit, loop_count, ierr, message)
         call close_file(unit)
         if (ierr /= 0_i32) return
         call check_idia_references(loops, ierr, message)
     end subroutine read_flux_loop_file
+
+    subroutine parse_diag_header(line, npts, flag1, flag2, label, ios, message)
+        !! DIAGNO header: nseg, iflflg, idia, title. DIAGNO reads it as
+        !! (3I6,A48); free-format "n f d label" is accepted too. The label is
+        !! the rest of the line, so it may contain blanks, "/" or ",".
+        character(len=*), intent(in) :: line
+        integer(i32), intent(out) :: npts, flag1, flag2
+        character(len=:), allocatable, intent(out) :: label
+        integer, intent(out) :: ios
+        character(len=:), allocatable, intent(out) :: message
+
+        integer(i32) :: values(3)
+        integer :: pos, k, first, last
+
+        message = ''
+        ios = 0
+        if (is_fixed_header(line)) then
+            read(line(1:18), '(3I6)', iostat=ios) values
+            pos = 19
+        else
+            pos = 1
+            do k = 1, 3
+                first = verify(line(pos:), ' '//achar(9))
+                if (first == 0) then
+                    ios = -1
+                    exit
+                end if
+                first = pos + first - 1
+                last = scan(line(first:), ' '//achar(9))
+                last = merge(len(line), first + last - 2, last == 0)
+                read(line(first:last), *, iostat=ios) values(k)
+                if (ios /= 0) exit
+                pos = last + 1
+            end do
+        end if
+        if (ios /= 0) then
+            message = 'failed to parse diagnostic header: '//trim(line)
+            label = ''
+            return
+        end if
+        npts = values(1)
+        flag1 = values(2)
+        flag2 = values(3)
+        label = ''
+        if (pos <= len(line)) label = trim(adjustl(line(pos:)))
+    end subroutine parse_diag_header
+
+    logical function is_fixed_header(line)
+        !! Three right-aligned integers in columns 1-6, 7-12, 13-18.
+        character(len=*), intent(in) :: line
+        integer :: k, first
+
+        is_fixed_header = .false.
+        if (len_trim(line) < 18) return
+        do k = 0, 2
+            first = verify(line(6 * k + 1:6 * k + 6), ' ')
+            if (first == 0) return
+            if (verify(line(6 * k + first:6 * k + 6), '+-0123456789') /= 0) return
+            if (verify(line(6 * k + first + 1:6 * k + 6), '0123456789') /= 0) return
+        end do
+        is_fixed_header = .true.
+    end function is_fixed_header
+
+    subroutine check_no_trailing_data(unit, count, ierr, message)
+        !! Data after the last announced diagnostic usually means a wrong count.
+        integer, intent(in) :: unit
+        integer(i32), intent(in) :: count
+        integer(i32), intent(out) :: ierr
+        character(len=:), allocatable, intent(out) :: message
+        character(len=256) :: line
+        integer :: ios
+
+        ierr = 0_i32
+        message = ''
+        do
+            read(unit, '(A)', iostat=ios) line
+            if (ios /= 0) return
+            if (len_trim(line) > 0) then
+                ierr = 7_i32
+                message = 'data after the '//trim(int_to_string(count))// &
+                    ' diagnostics announced in the header: '//trim(line)
+                return
+            end if
+        end do
+    end subroutine check_no_trailing_data
 
     subroutine check_idia_references(loops, ierr, message)
         type(flux_loop_t), intent(in) :: loops(:)
@@ -145,7 +233,7 @@ contains
         type(flux_loop_t), allocatable, intent(in) :: loops(:)
         character(len=:), allocatable, intent(out) :: report
 
-        integer :: i
+        integer :: i, j
         logical :: local_ok
         character(len=:), allocatable :: local_report
 
@@ -170,6 +258,11 @@ contains
                 ok = .false.
                 call append_line(report, trim(local_report))
             end if
+            if (any([(loops(j)%label == loops(i)%label, j = 1, i - 1)])) then
+                ok = .false.
+                call append_line(report, format_issue(i, 'duplicate label '// &
+                    loops(i)%label//' (turn files and outputs are keyed by label)'))
+            end if
         end do
     end function lint_flux_loops
 
@@ -180,16 +273,12 @@ contains
         character(len=:), allocatable, intent(out) :: message
 
         integer(i32) :: npts
-        integer(i32) :: repeat_flag
+        integer(i32) :: repeat_flag    ! DIAGNO iflflg column
         integer(i32) :: subtract_flag  ! DIAGNO idia column
-        character(len=128) :: label_buffer
+        character(len=:), allocatable :: label
 
-        message = ''
-        read(line, *, iostat=ios) npts, repeat_flag, subtract_flag, label_buffer
-        if (ios /= 0) then
-            message = 'failed to parse loop header: '//trim(line)
-            return
-        end if
+        call parse_diag_header(line, npts, repeat_flag, subtract_flag, label, ios, message)
+        if (ios /= 0) return
 
         if (npts <= 1_i32) then
             ios = -1
@@ -205,7 +294,7 @@ contains
 
         loop%idia = subtract_flag
         loop%one_period = (repeat_flag == 1_i32)
-        loop%label = trim(label_buffer)
+        loop%label = label
         if (len_trim(loop%label) == 0) then
             loop%label = 'loop_' // trim(adjustl(int_to_string(npts)))
         end if

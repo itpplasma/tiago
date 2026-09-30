@@ -318,29 +318,24 @@ contains
         real(dp) :: tangent(3)
         real(dp) :: norm_dl
         real(dp) :: weight
-        integer(i32) :: effective_segments
 
         samples = max(1_i32, rule%samples_per_segment)
         weight = 1.0_dp / real(samples, dp)
         voltage = 0.0_dp
-        effective_segments = max(1_i32, diagnostic%segments)
 
         do seg = 1, size(diagnostic%path) - 1
             call extract_path_segment(diagnostic, seg, start_point, end_point)
             dl = end_point - start_point
             norm_dl = max(min_segment_length, sqrt(sum(dl**2)))
             tangent = dl / norm_dl
-            voltage = voltage + integrate_segrog_segment(field, start_point, dl, &
-                norm_dl, tangent, samples, weight)
+            voltage = voltage + diagnostic%segment_area(seg) * &
+                integrate_segrog_segment(field, start_point, dl, norm_dl, tangent, &
+                samples, weight)
         end do
-
-        voltage = voltage * diagnostic%effective_area / &
-            real(effective_segments, dp)
 
         if (plasma%has_data()) then
             voltage = voltage + plasma_segrog_contribution(plasma, diagnostic, &
-                samples, weight) * diagnostic%effective_area / &
-                real(effective_segments, dp)
+                samples, weight)
         end if
     end function evaluate_segrog_signal
 
@@ -485,7 +480,7 @@ contains
                 sample_point = start_point + step * dl
                 points(idx, :) = sample_point
                 tangents(idx, :) = tangent
-                lengths(idx) = weight * norm_dl
+                lengths(idx) = weight * norm_dl * diagnostic%segment_area(seg)
             end do
         end do
 
