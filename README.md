@@ -69,6 +69,13 @@ closer to the boundary than two grid spacings. As in DIAGNO, loops that link
 the plasma poloidally must be flagged `idia = 1`, which adds the plasma
 toroidal flux `phiedge`. Pass `""` as coil file for plasma-only signals.
 
+`--plasma-response-out file` writes the derivative of every signal's plasma
+part with respect to the VMEC boundary field coefficients (`bsupumnc`,
+`bsupvmnc` extrapolated to `s = 1`, per mode `m, n`). At fixed boundary shape
+the plasma part is linear in them, so the Jacobian is exact and
+`sum(value * coefficient)` reproduces it; together with `--response-out` for
+the coil currents this is the linear part of an equilibrium reconstruction.
+
 ## Benchmark against STELLOPT xdiagno
 A manual, reproducible accuracy and performance comparison with the reference
 code lives in [`benchmarks/xdiagno/`](benchmarks/xdiagno/README.md). It is not

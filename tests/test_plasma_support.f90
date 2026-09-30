@@ -7,6 +7,7 @@ program test_plasma_support
     use netcdf, only: nf90_open, nf90_close, nf90_inq_varid, nf90_get_var, nf90_nowrite
     use tiago_plasma_support, only: plasma_support_t
     implicit none
+    !!  3. The boundary-field Jacobian reproduces the plasma signals exactly.
 
     real(dp), parameter :: pi = acos(-1.0_dp), mu0 = 4.0e-7_dp * pi
     integer, parameter :: n = 400
@@ -14,7 +15,8 @@ program test_plasma_support
     character(len=512) :: wout
     real(dp) :: ctor, rmajor, aminor, t, circ, flux_a, flux_b, h
     real(dp) :: pts(3, n), dls(3, n), field(3, n), sq(3, 4), sq_dl(3, 4), a(3, 4), c(3, 1), bc(3, 1)
-    integer :: k, failures
+    real(dp), allocatable :: w(:, :, :), resp(:, :)
+    integer :: k, failures, owner(n), sq_owner(4)
 
     failures = 0
     call get_command_argument(1, wout)
@@ -47,6 +49,18 @@ program test_plasma_support
     flux_a = sum(a * sq_dl)
     flux_b = bc(3, 1) * h * h
     call check('curl A = B (small loop flux)', flux_a, flux_b, 1.0e-4_dp)
+
+    ! 3. Jacobian with respect to the VMEC boundary field coefficients.
+    owner = 1
+    call plasma%field_weights(pts, dls, owner, 1, w)
+    call plasma%mode_response(w, resp)
+    call check('Jacobian . coefficients = Ampere loop', sum(resp(1, :) * plasma%coefficients), &
+        circ, 1.0e-12_dp)
+    sq_owner = 1
+    call plasma%potential_weights(sq, sq_dl, sq_owner, 1, w)
+    call plasma%mode_response(w, resp)
+    call check('Jacobian . coefficients = small-loop flux', sum(resp(1, :) * plasma%coefficients), &
+        flux_a, 1.0e-12_dp)
 
     call plasma%finalize()
     if (failures > 0) error stop 1

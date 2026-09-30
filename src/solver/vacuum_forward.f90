@@ -43,6 +43,7 @@ module tiago_vacuum_forward
         procedure :: flux_and_segrog => vacuum_solver_flux_and_segrog
         procedure :: bprobes => vacuum_solver_bprobes
         procedure :: response => vacuum_solver_response
+        procedure :: plasma_response => vacuum_solver_plasma_response
         procedure :: n_groups => vacuum_solver_n_groups
     end type vacuum_solver_t
 
@@ -198,6 +199,50 @@ contains
             if (allocated(probes)) probe_resp(:, g) = probe_signals(self, group_coils, probes, .false.)
         end do
     end subroutine vacuum_solver_response
+
+    subroutine vacuum_solver_plasma_response(self, loops, segs, probes, flux_resp, seg_resp, &
+            probe_resp, rule)
+        !! Derivatives of the plasma part of every signal with respect to the VMEC
+        !! boundary field coefficients (columns: plasma%mode_column_name). Exact,
+        !! since the plasma part is linear in them at fixed boundary shape.
+        class(vacuum_solver_t), intent(in) :: self
+        type(flux_loop_t), allocatable, intent(in) :: loops(:)
+        type(segmented_rogowski_t), allocatable, intent(in) :: segs(:)
+        type(bprobe_t), allocatable, intent(in) :: probes(:)
+        real(dp), allocatable, intent(out) :: flux_resp(:, :), seg_resp(:, :), probe_resp(:, :)
+        type(quadrature_rule_t), intent(in), optional :: rule
+        real(dp), allocatable :: points(:, :), dls(:, :), w(:, :, :)
+        integer, allocatable :: owner(:)
+        integer :: j, nc
+
+        if (.not. self%plasma%has_data()) error stop 'plasma response needs --plasma-wout'
+        nc = self%plasma%n_mode_columns()
+        allocate(flux_resp(0, nc), seg_resp(0, nc), probe_resp(0, nc))
+        if (allocated(loops)) then
+            call sample_loops(loops, self%nfp, rule_or_default(rule), points, dls, owner)
+            call self%plasma%potential_weights(points, dls, owner, size(loops), w)
+            call self%plasma%mode_response(w, flux_resp)
+            do j = 1, size(loops)
+                if (loops(j)%one_period) flux_resp(j, :) = flux_resp(j, :) * real(self%nfp, dp)
+            end do
+        end if
+        if (allocated(segs)) then
+            call sample_segrogs(segs, rule_or_default(rule), points, dls, owner)
+            call self%plasma%field_weights(points, dls, owner, size(segs), w)
+            call self%plasma%mode_response(w, seg_resp)
+        end if
+        if (allocated(probes)) then
+            deallocate(points, dls, owner)
+            allocate(points(3, size(probes)), dls(3, size(probes)), owner(size(probes)))
+            do j = 1, size(probes)
+                points(:, j) = probes(j)%position
+                dls(:, j) = probes(j)%eff_area * probes(j)%normal
+                owner(j) = j
+            end do
+            call self%plasma%field_weights(points, dls, owner, size(probes), w)
+            call self%plasma%mode_response(w, probe_resp)
+        end if
+    end subroutine vacuum_solver_plasma_response
 
     function loop_fluxes(self, coils, loops, rule, with_plasma) result(fluxes)
         class(vacuum_solver_t), intent(in) :: self

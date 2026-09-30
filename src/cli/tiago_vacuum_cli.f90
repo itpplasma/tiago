@@ -32,6 +32,7 @@ program tiago_vacuum_cli
     ! Magnetic probes and response matrices (set in parse_options by host association)
     character(len=512) :: bprobe_path = '', bprobe_out_path = 'tiago_bprobes.csv'
     character(len=512) :: bprobe_turn_path = '', response_out_path = ''
+    character(len=512) :: plasma_response_out_path = ''
     logical :: rphiz = .false.
     logical :: use_gauss = .false.   ! Gauss-Legendre instead of midpoint samples
 
@@ -172,6 +173,10 @@ subroutine parse_options(argc, output_dir, flux_out_path, segrog_out_path, &
             rphiz = .true.
         case ('--gauss')
             use_gauss = .true.
+        case ('--plasma-response-out')
+            i = i + 1
+            call ensure_arg(argc, i, '--plasma-response-out')
+            call get_command_argument(i, plasma_response_out_path)
         case ('--response-out')
             i = i + 1
             call ensure_arg(argc, i, '--response-out')
@@ -203,6 +208,9 @@ subroutine ensure_paths(output_dir, flux_out_path, segrog_out_path)
     call in_output_dir(output_dir, segrog_out_path)
     call in_output_dir(output_dir, bprobe_out_path)
     if (len_trim(response_out_path) > 0) call in_output_dir(output_dir, response_out_path)
+    if (len_trim(plasma_response_out_path) > 0) then
+        call in_output_dir(output_dir, plasma_response_out_path)
+    end if
 end subroutine ensure_paths
 
 subroutine in_output_dir(output_dir, path)
@@ -392,6 +400,12 @@ subroutine run_solver(coil_path, flux_path, segrog_path, output_dir, &
         call write_response(solver, rule, loops, segs, probes, trim(response_out_path))
     end if
 
+    if (len_trim(plasma_response_out_path) > 0) then
+        if (len_trim(plasma_wout) == 0) call die('--plasma-response-out needs --plasma-wout')
+        call write_plasma_response(solver, rule, loops, segs, probes, &
+            trim(plasma_response_out_path))
+    end if
+
     call solver%finalize()
 
     if (have_flux) call check_finite('flux', loops_labels(loops), fluxes)
@@ -436,6 +450,48 @@ subroutine write_response(solver, rule, loops, segs, probes, path)
     end do
     close(unit)
 end subroutine write_response
+
+subroutine write_plasma_response(solver, rule, loops, segs, probes, path)
+    !! kind,label,coefficient,m,n,value: derivative of each signal's plasma part
+    !! with respect to the VMEC boundary (s = 1) field coefficient, after turns and
+    !! idia < 0 differences; the idia = 1 phiedge term does not depend on them.
+    type(vacuum_solver_t), intent(in) :: solver
+    type(quadrature_rule_t), intent(in) :: rule
+    type(flux_loop_t), allocatable, intent(in) :: loops(:)
+    type(segmented_rogowski_t), allocatable, intent(in) :: segs(:)
+    type(bprobe_t), allocatable, intent(in) :: probes(:)
+    character(len=*), intent(in) :: path
+    real(dp), allocatable :: flux_resp(:, :), seg_resp(:, :), probe_resp(:, :)
+    character(len=:), allocatable :: coefficient
+    integer :: unit, c, i, m, n
+
+    call solver%plasma_response(loops, segs, probes, flux_resp, seg_resp, probe_resp, rule)
+    open(newunit=unit, file=path, action='write', status='replace')
+    write(unit, '(A)') 'kind,label,coefficient,m,n,value'
+    do c = 1, solver%plasma%n_mode_columns()
+        call solver%plasma%mode_column_name(c, coefficient, m, n)
+        if (allocated(loops)) then
+            call finalize_flux_signals(loops, flux_resp(:, c))
+            do i = 1, size(loops)
+                write(unit, '(A,2(",",I0),",",ES24.16)') 'flux,'//loops(i)%label//','// &
+                    coefficient, m, n, flux_resp(i, c)
+            end do
+        end if
+        if (allocated(segs)) then
+            do i = 1, size(segs)
+                write(unit, '(A,2(",",I0),",",ES24.16)') 'segrog,'//segs(i)%label//','// &
+                    coefficient, m, n, seg_resp(i, c) * segs(i)%turn_scale
+            end do
+        end if
+        if (allocated(probes)) then
+            do i = 1, size(probes)
+                write(unit, '(A,2(",",I0),",",ES24.16)') 'bprobe,'//probes(i)%label//','// &
+                    coefficient, m, n, probe_resp(i, c) * probes(i)%turn_scale
+            end do
+        end if
+    end do
+    close(unit)
+end subroutine write_plasma_response
 
 subroutine apply_bprobe_turns(path, probes)
     character(len=*), intent(in) :: path
@@ -619,6 +675,7 @@ subroutine usage_and_stop(status)
     write(error_unit, '(A)') '       [--plasma-nphi N_per_period] [--plasma-ntheta N] (default 64 64)'
     write(error_unit, '(A)') '       [--bprobes file [--rphiz] [--bprobe-out file] [--bprobe-turns file]]'
     write(error_unit, '(A)') '       [--response-out file]  (signals per unit EXTCUR per coil group)'
+    write(error_unit, '(A)') '       [--plasma-response-out file]  (d signal / d VMEC boundary B coefficients)'
     if (status == 0) stop
     stop 1
 end subroutine usage_and_stop

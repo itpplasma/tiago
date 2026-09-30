@@ -517,10 +517,42 @@ def suite_plasma(r: Runner):
                                      {k: v for k, v in x.items() if k.startswith("seg")}),
                          probes=compare(read_tiago_csv(out / "tiago_bprobes.csv"), x_probe),
                          ampere_tiago=tv["seg:AMPERE"]))
+    jacobian = plasma_jacobian_check(r, d, x_probe)
     area = SEG_AREA / 100   # AMPERE has 101 points, eff_area per segment
     return dict(case="plasma_ncsx", nflux=len(flux), nseg=len(seg), nprobe=20, t_xdiagno_n=t_xd,
                 ampere_exact=4e-7 * np.pi * abs(ctor) * area, ampere_xdiagno=x["seg:AMPERE"],
-                rows=rows)
+                rows=rows, jacobian=jacobian)
+
+
+def plasma_jacobian_check(r: Runner, d: Path, x_probe) -> dict:
+    """--plasma-response-out: finite difference in bsupvmnc(0,0) of a perturbed wout."""
+    import csv
+    import netCDF4
+
+    def run(wout, out, extra=()):
+        subprocess.run([r.tiago, "", str(d / "flux.diagno"), str(d / "seg.diagno"),
+                        "--plasma-wout", str(wout), "--plasma-nphi", "32", "--plasma-ntheta", "32",
+                        "--samples", "4", "--bprobes", str(d / "probes.diagno"),
+                        "--output-dir", str(d / out), *extra], env=ENV, check=True,
+                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        return {**merged(read_tiago_csv(d / out / "tiago_flux.csv"),
+                         read_tiago_csv(d / out / "tiago_segrog.csv")),
+                **{"probe:" + k: v for k, v in read_tiago_csv(d / out / "tiago_bprobes.csv").items()}}
+
+    base = run(d / "wout_ncsx.nc", "jac_base", ("--plasma-response-out", "jacobian.csv"))
+    shutil.copy(d / "wout_ncsx.nc", d / "wout_pert.nc")
+    wout = netCDF4.Dataset(d / "wout_pert.nc", "r+")
+    mode = int(np.where((wout["xm_nyq"][:] == 0) & (wout["xn_nyq"][:] == 0))[0][0])
+    delta = 1.0e-3 * abs(float(wout["bsupvmnc"][-1, mode]))
+    wout["bsupvmnc"][-1, mode] += delta / 1.5   # boundary value = 1.5 b(ns) - 0.5 b(ns-1)
+    wout.close()
+    pert = run(d / "wout_pert.nc", "jac_pert")
+    prefix = {"flux": "flux:", "segrog": "seg:", "bprobe": "probe:"}
+    with (d / "jac_base" / "jacobian.csv").open() as f:
+        jac = {prefix[row["kind"]] + row["label"]: float(row["value"]) for row in csv.DictReader(f)
+               if row["coefficient"] == "bsupvmnc" and row["m"] == "0" and row["n"] == "0"}
+    fd = {k: (pert[k] - base[k]) / delta for k in jac}
+    return dict(n=len(jac), fd=compare(fd, jac))
 
 
 # ----------------------------------------------------------------- report
@@ -591,7 +623,10 @@ def report(results, ncpu) -> str:
                        f"{fmt(row['flux']['max'])} | {fmt(row['seg']['med'])} / {fmt(row['seg']['max'])} "
                        f"| {fmt(row['probes']['med'])} / {fmt(row['probes']['max'])} |")
         out += ["", f"Ampere loop around the plasma (x eff_area): mu0 I_tor = {p['ampere_exact']:.6e}, "
-                f"xdiagno {p['ampere_xdiagno']:.6e}, Tiago {p['rows'][-1]['ampere_tiago']:.6e}.", ""]
+                f"xdiagno {p['ampere_xdiagno']:.6e}, Tiago {p['rows'][-1]['ampere_tiago']:.6e}.", "",
+                f"Boundary-field Jacobian (`--plasma-response-out`) vs a finite difference in "
+                f"`bsupvmnc(0,0)` over all {p['jacobian']['n']} signals: median "
+                f"{fmt(p['jacobian']['fd']['med'])}, max {fmt(p['jacobian']['fd']['max'])}.", ""]
     if "semantics" in results:
         out += ["### DIAGNO-format semantics", "",
                 "| check | issue | what | xdiagno | Tiago | verdict |", "|---|---|---|---|---|---|"]
