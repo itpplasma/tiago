@@ -10,7 +10,8 @@ STELLOPT's `xdiagno`.
 - **Drop-in DIAGNO ingestion** – Load STELLOPT-compatible flux loops and
   segmented Rogowski files (including per-point effective areas) unchanged.
 - **Vacuum solver + CLI** – Batch evaluation with `tiago_vacuum_cli` using
-  libneo's Biot-Savart solver; comprehensive CMake test suite.
+  exact straight-filament Biot–Savart kernels (Hanson & Hirshman); coil files
+  are read with libneo.
 - **Cross-code validation** – `benchmarks/xdiagno/` builds STELLOPT's `xdiagno`
   at a pinned commit and compares accuracy and run time on identical inputs.
 
@@ -36,9 +37,7 @@ Pass extra cache entries through `CMAKE_ARGS`, e.g.
     tests/data/coil_sample.neo \
     tests/data/fluxloop_sample.diagno \
     tests/data/segrog_sample.diagno \
-    --output-dir build/tests/output --seg-area 3.40e-4 --samples 8 \
-    --nfp 3 --flux-turns tests/cases/ncsx_nfp3/flux_turns.csv \
-    --segrog-turns tests/cases/ncsx_nfp3/segrog_turns.csv
+    --output-dir build/tests/output --seg-area 3.40e-4 --samples 8
 ```
 This command emits `tiago_flux.csv` and `tiago_segrog.csv` in the output
 directory (names via `--flux-out`, `--segrog-out`). `--samples` sets the points
@@ -47,7 +46,18 @@ Gauss-Legendre points instead, which converge far faster (8 Gauss points are
 typically more accurate than thousands of midpoint samples). `--nfp` matches the field-period geometry,
 while `--flux-turns` / `--segrog-turns` accept text files of `label scale`
 pairs so Tiago mirrors DIAGNO's namelist-based `flux_turns` and
-`segrog_turns` arrays.
+`segrog_turns` arrays. The NCSX cases in `tests/cases/` come with such files;
+their coil sets are fetched by `benchmarks/xdiagno/fetch_data.sh`:
+```
+benchmarks/xdiagno/fetch_data.sh
+./build/tiago_vacuum_cli \
+    benchmarks/xdiagno/_work/data/coils.NCSX \
+    tests/cases/ncsx_nfp3/fluxloop.diagno \
+    tests/cases/ncsx_nfp3/segrog.diagno \
+    --output-dir build/ncsx --seg-area 3.40e-4 --gauss --samples 8 --nfp 3 \
+    --flux-turns tests/cases/ncsx_nfp3/flux_turns.csv \
+    --segrog-turns tests/cases/ncsx_nfp3/segrog_turns.csv
+```
 
 ## Magnetic probes and response matrices
 `--bprobes file` evaluates DIAGNO magnetic probes (`x y z theta_inc phi_inc
