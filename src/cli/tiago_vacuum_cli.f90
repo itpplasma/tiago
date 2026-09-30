@@ -5,7 +5,6 @@ program tiago_vacuum_cli
     use tiago_flux_loops, only: read_flux_loop_file, finalize_flux_signals
     use tiago_segmented_rogowski, only: read_segmented_rogowski_file
     use tiago_vacuum_forward, only: vacuum_solver_t, quadrature_rule_t
-    use tiago_plasma_support, only: tiago_plasma_available
     use tiago_build_config, only: simsopt_sample_path, simsopt_sample_url, &
         download_script_path
     implicit none
@@ -49,8 +48,8 @@ program tiago_vacuum_cli
     have_flux = len_trim(flux_path) > 0
     have_seg = len_trim(segrog_path) > 0
     plasma_wout = ''
-    plasma_nphi = 16_i32
-    plasma_ntheta = 16_i32
+    plasma_nphi = 64_i32
+    plasma_ntheta = 64_i32
     use_plasma_sample = .false.
 
     call parse_options(argc, output_dir, flux_out_path, segrog_out_path, &
@@ -194,9 +193,6 @@ subroutine prepare_plasma_support(plasma_wout, use_plasma_sample)
         return
     end if
 
-    if (.not. tiago_plasma_available) then
-        call die('binary built without plasma support; rebuild with TIAGO_ENABLE_PLASMA=ON')
-    end if
 
     if (len_trim(plasma_wout) > 0) then
         write(error_unit, '(A)') 'WARNING: --plasma-sample ignored because '// &
@@ -310,14 +306,7 @@ subroutine run_solver(coil_path, flux_path, segrog_path, output_dir, &
     call solver%set_nfp(nfp_value)
 
     if (len_trim(plasma_wout) > 0) then
-        if (.not. tiago_plasma_available) then
-            call die('binary built without plasma support; rebuild with TIAGO_ENABLE_PLASMA=ON')
-        end if
         call solver%enable_plasma_from_vmec(plasma_wout, plasma_nphi, plasma_ntheta)
-        if (have_flux) then
-            write(error_unit, '(A)') 'WARNING: plasma response only applied to segmented '// &
-                'Rogowski diagnostics; flux loops remain vacuum-only'
-        end if
     end if
 
     if (have_flux) then
@@ -341,13 +330,13 @@ subroutine run_solver(coil_path, flux_path, segrog_path, output_dir, &
 
     if (have_flux .and. have_seg) then
         call solver%flux_and_segrog(loops, fluxes, segs, voltages, rule)
-        call finalize_flux_signals(loops, fluxes)
+        call finalize_flux_signals(loops, fluxes, solver%plasma%diamagnetic_flux)
         call scale_segrog_turns(segs, voltages)
         call write_result(flux_out_path, loops, fluxes)
         call write_segrog(segrog_out_path, segs, voltages)
     else if (have_flux) then
         call solver%flux_loops(loops, fluxes, rule)
-        call finalize_flux_signals(loops, fluxes)
+        call finalize_flux_signals(loops, fluxes, solver%plasma%diamagnetic_flux)
         call write_result(flux_out_path, loops, fluxes)
     else if (have_seg) then
         call solver%segrog(segs, voltages, rule)
@@ -460,14 +449,14 @@ end subroutine write_segrog
 
 subroutine usage_and_stop()
     use, intrinsic :: iso_fortran_env, only: error_unit
-    write(error_unit, '(A)') 'Usage: tiago_vacuum_cli <coil> <flux> <segrog>'
+    write(error_unit, '(A)') 'Usage: tiago_vacuum_cli <coil> <flux> <segrog>   (pass "" to omit one)'
     write(error_unit, '(A)') '       [--output-dir dir] [--flux-out file]'
     write(error_unit, '(A)') '       [--segrog-out file] [--samples N]'
     write(error_unit, '(A)') '       [--seg-area value] [--nfp value]'
     write(error_unit, '(A)') '       [--coil-extcur vmec_input_or_list]'
     write(error_unit, '(A)') '       [--flux-turns file] [--segrog-turns file]'
     write(error_unit, '(A)') '       [--plasma-wout file] [--plasma-sample]'
-    write(error_unit, '(A)') '       [--plasma-nphi value] [--plasma-ntheta value]'
+    write(error_unit, '(A)') '       [--plasma-nphi N_per_period] [--plasma-ntheta N] (default 64 64)'
     stop 1
 end subroutine usage_and_stop
 

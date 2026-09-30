@@ -2,6 +2,7 @@ module tiago_vacuum_forward
     use, intrinsic :: iso_fortran_env, only: dp => real64, i32 => int32
     use neo_biotsavart_field, only: biotsavart_field_t
     use tiago_coil_loader, only: load_coils_into_field
+    use neo_biotsavart, only: coils_init
     use tiago_diagnostic_types, only: flux_loop_t, segmented_rogowski_t, &
         loop_point_t
     use tiago_plasma_support, only: plasma_support_t
@@ -51,6 +52,14 @@ contains
         class(vacuum_solver_t), intent(inout) :: self
         character(len=*), intent(in) :: coil_file
         character(len=*), intent(in), optional :: coil_extcur
+        real(dp) :: no_points(0)
+
+        if (len_trim(coil_file) == 0) then
+            ! No coils: plasma-only evaluation.
+            call coils_init(no_points, no_points, no_points, no_points, self%field%coils)
+            self%is_ready = .true.
+            return
+        end if
 
         if (present(coil_extcur)) then
             if (len_trim(coil_extcur) > 0) then
@@ -121,6 +130,9 @@ contains
                 self%nfp)
         end do
 !$omp end parallel do
+        if (self%plasma%has_data()) then
+            call add_plasma_flux(self, loops, fluxes, default_rule, overrides)
+        end if
     end subroutine vacuum_solver_flux_loops
 
     subroutine vacuum_solver_segrog(self, diagnostics, voltages, default_rule, &
@@ -144,10 +156,12 @@ contains
 !$omp parallel do default(shared) private(i, rule)
         do i = 1, size(diagnostics)
             rule = select_rule(diagnostics(i)%label, default_rule, overrides)
-            voltages(i) = evaluate_segrog_signal(self%field, diagnostics(i), &
-                rule, self%plasma)
+            voltages(i) = evaluate_segrog_signal(self%field, diagnostics(i), rule)
         end do
 !$omp end parallel do
+        if (self%plasma%has_data()) then
+            call add_plasma_segrog(self, diagnostics, voltages, default_rule, overrides)
+        end if
     end subroutine vacuum_solver_segrog
 
     subroutine vacuum_solver_flux_and_segrog(self, loops, fluxes, diagnostics, &
@@ -185,10 +199,14 @@ contains
                 rule = select_rule(diagnostics(i - size(loops))%label, default_rule, &
                     overrides)
                 voltages(i - size(loops)) = evaluate_segrog_signal(self%field, &
-                    diagnostics(i - size(loops)), rule, self%plasma)
+                    diagnostics(i - size(loops)), rule)
             end if
         end do
 !$omp end parallel do
+        if (self%plasma%has_data()) then
+            call add_plasma_flux(self, loops, fluxes, default_rule, overrides)
+            call add_plasma_segrog(self, diagnostics, voltages, default_rule, overrides)
+        end if
     end subroutine vacuum_solver_flux_and_segrog
 
     subroutine assert_ready(self)
@@ -218,10 +236,7 @@ contains
         ! closing point is the first point rotated by one field period and the
         ! result is multiplied by nfp.
         do seg = 1, size(loop%points)
-            call segment_endpoints(loop, seg, start_point, end_point)
-            if (seg == size(loop%points) .and. loop%one_period) then
-                call rotate_point(start_point_of(loop), two_pi / real(nfp, dp), end_point)
-            end if
+            call loop_segment(loop, seg, nfp, start_point, end_point)
             dl = end_point - start_point
             flux = flux + integrate_segment(field, start_point, dl, samples, weight)
         end do
@@ -303,11 +318,10 @@ contains
         end do
     end function integrate_segment
 
-    function evaluate_segrog_signal(field, diagnostic, rule, plasma) result(voltage)
+    function evaluate_segrog_signal(field, diagnostic, rule) result(voltage)
         type(biotsavart_field_t), intent(in) :: field
         type(segmented_rogowski_t), intent(in) :: diagnostic
         type(quadrature_rule_t), intent(in) :: rule
-        type(plasma_support_t), intent(in) :: plasma
         real(dp) :: voltage
 
         integer :: seg
@@ -332,11 +346,6 @@ contains
                 integrate_segrog_segment(field, start_point, dl, norm_dl, tangent, &
                 samples, weight)
         end do
-
-        if (plasma%has_data()) then
-            voltage = voltage + plasma_segrog_contribution(plasma, diagnostic, &
-                samples, weight)
-        end if
     end function evaluate_segrog_signal
 
     real(dp) function integrate_segrog_segment(field, start_point, dl, &
@@ -434,70 +443,6 @@ contains
         end do
     end function integrate_segrog_segment
 
-    real(dp) function plasma_segrog_contribution(plasma, diagnostic, samples, weight)
-        type(plasma_support_t), intent(in) :: plasma
-        type(segmented_rogowski_t), intent(in) :: diagnostic
-        integer(i32), intent(in) :: samples
-        real(dp), intent(in) :: weight
-
-        integer :: total_segments
-        integer :: total_samples
-        integer :: seg
-        integer :: s
-        integer :: idx
-        real(dp) :: start_point(3)
-        real(dp) :: end_point(3)
-        real(dp) :: dl(3)
-        real(dp) :: norm_dl
-        real(dp) :: tangent(3)
-        real(dp) :: sample_point(3)
-        real(dp) :: step
-        real(dp), allocatable :: points(:, :)
-        real(dp), allocatable :: tangents(:, :)
-        real(dp), allocatable :: lengths(:)
-        real(dp), allocatable :: b_field(:, :)
-
-        total_segments = max(0, size(diagnostic%path) - 1)
-        if (samples <= 0 .or. total_segments == 0) then
-            plasma_segrog_contribution = 0.0_dp
-            return
-        end if
-
-        total_samples = total_segments * samples
-        allocate(points(total_samples, 3))
-        allocate(tangents(total_samples, 3))
-        allocate(lengths(total_samples))
-
-        idx = 0
-        do seg = 1, total_segments
-            call extract_path_segment(diagnostic, seg, start_point, end_point)
-            dl = end_point - start_point
-            norm_dl = max(min_segment_length, sqrt(sum(dl**2)))
-            tangent = dl / norm_dl
-            do s = 1, samples
-                idx = idx + 1
-                step = (real(s, dp) - 0.5_dp) / real(samples, dp)
-                sample_point = start_point + step * dl
-                points(idx, :) = sample_point
-                tangents(idx, :) = tangent
-                lengths(idx) = weight * norm_dl * diagnostic%segment_area(seg)
-            end do
-        end do
-
-        allocate(b_field(total_samples, 3))
-        call plasma%sample_bfield(points, b_field)
-
-        plasma_segrog_contribution = 0.0_dp
-        do idx = 1, total_samples
-            plasma_segrog_contribution = plasma_segrog_contribution + &
-                lengths(idx) * (b_field(idx, 1) * tangents(idx, 1) + &
-                                b_field(idx, 2) * tangents(idx, 2) + &
-                                b_field(idx, 3) * tangents(idx, 3))
-        end do
-
-        deallocate(points, tangents, lengths, b_field)
-    end function plasma_segrog_contribution
-
     type(quadrature_rule_t) function select_rule(label, default_rule, overrides)
         character(len=*), intent(in) :: label
         type(quadrature_rule_t), intent(in), optional :: default_rule
@@ -527,6 +472,109 @@ contains
 
         labels_equal = trim(a) == trim(b)
     end function labels_equal
+
+    subroutine loop_segment(loop, seg, nfp, start_point, end_point)
+        !! Segment seg of a closed flux loop; for iflflg=1 loops the closing
+        !! point is the first point rotated by one field period.
+        type(flux_loop_t), intent(in) :: loop
+        integer, intent(in) :: seg
+        integer(i32), intent(in) :: nfp
+        real(dp), intent(out) :: start_point(3), end_point(3)
+
+        call segment_endpoints(loop, seg, start_point, end_point)
+        if (seg == size(loop%points) .and. loop%one_period) then
+            call rotate_point(start_point_of(loop), two_pi / real(nfp, dp), end_point)
+        end if
+    end subroutine loop_segment
+
+    subroutine add_plasma_flux(self, loops, fluxes, default_rule, overrides)
+        !! Plasma part of every flux loop, sum over samples of A_plasma . dl,
+        !! evaluated in one batch (the plasma kernel is itself parallel).
+        class(vacuum_solver_t), intent(in) :: self
+        type(flux_loop_t), intent(in) :: loops(:)
+        real(dp), intent(inout) :: fluxes(:)
+        type(quadrature_rule_t), intent(in), optional :: default_rule
+        type(quadrature_override_t), intent(in), optional :: overrides(:)
+
+        real(dp), allocatable :: points(:, :), dls(:, :), avec(:, :)
+        integer, allocatable :: owner(:)
+        real(dp) :: a(3), b(3), plasma_flux(size(loops))
+        integer :: i, seg, s, n, samples
+
+        n = 0
+        do i = 1, size(loops)
+            n = n + size(loops(i)%points) * &
+                sample_count(select_rule(loops(i)%label, default_rule, overrides))
+        end do
+        allocate(points(n, 3), dls(n, 3), owner(n), avec(n, 3))
+        n = 0
+        do i = 1, size(loops)
+            samples = sample_count(select_rule(loops(i)%label, default_rule, overrides))
+            do seg = 1, size(loops(i)%points)
+                call loop_segment(loops(i), seg, self%nfp, a, b)
+                do s = 1, samples
+                    n = n + 1
+                    points(n, :) = a + (real(s, dp) - 0.5_dp) / real(samples, dp) * (b - a)
+                    dls(n, :) = (b - a) / real(samples, dp)
+                    owner(n) = i
+                end do
+            end do
+        end do
+
+        call self%plasma%sample_vector_potential(points, avec)
+        plasma_flux = 0.0_dp
+        do s = 1, n
+            plasma_flux(owner(s)) = plasma_flux(owner(s)) + dot_product(avec(s, :), dls(s, :))
+        end do
+        do i = 1, size(loops)
+            if (loops(i)%one_period) plasma_flux(i) = plasma_flux(i) * real(self%nfp, dp)
+        end do
+        fluxes = fluxes + plasma_flux
+    end subroutine add_plasma_flux
+
+    subroutine add_plasma_segrog(self, diagnostics, voltages, default_rule, overrides)
+        !! Plasma part of every segmented Rogowski, sum of eff_area * B_plasma . dl.
+        class(vacuum_solver_t), intent(in) :: self
+        type(segmented_rogowski_t), intent(in) :: diagnostics(:)
+        real(dp), intent(inout) :: voltages(:)
+        type(quadrature_rule_t), intent(in), optional :: default_rule
+        type(quadrature_override_t), intent(in), optional :: overrides(:)
+
+        real(dp), allocatable :: points(:, :), dls(:, :), bvec(:, :)
+        integer, allocatable :: owner(:)
+        real(dp) :: a(3), b(3)
+        integer :: i, seg, s, n, samples
+
+        n = 0
+        do i = 1, size(diagnostics)
+            n = n + (size(diagnostics(i)%path) - 1) * &
+                sample_count(select_rule(diagnostics(i)%label, default_rule, overrides))
+        end do
+        allocate(points(n, 3), dls(n, 3), owner(n), bvec(n, 3))
+        n = 0
+        do i = 1, size(diagnostics)
+            samples = sample_count(select_rule(diagnostics(i)%label, default_rule, overrides))
+            do seg = 1, size(diagnostics(i)%path) - 1
+                call extract_path_segment(diagnostics(i), seg, a, b)
+                do s = 1, samples
+                    n = n + 1
+                    points(n, :) = a + (real(s, dp) - 0.5_dp) / real(samples, dp) * (b - a)
+                    dls(n, :) = (b - a) / real(samples, dp) * diagnostics(i)%segment_area(seg)
+                    owner(n) = i
+                end do
+            end do
+        end do
+
+        call self%plasma%sample_bfield(points, bvec)
+        do s = 1, n
+            voltages(owner(s)) = voltages(owner(s)) + dot_product(bvec(s, :), dls(s, :))
+        end do
+    end subroutine add_plasma_segrog
+
+    integer function sample_count(rule)
+        type(quadrature_rule_t), intent(in) :: rule
+        sample_count = max(1_i32, rule%samples_per_segment)
+    end function sample_count
 
     function start_point_of(loop) result(point)
         type(flux_loop_t), intent(in) :: loop

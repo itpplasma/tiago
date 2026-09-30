@@ -15,11 +15,11 @@ STELLOPT takes several minutes and the full run takes about 15 minutes on 4 core
 sudo apt-get install gfortran libopenmpi-dev openmpi-bin libscalapack-openmpi-dev \
      libhdf5-openmpi-dev libnetcdf-dev libnetcdff-dev libopenblas-dev
 # 2. Build xdiagno at a pinned STELLOPT commit      -> _work/bin/xdiagno
-#    --vac-nfp also builds the test-only variant    -> _work/bin/xdiagno_vacnfp
-./build_xdiagno.sh --vac-nfp
+#    --patched also builds it with patches/*.patch  -> _work/bin/xdiagno_patched
+./build_xdiagno.sh --patched
 # 3. Download the public coil sets (pinned commits) -> _work/data/
 ./fetch_data.sh
-# 4. Run everything, or pick suites: repo geometry semantics
+# 4. Run everything, or pick suites: repo geometry semantics plasma
 python3 bench.py                 # add --quick for one sample count only
 ```
 
@@ -42,6 +42,7 @@ xdiagno runs with `-vac -coil <file>`, `int_type='midpoint'`, and
 | `repo` | the cases in `tests/`: toy square coil (3 current variants), NCSX nfp=1, NCSX nfp=3 |
 | `geometry` | generated sensor sets on a torus between plasma and coils: 12–16 poloidal (diamagnetic) loops, 5 toroidal loops, 96–128 saddle loops, 96–128 segmented Rogowskis. Coil sets: NCSX (18.7k points, 10 groups) and M16N08 (33k points, 256 groups) |
 | `semantics` | one small input per DIAGNO-format feature. Checks marked "DIFFER" are open Tiago issues |
+| `plasma` | plasma-only signals of the NCSX equilibrium from STELLOPT's `DIAGNO_TEST` (`xdiagno -vmec`, adaptive virtual casing): 35 flux loops (diamagnetic loops with `idia=1`), 25 Rogowskis, and a closed loop checked against Ampère's law with the VMEC toroidal current. xdiagno needs about 6 minutes on 4 ranks here |
 
 Metrics:
 - **Tiago vs xdiagno:** relative difference per signal, normalised by
@@ -55,13 +56,22 @@ The geometry suite uses only `iflflg=0`, `idia=0` and closed loops (first
 point repeated), so the semantic differences below don't contaminate the
 accuracy numbers.
 
-### `xdiagno_vacnfp`
+### Patched xdiagno and upstream bugs
 
-Stock DIAGNO never sets `nfp` in `-vac` mode, so every `iflflg=1` loop
-evaluates to `NaN`. `diagno_vac_nfp.patch` (test-only, 7 lines) takes `nfp`
-from the coil file's `periods` line. The `ncsx_nfp3` repo case and the
-`iflflg_period` check use this binary when it is available. The upstream bug
-is tracked in #20, which stays open until it is reported to STELLOPT.
+Bugs found in DIAGNO while benchmarking are fixed by small patches in
+`patches/`, one per bug, each tracked in a Tiago issue with a draft upstream
+report (label `upstream`). `build_xdiagno.sh --patched` builds
+`_work/bin/xdiagno_patched` with all of them. It is used only where stock
+DIAGNO fails: the `ncsx_nfp3` repo case and the `iflflg_period` check.
+
+| patch | DIAGNO bug |
+|---|---|
+| `diagno_vac_nfp.patch` | `-vac` leaves `nfp = 0`, so every `iflflg=1` flux loop is NaN |
+| `diagno_segrog_without_coils.patch` | segmented Rogowskis crash without a coil file (`coil_group` not allocated) |
+| `diagno_nextcur_exceeds_coil_groups.patch` | `-vmec` with a coil file crashes when the wout has more EXTCUR values than coil groups |
+
+The `plasma` suite works around the last two with stock xdiagno by passing a
+zero-current coil file with one group per EXTCUR value.
 
 If you find a bug in a reference code, add a reproducible patch here, apply it
 from `build_xdiagno.sh`, and open a tracking issue with a draft upstream report.

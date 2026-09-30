@@ -145,16 +145,20 @@ contains
         end do
     end subroutine check_idia_references
 
-    subroutine finalize_flux_signals(loops, fluxes)
+    subroutine finalize_flux_signals(loops, fluxes, diamagnetic_flux)
         !! DIAGNO post-processing, applied in DIAGNO's order (diagno_flux.f90):
-        !! for each loop in turn, subtract loop |idia| if idia < 0 (its value as
-        !! already processed when |idia| < i), then apply the turn scale.
-        !! idia = 1 would add the plasma's phiedge, which is zero in vacuum.
+        !! for each loop in turn, add the plasma toroidal flux (phiedge * signgs)
+        !! if idia = 1, subtract loop |idia| if idia < 0 (its value as already
+        !! processed when |idia| < i), then apply the turn scale.
         type(flux_loop_t), intent(in) :: loops(:)
         real(dp), intent(inout) :: fluxes(:)
+        real(dp), intent(in), optional :: diamagnetic_flux
         integer :: i
 
         do i = 1, size(loops)
+            if (loops(i)%idia == 1_i32 .and. present(diamagnetic_flux)) then
+                fluxes(i) = fluxes(i) + diamagnetic_flux
+            end if
             if (loops(i)%idia < 0_i32) fluxes(i) = fluxes(i) - fluxes(-loops(i)%idia)
             fluxes(i) = fluxes(i) * loops(i)%turn_scale
         end do

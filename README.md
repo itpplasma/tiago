@@ -47,6 +47,17 @@ while `--flux-turns` / `--segrog-turns` accept text files of `label scale`
 pairs so Tiago mirrors DIAGNO's namelist-based `flux_turns` and
 `segrog_turns` arrays.
 
+## Plasma response
+`--plasma-wout wout.nc` adds the field of the plasma currents of a VMEC
+equilibrium to every flux loop and segmented Rogowski. The VMEC boundary is a
+flux surface, so outside it the plasma acts like the sheet current
+`mu0 K = n x B` on the boundary (virtual casing); Tiago evaluates its vector
+potential and field directly on a `--plasma-nphi` (per field period) by
+`--plasma-ntheta` grid, default 64 x 64. A warning is printed when a sensor is
+closer to the boundary than two grid spacings. As in DIAGNO, loops that link
+the plasma poloidally must be flagged `idia = 1`, which adds the plasma
+toroidal flux `phiedge`. Pass `""` as coil file for plasma-only signals.
+
 ## Cross-code validation & visual artifacts
 ```
 python3 scripts/run_xdiagno.py \

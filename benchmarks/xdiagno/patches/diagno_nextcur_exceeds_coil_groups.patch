@@ -1,0 +1,13 @@
+diff --git a/DIAGNO/Sources/diagno_init_coil.f90 b/DIAGNO/Sources/diagno_init_coil.f90
+index 822b1811..e13ff2db 100644
+--- a/DIAGNO/Sources/diagno_init_coil.f90
++++ b/DIAGNO/Sources/diagno_init_coil.f90
+@@ -72,6 +72,8 @@
+          extcur(1:nextcur) = extcur_in(1:nextcur)
+          nextcur = SIZE(coil_group)
+       END IF      
++      ! More EXTCUR values (e.g. from the wout file) than coil groups
++      IF (nextcur > SIZE(coil_group)) nextcur = SIZE(coil_group)
+ 
+       ! Initiazlize the Current
+       !nextcur = SIZE(coil_group) !SAL

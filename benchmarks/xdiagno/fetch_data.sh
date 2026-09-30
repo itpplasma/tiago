@@ -16,3 +16,5 @@ fetch() {
 fetch "$STELLOPT_RAW/BENCHMARKS/FIELDLINES_TEST/coils.NCSX"       coils.NCSX
 fetch "$STELLOPT_RAW/BENCHMARKS/FIELDLINES_TEST/coils.NCSX_nfp1"  coils.NCSX_nfp1
 fetch "$SIMSOPT_RAW/tests/test_files/coils.M16N08"                coils.M16N08
+fetch "$STELLOPT_RAW/BENCHMARKS/DIAGNO_TEST/wout_ncsx.nc"        wout_ncsx.nc
+fetch "$STELLOPT_RAW/BENCHMARKS/DIAGNO_TEST/input.ncsx"          input.ncsx

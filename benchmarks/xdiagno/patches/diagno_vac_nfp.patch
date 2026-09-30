@@ -1,5 +1,5 @@
 diff --git a/DIAGNO/Sources/diagno.f90 b/DIAGNO/Sources/diagno.f90
-index 5049322..f256cef 100644
+index 50493220..046b60cb 100644
 --- a/DIAGNO/Sources/diagno.f90
 +++ b/DIAGNO/Sources/diagno.f90
 @@ -26,6 +26,8 @@
@@ -15,7 +15,7 @@ index 5049322..f256cef 100644
        
           ! Read the Coils file
           IF (lcoil) CALL diagno_init_coil
-+         ! Test-only: -vac leaves nfp=0 (iflflg=1 -> NaN); use coil periodicity
++         ! -vac: no equilibrium sets nfp (iflflg=1 loops gave NaN); use coil periodicity
 +         IF (lvac .and. lcoil) THEN
 +            nfp_wout = nfp_bs
 +            nfp_diagno = nfp_bs
