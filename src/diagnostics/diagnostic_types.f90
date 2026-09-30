@@ -11,7 +11,6 @@ module tiago_diagnostic_types
 
     type :: flux_loop_t
         character(len=:), allocatable :: label
-        logical :: is_open = .false.
         logical :: subtract_toroidal_flux = .false.
         integer(i32) :: repeat_count = 0
         real(dp) :: turn_scale = 1.0_dp

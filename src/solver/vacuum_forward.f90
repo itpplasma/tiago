@@ -8,7 +8,7 @@ module tiago_vacuum_forward
     implicit none
     private
 
-    real(dp), parameter :: closure_tolerance = 1.0e-10_dp
+    real(dp), parameter :: min_segment_length = 1.0e-10_dp
     real(dp), parameter :: pi = acos(-1.0_dp)
     real(dp), parameter :: two_pi = 2.0_dp * pi
     real(dp), parameter :: meters_to_cm = 100.0_dp
@@ -219,7 +219,8 @@ contains
         flux = 0.0_dp
         samples = max(1_i32, rule%samples_per_segment)
 
-        do seg = 1, segment_count(loop)
+        ! DIAGNO semantics: a flux loop is always closed (last point -> first).
+        do seg = 1, size(loop%points)
             call segment_endpoints(loop, seg, start_point, end_point)
             dl = end_point - start_point
             weight = 1.0_dp / real(samples, dp)
@@ -408,7 +409,7 @@ contains
         do seg = 1, size(diagnostic%path) - 1
             call extract_path_segment(diagnostic, seg, start_point, end_point)
             dl = end_point - start_point
-            norm_dl = max(closure_tolerance, sqrt(sum(dl**2)))
+            norm_dl = max(min_segment_length, sqrt(sum(dl**2)))
             tangent = dl / norm_dl
             voltage = voltage + integrate_segrog_segment(field, start_point, dl, &
                 norm_dl, tangent, samples, weight)
@@ -555,7 +556,7 @@ contains
         do seg = 1, total_segments
             call extract_path_segment(diagnostic, seg, start_point, end_point)
             dl = end_point - start_point
-            norm_dl = max(closure_tolerance, sqrt(sum(dl**2)))
+            norm_dl = max(min_segment_length, sqrt(sum(dl**2)))
             tangent = dl / norm_dl
             do s = 1, samples
                 idx = idx + 1
@@ -611,20 +612,6 @@ contains
         labels_equal = trim(a) == trim(b)
     end function labels_equal
 
-    integer function segment_count(loop)
-        type(flux_loop_t), intent(in) :: loop
-        integer :: npts
-
-        npts = size(loop%points)
-        if (loop%is_open) then
-            segment_count = max(0, npts - 1)
-        else if (points_match(loop%points(1), loop%points(npts))) then
-            segment_count = max(1, npts - 1)
-        else
-            segment_count = npts
-        end if
-    end function segment_count
-
     subroutine segment_endpoints(loop, index, start_point, end_point)
         type(flux_loop_t), intent(in) :: loop
         integer, intent(in) :: index
@@ -669,18 +656,6 @@ contains
         end if
     end function next_index
 
-    logical function points_match(a, b)
-        type(loop_point_t), intent(in) :: a
-        type(loop_point_t), intent(in) :: b
-        real(dp) :: dx
-        real(dp) :: dy
-        real(dp) :: dz
-
-        dx = a%x - b%x
-        dy = a%y - b%y
-        dz = a%z - b%z
-        points_match = sqrt(dx * dx + dy * dy + dz * dz) < closure_tolerance
-    end function points_match
 
     subroutine abort_with(message)
         character(len=*), intent(in) :: message

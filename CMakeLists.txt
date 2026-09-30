@@ -130,6 +130,12 @@ add_executable(tiago_coil_loader_tests tests/test_coil_loader.f90)
 target_link_libraries(tiago_coil_loader_tests PRIVATE tiago_solver)
 add_test(NAME tiago_coil_loader_tests COMMAND $<TARGET_FILE:tiago_coil_loader_tests>)
 
+add_executable(test_vacuum_semantics tests/test_vacuum_semantics.f90)
+target_link_libraries(test_vacuum_semantics PRIVATE tiago_solver)
+add_test(NAME tiago_vacuum_semantics
+    COMMAND $<TARGET_FILE:test_vacuum_semantics>
+            ${CMAKE_SOURCE_DIR}/tests/data/coils_sample.coils)
+
 if(TIAGO_USE_PLASMA)
     # Reference data needs simsopt; only register these tests when it is importable.
     execute_process(COMMAND ${Python3_EXECUTABLE} -c "import simsopt"

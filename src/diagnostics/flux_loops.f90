@@ -5,8 +5,6 @@ module tiago_flux_loops
     implicit none
     private
 
-    real(dp), parameter :: closure_tolerance = 1.0e-4_dp
-
     public :: read_flux_loop_file
     public :: lint_flux_loops
 
@@ -193,11 +191,6 @@ contains
             loop%points(j)%y = y
             loop%points(j)%z = z
         end do
-        if (size(loop%points) >= 2) then
-            loop%is_open = .not. points_match(loop%points(1), loop%points(size(loop%points)))
-        else
-            loop%is_open = .false.
-        end if
     end subroutine load_loop_points
 
     subroutine lint_single_loop(loop, index, ok, report)
@@ -208,7 +201,6 @@ contains
 
         integer :: npts
         logical :: has_issue
-        real(dp) :: closure
 
         ok = .true.
         report = ''
@@ -226,17 +218,6 @@ contains
         if (.not. verify_point_coordinates(loop, index, report)) then
             ok = .false.
             has_issue = .true.
-        end if
-
-        if (.not. loop%is_open .and. npts >= 2) then
-            closure = closure_distance(loop%points(1), loop%points(npts))
-            if (closure > closure_tolerance) then
-                call append_line(report, format_issue(index, &
-                    'closed loop endpoints differ by ' // &
-                    trim(real_to_string(closure))))
-                ok = .false.
-                has_issue = .true.
-            end if
         end if
 
         if (.not. has_issue .and. len_trim(loop%label) == 0) then
@@ -268,31 +249,7 @@ contains
             ieee_is_finite(point%z)
     end function coordinates_are_finite
 
-    pure real(dp) function closure_distance(a, b) result(dist)
-        type(loop_point_t), intent(in) :: a
-        type(loop_point_t), intent(in) :: b
-        real(dp) :: dx
-        real(dp) :: dy
-        real(dp) :: dz
 
-        dx = a%x - b%x
-        dy = a%y - b%y
-        dz = a%z - b%z
-        dist = sqrt(dx * dx + dy * dy + dz * dz)
-    end function closure_distance
-
-    logical function points_match(a, b)
-        type(loop_point_t), intent(in) :: a
-        type(loop_point_t), intent(in) :: b
-        real(dp) :: dx
-        real(dp) :: dy
-        real(dp) :: dz
-
-        dx = a%x - b%x
-        dy = a%y - b%y
-        dz = a%z - b%z
-        points_match = sqrt(dx * dx + dy * dy + dz * dz) < closure_tolerance
-    end function points_match
 
     subroutine append_line(buffer, line)
         character(len=:), allocatable, intent(inout) :: buffer
@@ -322,13 +279,6 @@ contains
         text = trim(buffer)
     end function int_to_string
 
-    pure function real_to_string(value) result(text)
-        real(dp), intent(in) :: value
-        character(len=:), allocatable :: text
-        character(len=64) :: buffer
-        write(buffer, '(ES12.4)') value
-        text = adjustl(buffer)
-    end function real_to_string
 
     subroutine close_file(unit)
         integer, intent(in) :: unit
