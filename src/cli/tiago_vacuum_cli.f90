@@ -353,7 +353,49 @@ subroutine run_solver(coil_path, flux_path, segrog_path, output_dir, &
     end if
 
     call solver%finalize()
+
+    if (have_flux) call check_finite('flux', loops_labels(loops), fluxes)
+    if (have_seg) call check_finite('segrog', segrog_labels(segs), voltages)
 end subroutine run_solver
+
+subroutine check_finite(kind, labels, values)
+    !! Outputs are written first; a non-finite value (e.g. a sensor point exactly on a
+    !! coil filament) then turns into a non-zero exit status.
+    use, intrinsic :: iso_fortran_env, only: dp => real64, error_unit
+    use, intrinsic :: ieee_arithmetic, only: ieee_is_finite
+    character(len=*), intent(in) :: kind
+    character(len=128), intent(in) :: labels(:)
+    real(dp), intent(in) :: values(:)
+    integer :: i
+    logical :: bad
+
+    bad = .false.
+    do i = 1, size(values)
+        if (.not. ieee_is_finite(values(i))) then
+            write(error_unit, '(A)') 'non-finite '//kind//' signal: '//trim(labels(i))
+            bad = .true.
+        end if
+    end do
+    if (bad) stop 2
+end subroutine check_finite
+
+function loops_labels(loops) result(labels)
+    type(flux_loop_t), intent(in) :: loops(:)
+    character(len=128) :: labels(size(loops))
+    integer :: i
+    do i = 1, size(loops)
+        labels(i) = loops(i)%label
+    end do
+end function loops_labels
+
+function segrog_labels(segs) result(labels)
+    type(segmented_rogowski_t), intent(in) :: segs(:)
+    character(len=128) :: labels(size(segs))
+    integer :: i
+    do i = 1, size(segs)
+        labels(i) = segs(i)%label
+    end do
+end function segrog_labels
 
 subroutine ensure_directory(path)
     use, intrinsic :: iso_fortran_env, only: error_unit

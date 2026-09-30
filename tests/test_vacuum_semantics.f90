@@ -23,6 +23,7 @@ program test_vacuum_semantics
     call test_open_polygon_is_closed()
     call test_one_period_loop()
     call test_idia()
+    call test_duplicate_coil_point()
 
     call solver%finalize()
     if (failures > 0) then
@@ -111,6 +112,25 @@ contains
             print '(A)', 'ok   idia self-reference rejected'
         end if
     end subroutine test_idia
+
+    subroutine test_duplicate_coil_point()
+        !! A repeated coil node is a zero-length segment and must contribute nothing.
+        character(len=*), parameter :: text = '1' // new_line('a') // &
+            '4 0 0 SQ' // new_line('a') // square_rows
+        type(vacuum_solver_t) :: dup
+        real(dp), allocatable :: ref(:), flux(:)
+        integer :: unit
+
+        open(newunit=unit, file='semantics_dup.coils', status='replace', action='write')
+        write(unit, '(A)') 'periods 1', 'begin filament', 'mirror NIL', &
+            ' 0 0 0 1', ' 1 0 0 1', ' 1 0 0 1', ' 1 1 0 1', ' 0 1 0 1', ' 0 0 0 0 1 SQ', 'end'
+        close(unit)
+        call dup%init('semantics_dup.coils')
+        call eval_file('semantics_dup.diagno', text, ref)
+        call eval_file('semantics_dup.diagno', text, flux, dup)
+        call check_close('duplicated coil point is harmless', flux(1), ref(1), 1.0e-14_dp)
+        call dup%finalize()
+    end subroutine test_duplicate_coil_point
 
     subroutine write_symmetric_coils(path, nfp)
         !! nfp tilted square coils, rotated copies of each other.

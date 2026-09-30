@@ -264,6 +264,8 @@ contains
             dl_coil(2) = field%coils%y(coil_i + 1) - field%coils%y(coil_i)
             dl_coil(3) = field%coils%z(coil_i + 1) - field%coils%z(coil_i)
             L = sqrt(dl_coil(1)**2 + dl_coil(2)**2 + dl_coil(3)**2)
+            ! Duplicated points and inter-coil jumpers carry no field (and L=0 gives 0/0).
+            if (L == 0.0_dp .or. field%coils%current(coil_i) == 0.0_dp) cycle
 
             ! Sample loop inner - compute contribution from coil_i to all samples
             do s = 1, samples
@@ -376,6 +378,8 @@ contains
             dl_coil(2) = field%coils%y(coil_i + 1) - field%coils%y(coil_i)
             dl_coil(3) = field%coils%z(coil_i + 1) - field%coils%z(coil_i)
             L = sqrt(dl_coil(1)**2 + dl_coil(2)**2 + dl_coil(3)**2)
+            ! Duplicated points and inter-coil jumpers carry no field (and L=0 gives 0/0).
+            if (L == 0.0_dp .or. field%coils%current(coil_i) == 0.0_dp) cycle
             dl_coil_hat(1) = dl_coil(1) / L
             dl_coil_hat(2) = dl_coil(2) / L
             dl_coil_hat(3) = dl_coil(3) / L
