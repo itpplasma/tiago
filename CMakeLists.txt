@@ -91,6 +91,20 @@ target_link_libraries(test_plasma_support PRIVATE tiago_solver)
 add_test(NAME tiago_plasma_support COMMAND $<TARGET_FILE:test_plasma_support> ${TIAGO_WOUT_SIMSOPT_SMALL})
 set_tests_properties(tiago_plasma_support PROPERTIES FIXTURES_REQUIRED wout_li383)
 
+# Vacuum equilibria (no plasma currents): the sheet field must vanish outside.
+add_executable(test_plasma_vacuum tests/test_plasma_vacuum.f90)
+target_link_libraries(test_plasma_vacuum PRIVATE tiago_solver)
+foreach(case IN ITEMS purely_toroidal_field_reference LandremanPaul2021_QA_lowres)
+    set(wout ${CMAKE_BINARY_DIR}/tests/cases/wout_${case}.nc)
+    add_test(NAME tiago_download_wout_${case}
+        COMMAND ${CMAKE_COMMAND}
+                -DURL=https://raw.githubusercontent.com/hiddenSymmetries/simsopt/9e027eac38028d57aa23777be52a781aa860e347/tests/test_files/wout_${case}.nc
+                -DDEST=${wout} -P ${CMAKE_SOURCE_DIR}/cmake/DownloadFile.cmake)
+    set_tests_properties(tiago_download_wout_${case} PROPERTIES FIXTURES_SETUP wout_${case} TIMEOUT 120)
+    add_test(NAME tiago_plasma_vacuum_${case} COMMAND $<TARGET_FILE:test_plasma_vacuum> ${wout})
+    set_tests_properties(tiago_plasma_vacuum_${case} PROPERTIES FIXTURES_REQUIRED wout_${case})
+endforeach()
+
 # CLI: the README example and argument errors (message, exit status 1)
 add_test(NAME tiago_cli_sample
     COMMAND $<TARGET_FILE:tiago_vacuum_cli>
