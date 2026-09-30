@@ -18,13 +18,9 @@ module tiago_vacuum_forward
     real(dp), parameter :: maxwell_to_weber = 1.0e-8_dp
 
     type :: quadrature_rule_t
-        integer(i32) :: samples_per_segment = 4_i32
+        integer(i32) :: samples_per_segment = 6_i32
     end type quadrature_rule_t
 
-    type :: quadrature_override_t
-        character(len=:), allocatable :: label
-        type(quadrature_rule_t) :: rule
-    end type quadrature_override_t
 
     type :: vacuum_solver_t
         type(biotsavart_field_t) :: field
@@ -39,13 +35,10 @@ module tiago_vacuum_forward
         procedure :: set_nfp => vacuum_solver_set_nfp
         procedure :: flux_and_segrog => vacuum_solver_flux_and_segrog
         procedure :: enable_plasma_from_vmec => vacuum_solver_enable_plasma_from_vmec
-        procedure :: disable_plasma => vacuum_solver_disable_plasma
-        procedure :: has_plasma => vacuum_solver_has_plasma
     end type vacuum_solver_t
 
     public :: vacuum_solver_t
     public :: quadrature_rule_t
-    public :: quadrature_override_t
 
 contains
     subroutine vacuum_solver_init(self, coil_file, coil_extcur)
@@ -97,87 +90,73 @@ contains
         call self%plasma%init_from_vmec(trim(wout_file), nphi, ntheta)
     end subroutine vacuum_solver_enable_plasma_from_vmec
 
-    subroutine vacuum_solver_disable_plasma(self)
-        class(vacuum_solver_t), intent(inout) :: self
-        call self%plasma%finalize()
-    end subroutine vacuum_solver_disable_plasma
-
-    logical function vacuum_solver_has_plasma(self)
-        class(vacuum_solver_t), intent(in) :: self
-        vacuum_solver_has_plasma = self%plasma%has_data()
-    end function vacuum_solver_has_plasma
-
-    subroutine vacuum_solver_flux_loops(self, loops, fluxes, default_rule, &
-            overrides)
+    subroutine vacuum_solver_flux_loops(self, loops, fluxes, rule)
         class(vacuum_solver_t), intent(in) :: self
         type(flux_loop_t), allocatable, intent(in) :: loops(:)
         real(dp), allocatable, intent(out) :: fluxes(:)
-        type(quadrature_rule_t), intent(in), optional :: default_rule
-        type(quadrature_override_t), intent(in), optional :: overrides(:)
+        type(quadrature_rule_t), intent(in), optional :: rule
 
         integer :: i
-        type(quadrature_rule_t) :: rule
+        type(quadrature_rule_t) :: q
 
         call assert_ready(self)
+        if (present(rule)) q = rule
         if (.not. allocated(loops)) call abort_with('flux loop array not set')
         if (allocated(fluxes)) deallocate(fluxes)
         allocate(fluxes(size(loops)))
 
-!$omp parallel do default(shared) private(i, rule) collapse(1)
+!$omp parallel do default(shared) private(i)
         do i = 1, size(loops)
-            rule = select_rule(loops(i)%label, default_rule, overrides)
-            fluxes(i) = evaluate_loop_flux(self%field, loops(i), rule, &
+            fluxes(i) = evaluate_loop_flux(self%field, loops(i), q, &
                 self%nfp)
         end do
 !$omp end parallel do
         if (self%plasma%has_data()) then
-            call add_plasma_flux(self, loops, fluxes, default_rule, overrides)
+            call add_plasma_flux(self, loops, fluxes, q)
         end if
     end subroutine vacuum_solver_flux_loops
 
-    subroutine vacuum_solver_segrog(self, diagnostics, voltages, default_rule, &
-            overrides)
+    subroutine vacuum_solver_segrog(self, diagnostics, voltages, rule)
         class(vacuum_solver_t), intent(in) :: self
         type(segmented_rogowski_t), allocatable, intent(in) :: diagnostics(:)
         real(dp), allocatable, intent(out) :: voltages(:)
-        type(quadrature_rule_t), intent(in), optional :: default_rule
-        type(quadrature_override_t), intent(in), optional :: overrides(:)
+        type(quadrature_rule_t), intent(in), optional :: rule
 
         integer :: i
-        type(quadrature_rule_t) :: rule
+        type(quadrature_rule_t) :: q
 
         call assert_ready(self)
+        if (present(rule)) q = rule
         if (.not. allocated(diagnostics)) then
             call abort_with('segmented Rogowski array not set')
         end if
         if (allocated(voltages)) deallocate(voltages)
         allocate(voltages(size(diagnostics)))
 
-!$omp parallel do default(shared) private(i, rule)
+!$omp parallel do default(shared) private(i)
         do i = 1, size(diagnostics)
-            rule = select_rule(diagnostics(i)%label, default_rule, overrides)
-            voltages(i) = evaluate_segrog_signal(self%field, diagnostics(i), rule)
+            voltages(i) = evaluate_segrog_signal(self%field, diagnostics(i), q)
         end do
 !$omp end parallel do
         if (self%plasma%has_data()) then
-            call add_plasma_segrog(self, diagnostics, voltages, default_rule, overrides)
+            call add_plasma_segrog(self, diagnostics, voltages, q)
         end if
     end subroutine vacuum_solver_segrog
 
     subroutine vacuum_solver_flux_and_segrog(self, loops, fluxes, diagnostics, &
-            voltages, default_rule, overrides)
+            voltages, rule)
         class(vacuum_solver_t), intent(in) :: self
         type(flux_loop_t), allocatable, intent(in) :: loops(:)
         real(dp), allocatable, intent(out) :: fluxes(:)
         type(segmented_rogowski_t), allocatable, intent(in) :: diagnostics(:)
         real(dp), allocatable, intent(out) :: voltages(:)
-        type(quadrature_rule_t), intent(in), optional :: default_rule
-        type(quadrature_override_t), intent(in), optional :: overrides(:)
+        type(quadrature_rule_t), intent(in), optional :: rule
 
         integer :: i
-        type(quadrature_rule_t) :: rule
+        type(quadrature_rule_t) :: q
 
         call assert_ready(self)
+        if (present(rule)) q = rule
         if (.not. allocated(loops)) call abort_with('flux loop array not set')
         if (.not. allocated(diagnostics)) then
             call abort_with('segmented Rogowski array not set')
@@ -189,23 +168,20 @@ contains
 
         ! Single flattened loop: compute all flux loops, then all segrog diagnostics
         ! This distributes work evenly across threads without intermediate barriers
-!$omp parallel do default(shared) private(i, rule)
+!$omp parallel do default(shared) private(i)
         do i = 1, size(loops) + size(diagnostics)
             if (i <= size(loops)) then
-                rule = select_rule(loops(i)%label, default_rule, overrides)
-                fluxes(i) = evaluate_loop_flux(self%field, loops(i), rule, &
+                fluxes(i) = evaluate_loop_flux(self%field, loops(i), q, &
                     self%nfp)
             else
-                rule = select_rule(diagnostics(i - size(loops))%label, default_rule, &
-                    overrides)
                 voltages(i - size(loops)) = evaluate_segrog_signal(self%field, &
-                    diagnostics(i - size(loops)), rule)
+                    diagnostics(i - size(loops)), q)
             end if
         end do
 !$omp end parallel do
         if (self%plasma%has_data()) then
-            call add_plasma_flux(self, loops, fluxes, default_rule, overrides)
-            call add_plasma_segrog(self, diagnostics, voltages, default_rule, overrides)
+            call add_plasma_flux(self, loops, fluxes, q)
+            call add_plasma_segrog(self, diagnostics, voltages, q)
         end if
     end subroutine vacuum_solver_flux_and_segrog
 
@@ -443,36 +419,6 @@ contains
         end do
     end function integrate_segrog_segment
 
-    type(quadrature_rule_t) function select_rule(label, default_rule, overrides)
-        character(len=*), intent(in) :: label
-        type(quadrature_rule_t), intent(in), optional :: default_rule
-        type(quadrature_override_t), intent(in), optional :: overrides(:)
-
-        integer :: i
-
-        if (present(overrides)) then
-            do i = 1, size(overrides)
-                if (labels_equal(label, overrides(i)%label)) then
-                    select_rule = overrides(i)%rule
-                    return
-                end if
-            end do
-        end if
-
-        if (present(default_rule)) then
-            select_rule = default_rule
-        else
-            select_rule%samples_per_segment = 4_i32
-        end if
-    end function select_rule
-
-    logical function labels_equal(a, b)
-        character(len=*), intent(in) :: a
-        character(len=*), intent(in) :: b
-
-        labels_equal = trim(a) == trim(b)
-    end function labels_equal
-
     subroutine loop_segment(loop, seg, nfp, start_point, end_point)
         !! Segment seg of a closed flux loop; for iflflg=1 loops the closing
         !! point is the first point rotated by one field period.
@@ -487,14 +433,13 @@ contains
         end if
     end subroutine loop_segment
 
-    subroutine add_plasma_flux(self, loops, fluxes, default_rule, overrides)
+    subroutine add_plasma_flux(self, loops, fluxes, rule)
         !! Plasma part of every flux loop, sum over samples of A_plasma . dl,
         !! evaluated in one batch (the plasma kernel is itself parallel).
         class(vacuum_solver_t), intent(in) :: self
         type(flux_loop_t), intent(in) :: loops(:)
         real(dp), intent(inout) :: fluxes(:)
-        type(quadrature_rule_t), intent(in), optional :: default_rule
-        type(quadrature_override_t), intent(in), optional :: overrides(:)
+        type(quadrature_rule_t), intent(in) :: rule
 
         real(dp), allocatable :: points(:, :), dls(:, :), avec(:, :)
         integer, allocatable :: owner(:)
@@ -504,12 +449,12 @@ contains
         n = 0
         do i = 1, size(loops)
             n = n + size(loops(i)%points) * &
-                sample_count(select_rule(loops(i)%label, default_rule, overrides))
+                sample_count(rule)
         end do
         allocate(points(n, 3), dls(n, 3), owner(n), avec(n, 3))
         n = 0
         do i = 1, size(loops)
-            samples = sample_count(select_rule(loops(i)%label, default_rule, overrides))
+            samples = sample_count(rule)
             do seg = 1, size(loops(i)%points)
                 call loop_segment(loops(i), seg, self%nfp, a, b)
                 do s = 1, samples
@@ -532,13 +477,12 @@ contains
         fluxes = fluxes + plasma_flux
     end subroutine add_plasma_flux
 
-    subroutine add_plasma_segrog(self, diagnostics, voltages, default_rule, overrides)
+    subroutine add_plasma_segrog(self, diagnostics, voltages, rule)
         !! Plasma part of every segmented Rogowski, sum of eff_area * B_plasma . dl.
         class(vacuum_solver_t), intent(in) :: self
         type(segmented_rogowski_t), intent(in) :: diagnostics(:)
         real(dp), intent(inout) :: voltages(:)
-        type(quadrature_rule_t), intent(in), optional :: default_rule
-        type(quadrature_override_t), intent(in), optional :: overrides(:)
+        type(quadrature_rule_t), intent(in) :: rule
 
         real(dp), allocatable :: points(:, :), dls(:, :), bvec(:, :)
         integer, allocatable :: owner(:)
@@ -548,12 +492,12 @@ contains
         n = 0
         do i = 1, size(diagnostics)
             n = n + (size(diagnostics(i)%path) - 1) * &
-                sample_count(select_rule(diagnostics(i)%label, default_rule, overrides))
+                sample_count(rule)
         end do
         allocate(points(n, 3), dls(n, 3), owner(n), bvec(n, 3))
         n = 0
         do i = 1, size(diagnostics)
-            samples = sample_count(select_rule(diagnostics(i)%label, default_rule, overrides))
+            samples = sample_count(rule)
             do seg = 1, size(diagnostics(i)%path) - 1
                 call extract_path_segment(diagnostics(i), seg, a, b)
                 do s = 1, samples

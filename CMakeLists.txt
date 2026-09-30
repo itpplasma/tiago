@@ -1,12 +1,9 @@
 cmake_minimum_required(VERSION 3.24)
 project(TIAGO LANGUAGES Fortran)
 
-# Enable native CPU optimizations
-add_compile_options(-march=native -mtune=native)
-
 include(FetchContent)
 
-set(TIAGO_LIBNEO_GIT "git@github.com:itpplasma/libneo.git" CACHE STRING "libneo upstream to fetch")
+set(TIAGO_LIBNEO_GIT "https://github.com/itpplasma/libneo.git" CACHE STRING "libneo upstream to fetch")
 set(TIAGO_LIBNEO_TAG "f1bef44e80c4508f04594d4d2ca120eaf17564f8" CACHE STRING "libneo commit/branch/tag used by Tiago")
 set(LIBNEO_ENABLE_TESTS OFF CACHE BOOL "Disable libneo's own tests when vendored" FORCE)
 set(ENABLE_OPENMP OFF CACHE BOOL "Disable libneo OpenMP flags unless explicitly requested" FORCE)
@@ -19,9 +16,6 @@ FetchContent_Declare(libneo
     SOURCE_SUBDIR  .)
 FetchContent_MakeAvailable(libneo)
 
-add_library(tiago_core INTERFACE)
-target_link_libraries(tiago_core INTERFACE LIBNEO::neo)
-
 add_library(tiago_diagnostics STATIC
     src/diagnostics/diagnostic_types.f90
     src/diagnostics/flux_loops.f90
@@ -29,7 +23,7 @@ add_library(tiago_diagnostics STATIC
 set_target_properties(tiago_diagnostics PROPERTIES
     Fortran_STANDARD 2018
     Fortran_STANDARD_REQUIRED YES)
-target_link_libraries(tiago_diagnostics PUBLIC tiago_core)
+target_link_libraries(tiago_diagnostics PUBLIC LIBNEO::neo)
 
 add_library(tiago_solver STATIC
     src/solver/vacuum_forward.f90
@@ -58,7 +52,6 @@ if(TIAGO_ENABLE_OPENMP)
     find_package(OpenMP COMPONENTS Fortran)
     if(OpenMP_Fortran_FOUND)
         target_link_libraries(tiago_solver PUBLIC OpenMP::OpenMP_Fortran)
-        target_compile_definitions(tiago_solver PUBLIC TIAGO_USE_OPENMP)
     endif()
 endif()
 
@@ -73,7 +66,8 @@ enable_testing()
 
 add_executable(tiago_coil_loader_tests tests/test_coil_loader.f90)
 target_link_libraries(tiago_coil_loader_tests PRIVATE tiago_solver)
-add_test(NAME tiago_coil_loader_tests COMMAND $<TARGET_FILE:tiago_coil_loader_tests>)
+add_test(NAME tiago_coil_loader_tests
+    COMMAND $<TARGET_FILE:tiago_coil_loader_tests> ${CMAKE_SOURCE_DIR}/tests/data)
 
 add_executable(test_vacuum_semantics tests/test_vacuum_semantics.f90)
 target_link_libraries(test_vacuum_semantics PRIVATE tiago_solver)

@@ -6,26 +6,33 @@ program test_coil_loader
     implicit none
 
     type(biotsavart_field_t) :: field
+    character(len=:), allocatable :: data_dir
+    character(len=512) :: arg
 
-    call test_neo_input(field)
-    call test_stellopt_input(field)
-    call test_stellopt_with_extcur(field)
-    call test_more_points(field)
+    ! Usage: tiago_coil_loader_tests <tests/data directory>
+    call get_command_argument(1, arg)
+    data_dir = trim(arg)
+
+    call test_neo_input(field, data_dir)
+    call test_stellopt_input(field, data_dir)
+    call test_stellopt_with_extcur(field, data_dir)
+    call test_more_points(field, data_dir)
     call test_extcur_forms(field)
 
     print *, 'tiago_coil_loader tests passed'
 end program test_coil_loader
 
-subroutine test_neo_input(field)
+subroutine test_neo_input(field, data_dir)
     use, intrinsic :: iso_fortran_env, only: dp => real64
     use neo_biotsavart_field, only: biotsavart_field_t
     use neo_biotsavart, only: coils_deinit
     use tiago_coil_loader, only: load_coils_into_field
     implicit none
     type(biotsavart_field_t), intent(inout) :: field
+    character(len=*), intent(in) :: data_dir
     real(dp), parameter :: tol = 1.0e-12_dp
 
-    call load_coils_into_field(field, '../tests/data/coil_sample.neo')
+    call load_coils_into_field(field, data_dir//'/coil_sample.neo')
     call assert_equal(size(field%coils%x), 5, 'neo: point count')
     call assert_close(field%coils%x(1), 0.0_dp, tol, 'neo: x(1)')
     call assert_close(field%coils%y(3), 1.0_dp, tol, 'neo: y(3)')
@@ -33,39 +40,41 @@ subroutine test_neo_input(field)
     call coils_deinit(field%coils)
 end subroutine test_neo_input
 
-subroutine test_stellopt_input(field)
+subroutine test_stellopt_input(field, data_dir)
     use, intrinsic :: iso_fortran_env, only: dp => real64
     use neo_biotsavart_field, only: biotsavart_field_t
     use neo_biotsavart, only: coils_deinit
     use tiago_coil_loader, only: load_coils_into_field
     implicit none
     type(biotsavart_field_t), intent(inout) :: field
+    character(len=*), intent(in) :: data_dir
     real(dp), parameter :: tol = 1.0e-12_dp
 
-    call load_coils_into_field(field, '../tests/data/coils_sample.stellopt')
+    call load_coils_into_field(field, data_dir//'/coils_sample.coils')
     call assert_equal(size(field%coils%x), 5, 'stellopt: point count')
     call assert_close(field%coils%current(1), 1.0_dp, tol, 'stellopt: current(1)')
     call assert_close(field%coils%current(5), 0.0_dp, tol, 'stellopt: closing current zero')
     call coils_deinit(field%coils)
 end subroutine test_stellopt_input
 
-subroutine test_stellopt_with_extcur(field)
+subroutine test_stellopt_with_extcur(field, data_dir)
     use, intrinsic :: iso_fortran_env, only: dp => real64
     use neo_biotsavart_field, only: biotsavart_field_t
     use neo_biotsavart, only: coils_deinit
     use tiago_coil_loader, only: load_coils_into_field
     implicit none
     type(biotsavart_field_t), intent(inout) :: field
+    character(len=*), intent(in) :: data_dir
     real(dp), parameter :: tol = 1.0e-12_dp
 
-    call load_coils_into_field(field, '../tests/data/coils_sample.stellopt', &
-         extcur_path='../tests/data/extcur_sample.diagno')
+    call load_coils_into_field(field, data_dir//'/coils_sample.coils', &
+         extcur_path=data_dir//'/extcur_sample.diagno')
     call assert_close(field%coils%current(1), 2.0_dp, tol, 'stellopt extcur: current scaled')
     call assert_close(field%coils%current(5), 0.0_dp, tol, 'stellopt extcur: closing current stays zero')
     call coils_deinit(field%coils)
 end subroutine test_stellopt_with_extcur
 
-subroutine test_more_points(field)
+subroutine test_more_points(field, data_dir)
     use, intrinsic :: iso_fortran_env, only: dp => real64
     use, intrinsic :: ieee_arithmetic
     use neo_biotsavart_field, only: biotsavart_field_t
@@ -73,10 +82,11 @@ subroutine test_more_points(field)
     use tiago_coil_loader, only: load_coils_into_field
     implicit none
     type(biotsavart_field_t), intent(inout) :: field
+    character(len=*), intent(in) :: data_dir
     integer :: npts
 
-    call load_coils_into_field(field, '../tests/data/coils_more_points.coils', &
-         extcur_path='../tests/data/extcur_more_points.input')
+    call load_coils_into_field(field, data_dir//'/coils_more_points.coils', &
+         extcur_path=data_dir//'/extcur_more_points.input')
     npts = size(field%coils%x)
     call assert_equal(npts, 10, 'more_points: node count')
     if (any(ieee_is_nan(field%coils%current))) then

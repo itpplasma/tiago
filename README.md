@@ -17,17 +17,17 @@ STELLOPT's `xdiagno`.
 ## Quick start
 ```bash
 # Configure + build
-cmake -S . -B build \
-      -DTIAGO_LIBNEO_TAG=main \
-      -DTIAGO_LIBNEO_GIT=git@github.com:itpplasma/libneo.git
+cmake -S . -B build
 cmake --build build
+# optional: -DTIAGO_LIBNEO_TAG=<commit> to use another libneo, and
+# -DCMAKE_Fortran_FLAGS="-march=native" for a machine-specific build
 
 # or the convenience wrappers
 make              # configures + builds
 make test         # rebuilds and runs ctest --output-on-failure
 ```
 Pass extra cache entries through `CMAKE_ARGS`, e.g.
-`make CMAKE_ARGS="-DTIAGO_LIBNEO_TAG=dev-feature"`.
+`make CMAKE_ARGS="-DTIAGO_LIBNEO_TAG=<commit>"`.
 
 ## Vacuum CLI usage
 ```
