@@ -31,9 +31,16 @@ git -C "$src" checkout --quiet "$STELLOPT_COMMIT"
 git -C "$src" checkout --quiet -- .
 
 build() {
-    # STELLOPT's makefiles install into $HOME/bin; redirect HOME to keep it local.
-    (cd "$src" && HOME="$work/home" MACHINE="$STELLOPT_MACHINE" STELLOPT_PATH="$src" \
-        ./build_all -j"$(nproc)" LIBSTELL "$@")
+    # Override STELLOPT's installation directory through make, keeping every
+    # benchmark artifact local without changing the process's home directory.
+    (cd "$src"
+     export MACHINE="$STELLOPT_MACHINE" STELLOPT_PATH="$src"
+     export FLAG_CALLED_FROM_BUILD_ALL=true
+     make MYHOME="$work/home/bin" clean_release
+     for code in LIBSTELL "$@"; do
+         make -C "$code" MYHOME="$work/home/bin" \
+             -j"${STELLOPT_JOBS:-$(nproc)}" clean_release
+     done)
 }
 
 patched=0
