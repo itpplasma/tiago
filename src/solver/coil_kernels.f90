@@ -12,7 +12,7 @@ module tiago_coil_kernels
     !! two segments meeting at a node. Segment k always joins nodes k and k+1, so
     !! the segment loop is contiguous and vectorises; segments without current
     !! (jumpers, repeated points) are stored with I dl = 0 and contribute exactly
-    !! zero. Their true length (at least tiny) keeps eps < 1 and all terms finite.
+    !! zero. Their distance factors are skipped, including at points on jumpers.
     use, intrinsic :: iso_fortran_env, only: dp => real64
     implicit none
     private
@@ -113,6 +113,8 @@ contains
             az = 0.0_dp
             !$omp simd private(eps, f) reduction(+:ax, ay, az)
             do s = 1, nn - 1
+                if (abs(ix(s)) <= 0.0_dp .and. abs(iy(s)) <= 0.0_dp &
+                    .and. abs(iz(s)) <= 0.0_dp) cycle
                 eps = len(s) / (r(s) + r(s + 1))
                 f = log((1.0_dp + eps) / (1.0_dp - eps)) / len(s)
                 ax = ax + ix(s) * f
@@ -145,6 +147,8 @@ contains
             bz = 0.0_dp
             !$omp simd private(rx, ry, rz, rs, f) reduction(+:bx, by, bz)
             do s = 1, nn - 1
+                if (abs(ix(s)) <= 0.0_dp .and. abs(iy(s)) <= 0.0_dp &
+                    .and. abs(iz(s)) <= 0.0_dp) cycle
                 rx = points(1, i) - xn(s)
                 ry = points(2, i) - yn(s)
                 rz = points(3, i) - zn(s)
