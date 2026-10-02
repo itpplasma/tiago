@@ -31,7 +31,7 @@ module tiago_equilibrium
         character(len=16), allocatable :: key(:)     !! adapter input name
         integer, allocatable :: kind(:), i1(:), i2(:)
         integer :: ns = 0, mpol = 0, ntor = 0, nfp = 1, ncurr = 0
-        logical :: solved = .false.
+        logical :: solved = .false., conservative = .false.
         integer :: max_block = 8000
         ! the last solve
         real(dp), allocatable :: coef(:, :, :, :), y(:)
@@ -55,14 +55,21 @@ module tiago_equilibrium
 
 contains
 
-    subroutine equilibrium_init(self, input_path, workdir, names)
+    subroutine equilibrium_init(self, input_path, workdir, names, covariant, &
+            conservative)
         !! input_path: VMEC++ JSON or classic &INDATA (converted with indata2json).
         class(equilibrium_t), intent(inout) :: self
         character(len=*), intent(in) :: input_path, workdir
         character(len=*), intent(in) :: names(:)
+        logical, intent(in), optional :: covariant, conservative
         character(len=:), allocatable :: json
         integer :: k
+        logical :: use_covariant
 
+        self%conservative = .false.
+        if (present(conservative)) self%conservative = conservative
+        use_covariant = self%conservative
+        if (present(covariant)) use_covariant = use_covariant .or. covariant
         json = json_input(input_path, workdir)
         call self%vmec%create(json)
         if (self%vmec%get_int('lfreeb') /= 0) error stop 'VMEC input must be fixed-boundary'
@@ -72,7 +79,7 @@ contains
         self%nfp = self%vmec%get_int('nfp')
         self%ncurr = self%vmec%get_int('ncurr')
         call self%edge%init(self%ns, self%mpol, self%ntor, self%nfp, self%ncurr, &
-            self%vmec%get_int('ntheta'), self%vmec%get_int('nzeta'))
+            self%vmec%get_int('ntheta'), self%vmec%get_int('nzeta'), use_covariant)
         allocate(self%names(size(names)), self%key(size(names)), self%kind(size(names)), &
             self%i1(size(names)), self%i2(size(names)))
         do k = 1, size(names)
@@ -216,6 +223,8 @@ contains
         vb%nfp = self%nfp
         vb%signgs = self%signgs
         vb%lasym = .false.
+        vb%covariant = self%edge%covariant
+        vb%conservative = self%conservative
         vb%phiedge = self%vmec%get_input('phiedge')
         vb%xm = self%edge%xm
         vb%xn = self%edge%xn

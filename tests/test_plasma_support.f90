@@ -13,7 +13,8 @@ program test_plasma_support
     real(dp), parameter :: pi = acos(-1.0_dp), mu0 = 4.0e-7_dp * pi
     integer, parameter :: n = 400
     type(plasma_support_t) :: plasma
-    character(len=512) :: wout
+    character(len=512) :: wout, sheet_mode
+    logical :: covariant, conservative
     real(dp) :: ctor, rmajor, aminor, t, circ, flux_a, flux_b, h
     real(dp) :: pts(3, n), dls(3, n), field(3, n), sq(3, 4), sq_dl(3, 4), a(3, 4), c(3, 1), bc(3, 1)
     real(dp), allocatable :: w(:, :, :), resp(:, :), gx(:, :, :), wf(:, :, :), gxf(:, :, :)
@@ -23,8 +24,11 @@ program test_plasma_support
 
     failures = 0
     call get_command_argument(1, wout)
+    call get_command_argument(2, sheet_mode)
+    conservative = trim(sheet_mode) == 'conservative'
+    covariant = trim(sheet_mode) == 'covariant' .or. conservative
     call read_scalars(trim(wout), ctor, rmajor, aminor)
-    call plasma%init_from_vmec(trim(wout), 32, 32)
+    call plasma%init_from_vmec(trim(wout), 32, 32, covariant, conservative)
 
     ! 1. Ampere around the plasma cross-section at phi = 0 (circle in the x-z plane).
     do k = 1, n
@@ -34,7 +38,9 @@ program test_plasma_support
     end do
     call plasma%sample_bfield(pts, field)
     circ = sum(field * dls)
-    call check('Ampere: |loop integral of B| = mu0 |I_tor|', abs(circ), mu0 * abs(ctor), 2.0e-3_dp)
+    call check('Ampere: |loop integral of B| = mu0 |I_tor|', &
+        abs(circ), mu0 * abs(ctor), merge(1.0e-5_dp, 2.0e-3_dp, conservative))
+    if (conservative) call check_current_conservation()
 
     ! 2. curl A = B on a 1 cm square in the x-y plane outside the plasma.
     h = 0.01_dp
@@ -62,11 +68,12 @@ program test_plasma_support
     sq_owner = 1
     call plasma%potential_weights(sq, sq_dl, sq_owner, 1, w)
     call plasma%mode_response(w, resp)
-    call check('Jacobian . coefficients = small-loop flux', sum(resp(1, :) * plasma%coefficients), &
-        flux_a, 1.0e-12_dp)
+    call check_abs('Jacobian . coefficients = small-loop flux', &
+        sum(resp(1, :) * plasma%coefficients), flux_a, &
+        1024.0_dp * epsilon(1.0_dp) * sum(abs(w(:, :, 1) * plasma%sheet)))
 
     ! 4. Shape Jacobian vs central differences in single boundary coefficients.
-    call read_vmec_boundary(trim(wout), vb)
+    call read_vmec_boundary(trim(wout), vb, covariant, conservative)
     call plasma%init_from_boundary(vb, 32, 32)
     call plasma%potential_weights(sq, sq_dl, sq_owner, 1, w, gx)
     call plasma%shape_response(w, gx, shape_pot)
@@ -82,6 +89,27 @@ program test_plasma_support
     print '(A)', 'test_plasma_support passed'
 
 contains
+
+    subroutine check_current_conservation()
+        !! Ampere's law at several toroidal positions, against VMEC's ctor.
+        real(dp) :: phi, theta, radius, p(3, n), dl(3, n), b(3, n)
+        integer :: iphi, j
+
+        radius = 3.0_dp * aminor
+        do iphi = 1, 3
+            phi = 0.37_dp * iphi
+            do j = 1, n
+                theta = 2.0_dp * pi * (real(j, dp) - 0.5_dp) / real(n, dp)
+                p(:, j) = [(rmajor + radius * cos(theta)) * cos(phi), &
+                    (rmajor + radius * cos(theta)) * sin(phi), radius * sin(theta)]
+                dl(:, j) = [-sin(theta) * cos(phi), -sin(theta) * sin(phi), &
+                    cos(theta)] * radius * 2.0_dp * pi / real(n, dp)
+            end do
+            call plasma%sample_bfield(p, b)
+            call check('covariant current conservation', abs(sum(b * dl)), &
+                mu0 * abs(ctor), 1.0e-5_dp)
+        end do
+    end subroutine check_current_conservation
 
     subroutine check_shape(vb, mode)
         !! rmnc(mode) and zmns(mode) columns of both signals vs central differences.
@@ -105,7 +133,10 @@ contains
             write(name, '(A,I0,A,I0)') 'shape Jacobian, flux, column ', col, ' mode ', mode
             call check_abs(trim(name), shape_pot(1, col), fd(1), 1.0e-6_dp * maxval(abs(shape_pot)))
             write(name, '(A,I0,A,I0)') 'shape Jacobian, Ampere, column ', col, ' mode ', mode
-            call check_abs(trim(name), shape_field(1, col), fd(2), 1.0e-6_dp * maxval(abs(shape_field)))
+            call check_abs(trim(name), shape_field(1, col), fd(2), &
+                max(1.0e-6_dp * maxval(abs(shape_field)), &
+                64.0_dp * epsilon(1.0_dp) * (abs(plus(2)) + abs(minus(2))) &
+                / (2.0_dp * hstep)))
         end do
     end subroutine check_shape
 

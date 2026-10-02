@@ -823,6 +823,8 @@ extern "C" int tiago_vmecpp_wout(const tiago_vmecpp* handle, const char* name,
     else if (key == "zmns") matrix(w.zmns, w.mnmax);
     else if (key == "bsupumnc") matrix(w.bsupumnc, w.mnmax_nyq);
     else if (key == "bsupvmnc") matrix(w.bsupvmnc, w.mnmax_nyq);
+    else if (key == "bsubumnc") matrix(w.bsubumnc, w.mnmax_nyq);
+    else if (key == "bsubvmnc") matrix(w.bsubvmnc, w.mnmax_nyq);
     else if (key == "bmnc") matrix(w.bmnc, w.mnmax_nyq);
     else if (key == "ctor") values[0] = w.ctor;
     else if (key == "b0") values[0] = w.b0;

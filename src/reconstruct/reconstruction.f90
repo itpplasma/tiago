@@ -63,7 +63,7 @@ module tiago_reconstruction
         ! boundary geometry resp_geometry: the plasma part of the signals is
         ! exactly linear in the edge field y_B at fixed boundary shape, so while
         ! the boundary is unchanged S_plasma = R y_B replaces the sheet sums.
-        real(dp), allocatable :: resp_geometry(:)
+        real(dp), allocatable :: resp_geometry(:), resp_field(:)
         real(dp), allocatable :: r_flux(:, :), r_seg(:, :), r_probe(:, :)
         real(dp), allocatable :: s_flux(:, :), s_seg(:, :), s_probe(:, :)
     end type reconstruction_t
@@ -242,12 +242,25 @@ contains
             ': chi^2 = ', sum(r**2), ' ', (trim(rec%names(k)), x(k), k = 1, rec%n)
     end subroutine residual_at
 
-    logical function responses_current()
-        !! The cached plasma responses belong to the current boundary geometry.
+    logical function responses_current(with_shape)
+        !! Field responses depend on geometry; shape responses also need the
+        !! boundary field at which their geometry derivative was evaluated.
+        logical, intent(in), optional :: with_shape
+        integer :: nb
+
         responses_current = .false.
         if (.not. allocated(rec%resp_geometry)) return
         if (size(rec%resp_geometry) /= size(boundary_geometry())) return
-        responses_current = all(rec%resp_geometry == boundary_geometry())
+        if (.not. all(rec%resp_geometry == boundary_geometry())) return
+        if (present(with_shape)) then
+            if (with_shape) then
+                if (.not. allocated(rec%resp_field)) return
+                nb = 2 * rec%eq%edge%mnmax_nyq
+                if (size(rec%resp_field) /= nb) return
+                if (.not. all(rec%resp_field == rec%eq%y(:nb))) return
+            end if
+        end if
+        responses_current = .true.
     end function responses_current
 
     function boundary_geometry() result(g)
@@ -263,12 +276,12 @@ contains
         integer :: k, ng
         logical :: shape
 
-        if (responses_current()) return
         shape = .false.
         do k = 1, rec%n
             shape = shape .or. index(upper(rec%names(k)), 'RBC(') == 1 .or. &
                 index(upper(rec%names(k)), 'ZBS(') == 1
         end do
+        if (responses_current(shape)) return
         if (shape) then
             call rec%plasma%plasma_response(rec%loops, rec%segs, rec%probes, rec%r_flux, &
                 rec%r_seg, rec%r_probe, rec%rule, rec%s_flux, rec%s_seg, rec%s_probe)
@@ -286,6 +299,7 @@ contains
             rec%s_probe = 0.0_dp
         end if
         rec%resp_geometry = boundary_geometry()
+        rec%resp_field = rec%eq%y(:2 * rec%eq%edge%mnmax_nyq)
     end subroutine update_responses
 
     subroutine jacobian_at(x, jac)

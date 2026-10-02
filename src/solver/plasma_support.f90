@@ -32,6 +32,7 @@ module tiago_plasma_support
         !! Last-surface Fourier data of a VMEC equilibrium (wout conventions).
         integer :: nfp = 1, signgs = 1
         logical :: lasym = .false.
+        logical :: covariant = .false., conservative = .false.
         real(dp) :: phiedge = 0.0_dp
         real(dp), allocatable :: xm(:), xn(:), xm_nyq(:), xn_nyq(:)
         real(dp), allocatable :: rmnc(:), zmns(:), rmns(:), zmnc(:)
@@ -44,6 +45,9 @@ module tiago_plasma_support
         real(dp) :: spacing = 0.0_dp           !! largest grid spacing [m]
         real(dp) :: diamagnetic_flux = 0.0_dp  !! phiedge * signgs [Wb]
         logical :: enabled = .false.
+        logical :: covariant = .false., conservative = .false.
+        real(dp) :: curl_norm = 0.0_dp, current_ripple = 0.0_dp
+        real(dp) :: projection_norm = 0.0_dp
         ! Boundary-field Jacobian: sheet = sum_mn b^u_mn c_mn jt + b^v_mn c_mn jp
         real(dp), allocatable :: jt(:, :), jp(:, :)  !! (3, n) dS x x_theta / (4 pi), dS x x_phi / (4 pi)
         real(dp), allocatable :: theta(:), phi(:)    !! (n) grid angles
@@ -74,31 +78,47 @@ module tiago_plasma_support
 
 contains
 
-    subroutine plasma_init_from_vmec(self, wout_file, nphi, ntheta)
+    subroutine plasma_init_from_vmec(self, wout_file, nphi, ntheta, &
+            covariant, conservative)
         !! nphi: toroidal grid points per field period; ntheta: poloidal points.
         class(plasma_support_t), intent(inout) :: self
         character(len=*), intent(in) :: wout_file
         integer(i32), intent(in) :: nphi
         integer(i32), intent(in) :: ntheta
+        logical, intent(in), optional :: covariant, conservative
         type(vmec_boundary_t) :: vb
 
-        call read_vmec_boundary(wout_file, vb)
+        call read_vmec_boundary(wout_file, vb, covariant, conservative)
         call self%init_from_boundary(vb, nphi, ntheta)
     end subroutine plasma_init_from_vmec
 
     subroutine plasma_init_from_boundary(self, vb, nphi, ntheta)
-        !! Geometry and field come straight from the Fourier coefficients of the
-        !! last flux surface; B = B^u x_u + B^v x_v, so B.n = 0 exactly.
+        !! Geometry and field come from the boundary Fourier coefficients.
+        !! Covariant mode uses (n x B) dS = (B_u x_phi - B_v x_theta) dtheta dphi.
+        !! Conservative mode also projects the covariant field to a closed form.
         class(plasma_support_t), intent(inout) :: self
         type(vmec_boundary_t), intent(in) :: vb
         integer(i32), intent(in) :: nphi
         integer(i32), intent(in) :: ntheta
 
+        type(vmec_boundary_t) :: field_boundary
         integer :: nphi_total, iphi, itheta, k
         real(dp) :: theta, phi, dtheta, dphi, volume
         real(dp) :: x(3), x_t(3), x_p(3), ds(3), b(3)
 
         call self%finalize()
+        field_boundary = vb
+        field_boundary%covariant = vb%covariant .or. vb%conservative
+        self%projection_norm = 0.0_dp
+        if (vb%conservative) then
+            call project_covariant_boundary(field_boundary, self%projection_norm)
+        end if
+        self%curl_norm = 0.0_dp
+        self%current_ripple = 0.0_dp
+        if (field_boundary%covariant) then
+            call covariant_diagnostics(field_boundary, self%curl_norm, &
+                self%current_ripple)
+        end if
         if (nphi < 4 .or. ntheta < 4) error stop 'plasma grid needs at least 4x4 points'
         self%diamagnetic_flux = vb%phiedge * real(vb%signgs, dp)
 
@@ -115,6 +135,8 @@ contains
         self%xm_nyq = vb%xm_nyq
         self%xn_nyq = vb%xn_nyq
         self%lasym = vb%lasym
+        self%covariant = field_boundary%covariant
+        self%conservative = vb%conservative
         if (vb%lasym) then
             self%coefficients = [vb%bumnc, vb%bvmnc, vb%bumns, vb%bvmns]
         else
@@ -128,13 +150,20 @@ contains
             do itheta = 1, ntheta
                 theta = dtheta * real(itheta - 1, dp)
                 k = k + 1
-                call boundary_point(vb, theta, phi, x, x_t, x_p, b, &
+                call boundary_point(field_boundary, theta, phi, x, x_t, x_p, b, &
                     self%bu(k), self%bv(k))
                 ds = cross(x_t, x_p) * (dtheta * dphi)
                 self%xs(:, k) = x
-                self%sheet(:, k) = cross(ds, b) * inv_four_pi
-                self%jt(:, k) = cross(ds, x_t) * inv_four_pi
-                self%jp(:, k) = cross(ds, x_p) * inv_four_pi
+                if (self%covariant) then
+                    self%jt(:, k) = x_p * (dtheta * dphi) * inv_four_pi
+                    self%jp(:, k) = -x_t * (dtheta * dphi) * inv_four_pi
+                    self%sheet(:, k) = self%bu(k) * self%jt(:, k) &
+                        + self%bv(k) * self%jp(:, k)
+                else
+                    self%sheet(:, k) = cross(ds, b) * inv_four_pi
+                    self%jt(:, k) = cross(ds, x_t) * inv_four_pi
+                    self%jp(:, k) = cross(ds, x_p) * inv_four_pi
+                end if
                 self%theta(k) = theta
                 self%phi(k) = phi
                 self%xt(:, k) = x_t
@@ -154,13 +183,71 @@ contains
         self%enabled = .true.
     end subroutine plasma_init_from_boundary
 
+    subroutine project_covariant_boundary(vb, correction_norm)
+        !! Orthogonal projection in the unweighted Euclidean Fourier-coefficient
+        !! norm: enforce n B_u + m B_v = 0; keep the two constant circulations.
+        type(vmec_boundary_t), intent(inout) :: vb
+        real(dp), intent(out) :: correction_norm
+        real(dp) :: m, n, denom, delta
+        integer :: k
+
+        correction_norm = 0.0_dp
+        do k = 1, size(vb%xm_nyq)
+            m = vb%xm_nyq(k)
+            n = vb%xn_nyq(k)
+            denom = m * m + n * n
+            if (denom == 0.0_dp) cycle
+            delta = (n * vb%bumnc(k) + m * vb%bvmnc(k)) / denom
+            vb%bumnc(k) = vb%bumnc(k) - n * delta
+            vb%bvmnc(k) = vb%bvmnc(k) - m * delta
+            correction_norm = correction_norm + denom * delta * delta
+            if (vb%lasym) then
+                delta = (n * vb%bumns(k) + m * vb%bvmns(k)) / denom
+                vb%bumns(k) = vb%bumns(k) - n * delta
+                vb%bvmns(k) = vb%bvmns(k) - m * delta
+                correction_norm = correction_norm + denom * delta * delta
+            end if
+        end do
+        correction_norm = sqrt(correction_norm)
+    end subroutine project_covariant_boundary
+
+    subroutine covariant_diagnostics(vb, curl_norm, current_ripple)
+        !! L2 norm of Fourier curl coefficients [T m], and an upper bound on
+        !! poloidal-section toroidal-current variation [A]. xn includes nfp.
+        type(vmec_boundary_t), intent(in) :: vb
+        real(dp), intent(out) :: curl_norm, current_ripple
+        real(dp) :: m, n, residual
+        integer :: k
+
+        curl_norm = 0.0_dp
+        current_ripple = 0.0_dp
+        do k = 1, size(vb%xm_nyq)
+            m = vb%xm_nyq(k)
+            n = vb%xn_nyq(k)
+            residual = n * vb%bumnc(k) + m * vb%bvmnc(k)
+            curl_norm = curl_norm + residual * residual
+            if (m == 0.0_dp .and. n /= 0.0_dp) then
+                current_ripple = current_ripple + abs(vb%bumnc(k))
+            end if
+            if (vb%lasym) then
+                residual = n * vb%bumns(k) + m * vb%bvmns(k)
+                curl_norm = curl_norm + residual * residual
+                if (m == 0.0_dp .and. n /= 0.0_dp) then
+                    current_ripple = current_ripple + abs(vb%bumns(k))
+                end if
+            end if
+        end do
+        curl_norm = sqrt(curl_norm)
+        current_ripple = current_ripple / 2.0e-7_dp
+    end subroutine covariant_diagnostics
+
     subroutine boundary_point(vb, theta, phi, x, x_t, x_p, b, bu, bv)
         !! Position, tangents d/dtheta, d/dphi [m], total field [T] and its
-        !! contravariant components B^u, B^v at s = 1.
+        !! selected contravariant or covariant components at s = 1.
         type(vmec_boundary_t), intent(in) :: vb
         real(dp), intent(in) :: theta, phi
         real(dp), intent(out) :: x(3), x_t(3), x_p(3), b(3), bu, bv
-        real(dp) :: r, z, r_t, r_p, z_t, z_p, c, s
+        real(dp) :: r, z, r_t, r_p, z_t, z_p, c, s, guu, guv, gvv, det
         real(dp) :: arg(size(vb%xm)), arg_nyq(size(vb%xm_nyq))
 
         arg = vb%xm * theta - vb%xn * phi
@@ -188,17 +275,41 @@ contains
         x = [r * c, r * s, z]
         x_t = [r_t * c, r_t * s, z_t]
         x_p = [r_p * c - r * s, r_p * s + r * c, z_p]
-        b = bu * x_t + bv * x_p
+        if (vb%covariant) then
+            guu = dot_product(x_t, x_t)
+            guv = dot_product(x_t, x_p)
+            gvv = dot_product(x_p, x_p)
+            det = guu * gvv - guv * guv
+            b = ((gvv * bu - guv * bv) * x_t &
+                + (guu * bv - guv * bu) * x_p) / det
+        else
+            b = bu * x_t + bv * x_p
+        end if
     end subroutine boundary_point
 
-    subroutine read_vmec_boundary(path, vb)
+    subroutine read_vmec_boundary(path, vb, covariant, conservative)
         !! Last-surface Fourier data from a VMEC wout file. B^u, B^v live on the
         !! half mesh and are extrapolated to s = 1 as 1.5 b(ns) - 0.5 b(ns-1).
         character(len=*), intent(in) :: path
         type(vmec_boundary_t), intent(out) :: vb
+        logical, intent(in), optional :: covariant, conservative
+        character(len=8) :: bu_name, bv_name, bus_name, bvs_name
         integer :: ncid, ns, mnmax, mnmax_nyq, lasym_int
         real(dp), allocatable :: buf(:, :)
 
+        if (present(covariant)) vb%covariant = covariant
+        if (present(conservative)) vb%conservative = conservative
+        vb%covariant = vb%covariant .or. vb%conservative
+        bu_name = 'bsupumnc'
+        bv_name = 'bsupvmnc'
+        bus_name = 'bsupumns'
+        bvs_name = 'bsupvmns'
+        if (vb%covariant) then
+            bu_name = 'bsubumnc'
+            bv_name = 'bsubvmnc'
+            bus_name = 'bsubumns'
+            bvs_name = 'bsubvmns'
+        end if
         call nc(nf90_open(trim(path), nf90_nowrite, ncid), 'open '//trim(path))
         ns = dim_len(ncid, 'radius')
         mnmax = dim_len(ncid, 'mn_mode')
@@ -221,11 +332,15 @@ contains
         end if
         deallocate(buf)
         allocate(buf(mnmax_nyq, ns))
-        call get_2d(ncid, 'bsupumnc', buf); vb%bumnc = 1.5_dp * buf(:, ns) - 0.5_dp * buf(:, ns - 1)
-        call get_2d(ncid, 'bsupvmnc', buf); vb%bvmnc = 1.5_dp * buf(:, ns) - 0.5_dp * buf(:, ns - 1)
+        call get_2d(ncid, bu_name, buf)
+        vb%bumnc = 1.5_dp * buf(:, ns) - 0.5_dp * buf(:, ns - 1)
+        call get_2d(ncid, bv_name, buf)
+        vb%bvmnc = 1.5_dp * buf(:, ns) - 0.5_dp * buf(:, ns - 1)
         if (vb%lasym) then
-            call get_2d(ncid, 'bsupumns', buf); vb%bumns = 1.5_dp * buf(:, ns) - 0.5_dp * buf(:, ns - 1)
-            call get_2d(ncid, 'bsupvmns', buf); vb%bvmns = 1.5_dp * buf(:, ns) - 0.5_dp * buf(:, ns - 1)
+            call get_2d(ncid, bus_name, buf)
+            vb%bumns = 1.5_dp * buf(:, ns) - 0.5_dp * buf(:, ns - 1)
+            call get_2d(ncid, bvs_name, buf)
+            vb%bvmns = 1.5_dp * buf(:, ns) - 0.5_dp * buf(:, ns - 1)
         end if
         deallocate(buf)
         allocate(buf(ns, 1))
@@ -427,7 +542,8 @@ contains
     subroutine plasma_shape_response(self, w, gx, resp)
         !! resp(s, c): derivative of the plasma part of signal s with respect to
         !! the boundary geometry coefficient c (rmnc, zmns[, rmns, zmnc] at s = 1),
-        !! at fixed contravariant field coefficients B^u_mn, B^v_mn. w and gx are
+        !! at fixed input field coefficients of the selected representation.
+        !! Conservative mode uses their fixed spectral projection. w and gx are
         !! the weights and kernel-position cotangents of the signals.
         !! Reverse mode through sheet = c (alpha x_p - beta x_t),
         !! alpha = x_t . b, beta = x_p . b, b = B^u x_t + B^v x_p.
@@ -452,17 +568,26 @@ contains
             xp = self%xp(:, k)
             bu = self%bu(k)
             bv = self%bv(k)
-            alpha = bu * dot_product(xt, xt) + bv * dot_product(xt, xp)
-            beta = bu * dot_product(xt, xp) + bv * dot_product(xp, xp)
+            if (self%covariant) then
+                alpha = bu
+                beta = bv
+            else
+                alpha = bu * dot_product(xt, xt) + bv * dot_product(xt, xp)
+                beta = bu * dot_product(xt, xp) + bv * dot_product(xp, xp)
+            end if
             cp = cos(self%phi(k))
             sp = sin(self%phi(k))
             do s = 1, nsig
                 xpb = c * alpha * w(:, k, s)
                 xtb = -c * beta * w(:, k, s)
-                abar = c * dot_product(w(:, k, s), xp)
-                bbar = -c * dot_product(w(:, k, s), xt)
-                xtb = xtb + abar * (2.0_dp * bu * xt + bv * xp) + bbar * bu * xp
-                xpb = xpb + abar * bv * xt + bbar * (bu * xt + 2.0_dp * bv * xp)
+                if (.not. self%covariant) then
+                    abar = c * dot_product(w(:, k, s), xp)
+                    bbar = -c * dot_product(w(:, k, s), xt)
+                    xtb = xtb + abar * (2.0_dp * bu * xt + bv * xp) &
+                        + bbar * bu * xp
+                    xpb = xpb + abar * bv * xt &
+                        + bbar * (bu * xt + 2.0_dp * bv * xp)
+                end if
                 xb = gx(:, k, s)
                 ! x = (R c, R s, Z), x_t = (R_t c, R_t s, Z_t),
                 ! x_p = (R_p c - R s, R_p s + R c, Z_p)
@@ -512,10 +637,13 @@ contains
         integer, intent(in) :: column
         character(len=:), allocatable, intent(out) :: coefficient
         integer, intent(out) :: m, n
-        character(len=8), parameter :: names(4) = [character(len=8) :: &
-            'bsupumnc', 'bsupvmnc', 'bsupumns', 'bsupvmns']
+        character(len=8) :: names(4)
         integer :: nm
 
+        names = [character(len=8) :: 'bsupumnc', 'bsupvmnc', &
+            'bsupumns', 'bsupvmns']
+        if (self%covariant) names = [character(len=8) :: &
+            'bsubumnc', 'bsubvmnc', 'bsubumns', 'bsubvmns']
         nm = size(self%xm_nyq)
         coefficient = trim(names((column - 1) / nm + 1))
         m = nint(self%xm_nyq(mod(column - 1, nm) + 1))
@@ -530,13 +658,13 @@ contains
         real(dp), intent(in) :: w(:, :, :)
         real(dp), allocatable, intent(out) :: resp(:, :)
         real(dp), allocatable :: cu(:), cv(:)
-        real(dp) :: arg
+        real(dp) :: arg, m, n, denom
         integer :: k, mode, s, nm
 
         nm = size(self%xm_nyq)
         allocate(resp(size(w, 3), self%n_mode_columns()), cu(size(w, 3)), cv(size(w, 3)))
         resp = 0.0_dp
-!$omp parallel do schedule(static) private(mode, k, s, arg, cu, cv)
+!$omp parallel do schedule(static) private(mode, k, s, arg, cu, cv, m, n, denom)
         do mode = 1, nm
             do k = 1, size(self%xs, 2)
                 arg = self%xm_nyq(mode) * self%theta(k) - self%xn_nyq(mode) * self%phi(k)
@@ -551,6 +679,22 @@ contains
                     resp(:, 3 * nm + mode) = resp(:, 3 * nm + mode) + cv * sin(arg)
                 end if
             end do
+            if (self%conservative) then
+                m = self%xm_nyq(mode)
+                n = self%xn_nyq(mode)
+                denom = m * m + n * n
+                if (denom > 0.0_dp) then
+                    cu = (n * resp(:, mode) + m * resp(:, nm + mode)) / denom
+                    resp(:, mode) = resp(:, mode) - n * cu
+                    resp(:, nm + mode) = resp(:, nm + mode) - m * cu
+                    if (self%lasym) then
+                        cu = (n * resp(:, 2 * nm + mode) &
+                            + m * resp(:, 3 * nm + mode)) / denom
+                        resp(:, 2 * nm + mode) = resp(:, 2 * nm + mode) - n * cu
+                        resp(:, 3 * nm + mode) = resp(:, 3 * nm + mode) - m * cu
+                    end if
+                end if
+            end if
         end do
 !$omp end parallel do
     end subroutine plasma_mode_response
