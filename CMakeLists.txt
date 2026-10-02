@@ -246,6 +246,10 @@ add_executable(test_inactive_coil_segments tests/test_inactive_coil_segments.f90
 target_link_libraries(test_inactive_coil_segments PRIVATE tiago_solver)
 add_test(NAME tiago_inactive_coil_segments COMMAND $<TARGET_FILE:test_inactive_coil_segments>)
 
+add_executable(test_coil_potential tests/test_coil_potential.f90)
+target_link_libraries(test_coil_potential PRIVATE tiago_solver)
+add_test(NAME tiago_coil_potential COMMAND $<TARGET_FILE:test_coil_potential>)
+
 add_executable(test_vacuum_semantics tests/test_vacuum_semantics.f90)
 target_link_libraries(test_vacuum_semantics PRIVATE tiago_solver)
 add_test(NAME tiago_vacuum_semantics

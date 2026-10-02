@@ -1,0 +1,45 @@
+{
+  "base_commit": "3161170e17543284107b099af95877dbb1a37b4e",
+  "candidate_source_sha256": "275029ff1f09ec80846dda79d7782c86650b3d066689980ddd4be9fd2421fb00",
+  "baseline_source_sha256": "2655cfbd4817925bed7fed199b187abf761f79ceeaf41b4e08ba5531f02941c5",
+  "compiler": "GNU Fortran (GCC) 16.2.1 20260810",
+  "flags": {
+    "CMAKE_Fortran_FLAGS:STRING": "-Warray-temporaries",
+    "CMAKE_Fortran_FLAGS_RELEASE:STRING": "-O3"
+  },
+  "source_specific_flags": "-fno-math-errno",
+  "host": "mailuefterl",
+  "system": "Linux-7.2.6-arch2-1-x86_64-with-glibc2.44",
+  "cpu": {
+    "CPU(s)": "32",
+    "Model name": "AMD Ryzen 9 5950X 16-Core Processor",
+    "Thread(s) per core": "2",
+    "Core(s) per socket": "16",
+    "Socket(s)": "1"
+  },
+  "shared_host": true,
+  "trial_count": 2,
+  "kernel_cpu_masks": [
+    "12",
+    "12-15"
+  ],
+  "cli_cpu_masks": [
+    "8",
+    "8-11"
+  ],
+  "OMP_PROC_BIND": "unset before fo",
+  "OMP_PLACES": "unset before fo",
+  "OMP_DYNAMIC": "FALSE",
+  "cli_timing_scope": "wall time including fo exec launch/build checks, I/O and A/B integration",
+  "reference_timing_scope": "DIAGNO used as numerical oracle only; reference affinity differs",
+  "inputs_sha256": {
+    "coils.in": "df1e6aca26c38fcf8c6268e40ce046cc14816e3d0a5f0f120c0c2ad578a8895e",
+    "input.": "1eccf7e9a35814af7a35a553fbc56d4208f3c30e521a3568ed503d4819985591",
+    "flux.diagno": "48ee11a0d565ba7afb95af141a836c748280ef73a03a6288c2daa487453fd681",
+    "seg.diagno": "4c013b56a0cc88cfc4614afa7a782f44a70e21813316a4bc6520f92bb239da36"
+  },
+  "kernel_inputs_sha256": {
+    "m16n08_nodes.dat": "a698c530c6a529b8c0de8d1abd077badb57896038ee29b4b5214938b3d4e1244",
+    "m16n08_points.dat": "4653a6dbc909bcbcf30ff23ab27bd143e4ccd43f8b4a2aa0ef71df7579ac0813"
+  }
+}

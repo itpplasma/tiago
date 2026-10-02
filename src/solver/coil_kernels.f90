@@ -99,10 +99,10 @@ contains
         real(dp), intent(in) :: ix(nn - 1), iy(nn - 1), iz(nn - 1), len(nn - 1)
         real(dp), intent(in) :: points(3, np)
         real(dp), intent(out) :: a(3, np)
-        real(dp) :: r(nn), ax, ay, az, eps, f
+        real(dp) :: r(nn), ax, ay, az, eps, eps2, f
         integer :: i, s
 
-!$omp parallel do default(shared) private(r, i, s, ax, ay, az, eps, f) schedule(static)
+!$omp parallel do default(shared) private(r, i, s, ax, ay, az, eps, eps2, f) schedule(static)
         do i = 1, np
             do s = 1, nn
                 r(s) = sqrt((points(1, i) - xn(s))**2 + (points(2, i) - yn(s))**2 + &
@@ -111,12 +111,21 @@ contains
             ax = 0.0_dp
             ay = 0.0_dp
             az = 0.0_dp
-            !$omp simd private(eps, f) reduction(+:ax, ay, az)
+            !$omp simd private(eps, eps2, f) reduction(+:ax, ay, az)
             do s = 1, nn - 1
                 if (abs(ix(s)) <= 0.0_dp .and. abs(iy(s)) <= 0.0_dp &
                     .and. abs(iz(s)) <= 0.0_dp) cycle
                 eps = len(s) / (r(s) + r(s + 1))
-                f = log((1.0_dp + eps) / (1.0_dp - eps)) / len(s)
+                if (abs(eps) <= 0.01_dp) then
+                    ! The relative omitted tail is <= eps**10 / (11*(1-eps**2)):
+                    ! below 9.1e-22 here. This also avoids distant-point cancellation.
+                    eps2 = eps * eps
+                    f = 2.0_dp * eps * (1.0_dp + eps2 * (1.0_dp / 3.0_dp &
+                        + eps2 * (1.0_dp / 5.0_dp + eps2 * (1.0_dp / 7.0_dp &
+                        + eps2 * (1.0_dp / 9.0_dp))))) / len(s)
+                else
+                    f = log((1.0_dp + eps) / (1.0_dp - eps)) / len(s)
+                end if
                 ax = ax + ix(s) * f
                 ay = ay + iy(s) * f
                 az = az + iz(s) * f

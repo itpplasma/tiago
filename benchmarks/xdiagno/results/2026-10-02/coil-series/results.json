@@ -1,0 +1,295 @@
+{
+  "kernel": [
+    {
+      "case": "m16n08",
+      "threads": 1,
+      "cpus": "12",
+      "trials": 2,
+      "differences": {
+        "A_DIFF": {
+          "series_vs_baseline": 2.9574853424718707e-15
+        },
+        "B_DIFF": {
+          "series_vs_baseline": 0.0
+        }
+      },
+      "observed_affinities": [],
+      "kernels": {
+        "A": {
+          "seconds": {
+            "baseline": [
+              1.2619498542044312,
+              1.1887058329302818
+            ],
+            "series": [
+              0.8208149620331824,
+              0.8209057131316513
+            ]
+          },
+          "paired_speedups": {
+            "series": [
+              1.5374352473772468,
+              1.4480418565921775
+            ]
+          },
+          "median_paired_speedups": {
+            "series": 1.4927385519847123
+          }
+        },
+        "B": {
+          "seconds": {
+            "baseline": [
+              0.1296597511973232,
+              0.13392243394628167
+            ],
+            "series": [
+              0.12991131516173482,
+              0.13063997798599303
+            ]
+          },
+          "paired_speedups": {
+            "series": [
+              0.9980635715672771,
+              1.025125968412522
+            ]
+          },
+          "median_paired_speedups": {
+            "series": 1.0115947699898995
+          }
+        }
+      }
+    },
+    {
+      "case": "m16n08",
+      "threads": 4,
+      "cpus": "12-15",
+      "trials": 2,
+      "differences": {
+        "A_DIFF": {
+          "series_vs_baseline": 2.9574853424718707e-15
+        },
+        "B_DIFF": {
+          "series_vs_baseline": 0.0
+        }
+      },
+      "observed_affinities": [
+        "level 1 thread 0x7fe45a43b800 affinity 12-15",
+        "level 1 thread 0x7fe45977d6c0 affinity 12-15",
+        "level 1 thread 0x7fe458f7c6c0 affinity 12-15",
+        "level 1 thread 0x7fe45877b6c0 affinity 12-15"
+      ],
+      "kernels": {
+        "A": {
+          "seconds": {
+            "baseline": [
+              0.31384603097103536,
+              0.3150675429496914
+            ],
+            "series": [
+              0.2140102048870176,
+              0.2166227779816836
+            ]
+          },
+          "paired_speedups": {
+            "series": [
+              1.466500306079909,
+              1.4544525090354614
+            ]
+          },
+          "median_paired_speedups": {
+            "series": 1.4604764075576853
+          }
+        },
+        "B": {
+          "seconds": {
+            "baseline": [
+              0.03433246188797057,
+              0.0340525540523231
+            ],
+            "series": [
+              0.0339880830142647,
+              0.034080757992342114
+            ]
+          },
+          "paired_speedups": {
+            "series": [
+              1.0101323417846582,
+              0.9991724380066503
+            ]
+          },
+          "median_paired_speedups": {
+            "series": 1.0046523898956543
+          }
+        }
+      }
+    }
+  ],
+  "cli": [
+    {
+      "case": "geom_m16n08",
+      "samples": 16,
+      "threads": 1,
+      "baseline": [
+        25.089968123007566,
+        26.431937769055367
+      ],
+      "candidate": [
+        21.59189571184106,
+        19.878266635816544
+      ],
+      "reference": [
+        18.659032149938866
+      ],
+      "accuracy": [
+        {
+          "implementation": "baseline",
+          "n": 277,
+          "missing": 0,
+          "nonfinite": 0,
+          "med": 7.027546992595867e-10,
+          "max": 1.5235211642837856e-07
+        },
+        {
+          "implementation": "candidate",
+          "n": 277,
+          "missing": 0,
+          "nonfinite": 0,
+          "med": 7.027534192663272e-10,
+          "max": 1.5235208692929568e-07
+        },
+        {
+          "implementation": "candidate",
+          "n": 277,
+          "missing": 0,
+          "nonfinite": 0,
+          "med": 7.027534192663272e-10,
+          "max": 1.5235208692929568e-07
+        },
+        {
+          "implementation": "baseline",
+          "n": 277,
+          "missing": 0,
+          "nonfinite": 0,
+          "med": 7.027546992595867e-10,
+          "max": 1.5235211642837856e-07
+        }
+      ],
+      "affinity": [
+        {
+          "implementation": "baseline",
+          "repeat": 0,
+          "log": ""
+        },
+        {
+          "implementation": "candidate",
+          "repeat": 0,
+          "log": "fo: warning: /home/ert/code/tiago-coil-final/tests/test_coil_potential.f90:25:16: Warning: Creating array temporary at (1) [-Warray-temporaries]\nfo: warning: /home/ert/code/tiago-coil-final/tests/test_coil_potential.f90:28:22: Warning: Creating array temporary at (1) [-Warray-temporaries]\nfo: warning: /home/ert/code/tiago-coil-final/tests/test_coil_potential.f90:35:34: Warning: Creating array temporary at (1) [-Warray-temporaries]\nfo: warning: /home/ert/code/tiago-coil-final/tests/test_coil_potential.f90:73:30: Warning: Creating array temporary at (1) [-Warray-temporaries]\nfo: warning: /home/ert/code/tiago-coil-final/tests/test_coil_potential.f90:73:30: Warning: Creating array temporary at (1) [-Warray-temporaries]\nfo: warning: /home/ert/code/tiago-coil-final/tests/test_coil_potential.f90:77:36: Warning: Creating array temporary at (1) [-Warray-temporaries]\n"
+        },
+        {
+          "implementation": "candidate",
+          "repeat": 1,
+          "log": "fo: warning: /home/ert/code/tiago-coil-final/tests/test_coil_potential.f90:25:16: Warning: Creating array temporary at (1) [-Warray-temporaries]\nfo: warning: /home/ert/code/tiago-coil-final/tests/test_coil_potential.f90:28:22: Warning: Creating array temporary at (1) [-Warray-temporaries]\nfo: warning: /home/ert/code/tiago-coil-final/tests/test_coil_potential.f90:35:34: Warning: Creating array temporary at (1) [-Warray-temporaries]\nfo: warning: /home/ert/code/tiago-coil-final/tests/test_coil_potential.f90:73:30: Warning: Creating array temporary at (1) [-Warray-temporaries]\nfo: warning: /home/ert/code/tiago-coil-final/tests/test_coil_potential.f90:73:30: Warning: Creating array temporary at (1) [-Warray-temporaries]\nfo: warning: /home/ert/code/tiago-coil-final/tests/test_coil_potential.f90:77:36: Warning: Creating array temporary at (1) [-Warray-temporaries]\n"
+        },
+        {
+          "implementation": "baseline",
+          "repeat": 1,
+          "log": ""
+        }
+      ],
+      "median": {
+        "baseline": 25.760952946031466,
+        "candidate": 20.735081173828803,
+        "reference": 18.659032149938866
+      },
+      "speedup_vs_baseline": 1.2423849576507164,
+      "paired_speedups": [
+        1.1620085821944828,
+        1.3296902719591484
+      ],
+      "reference_timing_scope": "Accuracy reference only; reference affinity differs. Do not use for performance claims."
+    },
+    {
+      "case": "geom_m16n08",
+      "samples": 16,
+      "threads": 4,
+      "baseline": [
+        8.530332191148773,
+        7.903210773831233
+      ],
+      "candidate": [
+        5.708230159012601,
+        4.685187321854755
+      ],
+      "reference": [
+        8.20035702479072
+      ],
+      "accuracy": [
+        {
+          "implementation": "baseline",
+          "n": 277,
+          "missing": 0,
+          "nonfinite": 0,
+          "med": 7.027546992595867e-10,
+          "max": 1.5235211642837856e-07
+        },
+        {
+          "implementation": "candidate",
+          "n": 277,
+          "missing": 0,
+          "nonfinite": 0,
+          "med": 7.027534192663272e-10,
+          "max": 1.5235208692929568e-07
+        },
+        {
+          "implementation": "candidate",
+          "n": 277,
+          "missing": 0,
+          "nonfinite": 0,
+          "med": 7.027534192663272e-10,
+          "max": 1.5235208692929568e-07
+        },
+        {
+          "implementation": "baseline",
+          "n": 277,
+          "missing": 0,
+          "nonfinite": 0,
+          "med": 7.027546992595867e-10,
+          "max": 1.5235211642837856e-07
+        }
+      ],
+      "affinity": [
+        {
+          "implementation": "baseline",
+          "repeat": 0,
+          "log": "level 1 thread 0x7fd11c07e800 affinity 8-11\nlevel 1 thread 0x7fd11af196c0 affinity 8-11\nlevel 1 thread 0x7fd11a7186c0 affinity 8-11\nlevel 1 thread 0x7fd119f176c0 affinity 8-11\n"
+        },
+        {
+          "implementation": "candidate",
+          "repeat": 0,
+          "log": "level 1 thread 0x7fc34542e800 affinity 8-11\nlevel 1 thread 0x7fc3441a66c0 affinity 8-11\nlevel 1 thread 0x7fc3439a56c0 affinity 8-11\nlevel 1 thread 0x7fc3431a46c0 affinity 8-11\n"
+        },
+        {
+          "implementation": "candidate",
+          "repeat": 1,
+          "log": "level 1 thread 0x7fe043298800 affinity 8-11\nlevel 1 thread 0x7fe0421196c0 affinity 8-11\nlevel 1 thread 0x7fe0419186c0 affinity 8-11\nlevel 1 thread 0x7fe0411176c0 affinity 8-11\n"
+        },
+        {
+          "implementation": "baseline",
+          "repeat": 1,
+          "log": "level 1 thread 0x7f8b84c3b800 affinity 8-11\nlevel 1 thread 0x7f8b83ba66c0 affinity 8-11\nlevel 1 thread 0x7f8b833a56c0 affinity 8-11\nlevel 1 thread 0x7f8b82ba46c0 affinity 8-11\n"
+        }
+      ],
+      "median": {
+        "baseline": 8.216771482490003,
+        "candidate": 5.196708740433678,
+        "reference": 8.20035702479072
+      },
+      "speedup_vs_baseline": 1.5811491258993078,
+      "paired_speedups": [
+        1.4943917735483065,
+        1.6868505421257176
+      ],
+      "reference_timing_scope": "Accuracy reference only; reference affinity differs. Do not use for performance claims."
+    }
+  ]
+}
