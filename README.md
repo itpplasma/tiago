@@ -36,6 +36,9 @@ make test         # rebuilds and runs ctest --output-on-failure
 ```
 Pass extra cache entries through `CMAKE_ARGS`, e.g.
 `make CMAKE_ARGS="-DTIAGO_LIBNEO_TAG=<commit>"`.
+The standard `LIBNEO_BRANCH` CMake or environment variable overrides the
+selected libneo ref for release validation; a nonempty CMake value takes
+precedence over the environment. Removing it restores `TIAGO_LIBNEO_TAG`.
 
 ## Vacuum CLI usage
 ```

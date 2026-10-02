@@ -5,6 +5,13 @@ include(FetchContent)
 
 set(TIAGO_LIBNEO_GIT "https://github.com/itpplasma/libneo.git" CACHE STRING "libneo upstream to fetch")
 set(TIAGO_LIBNEO_TAG "f1bef44e80c4508f04594d4d2ca120eaf17564f8" CACHE STRING "libneo commit/branch/tag used by Tiago")
+# Use a local effective ref so removing an override restores the pinned default.
+set(_tiago_libneo_ref "${TIAGO_LIBNEO_TAG}")
+if(DEFINED LIBNEO_BRANCH AND NOT "${LIBNEO_BRANCH}" STREQUAL "")
+    set(_tiago_libneo_ref "${LIBNEO_BRANCH}")
+elseif(DEFINED ENV{LIBNEO_BRANCH} AND NOT "$ENV{LIBNEO_BRANCH}" STREQUAL "")
+    set(_tiago_libneo_ref "$ENV{LIBNEO_BRANCH}")
+endif()
 set(LIBNEO_ENABLE_TESTS OFF CACHE BOOL "Disable libneo's own tests when vendored" FORCE)
 set(ENABLE_OPENMP OFF CACHE BOOL "Disable libneo OpenMP flags unless explicitly requested" FORCE)
 # Tiago uses libneo only to read coil files; its numerics (and its own fortnum) are not needed.
@@ -14,7 +21,7 @@ option(TIAGO_ENABLE_OPENMP "Enable OpenMP parallelism inside Tiago loops" ON)
 
 FetchContent_Declare(libneo
     GIT_REPOSITORY ${TIAGO_LIBNEO_GIT}
-    GIT_TAG        ${TIAGO_LIBNEO_TAG}
+    GIT_TAG        ${_tiago_libneo_ref}
     SOURCE_SUBDIR  .)
 FetchContent_MakeAvailable(libneo)
 
