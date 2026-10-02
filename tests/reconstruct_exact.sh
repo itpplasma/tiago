@@ -3,9 +3,11 @@
 # parameters (from start values 10-30 % off) to 0.05 of their uncertainty:
 # the fit stops once the predicted chi^2 decrease is below the solver noise
 # floor of 1e-3, i.e. within about sqrt(1e-3) = 0.03 sigma of the optimum.
-# Usage: reconstruct_exact.sh <tiago_reconstruct> <VMEC input> <sensors.awk> <workdir>
+# Usage: reconstruct_exact.sh <tiago_reconstruct> <VMEC input> <sensors.awk> <workdir> [conservative]
 set -euo pipefail
 tiago=$1 input=$2 sensors=$3 work=$4
+conservative=.false.
+if [[ ${5:-} == conservative ]]; then conservative=.true.; fi
 mkdir -p "$work"
 awk -v R0=1.42 -v rs=0.85 -v nphi=4 -v nth=4 -v nprobe=12 -v dir="$work" -f "$sensors"
 cat > "$work/recon.nml" <<NML
@@ -19,6 +21,7 @@ cat > "$work/recon.nml" <<NML
   synthesize_measurements = .true., add_noise = .false.
   sigma_relative = 0.01, sigma_flux = 1.0e-4, sigma_segrog = 1.0e-8, sigma_bprobe = 1.0e-7
   plasma_nphi = 32, plasma_ntheta = 32, max_iterations = 20
+  plasma_conservative = $conservative
 /
 NML
 "$tiago" "$work/recon.nml" > "$work/log.txt" 2>&1 || { tail -20 "$work/log.txt"; exit 1; }

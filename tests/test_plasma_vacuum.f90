@@ -17,6 +17,7 @@ program test_plasma_vacuum
     integer, parameter :: nside = 64              !! A samples per side of the poloidal loop
     type(plasma_support_t) :: plasma
     character(len=512) :: wout
+    character(len=32) :: mode
     real(dp) :: b0, flux, d, volume, lo(2), hi(2), corner(2, 5), p(2), dl(2)
     real(dp), allocatable :: pts(:, :), normal(:, :), field(:, :), loop(:, :), dls(:, :), a(:, :)
     real(dp), allocatable :: r(:), z(:)
@@ -25,8 +26,10 @@ program test_plasma_vacuum
 
     failures = 0
     call get_command_argument(1, wout)
+    call get_command_argument(2, mode)
     call read_b0(trim(wout), b0)
-    call plasma%init_from_vmec(trim(wout), nphi, ntheta)
+    call plasma%init_from_vmec(trim(wout), nphi, ntheta, &
+        conservative=trim(mode) == 'conservative')
     d = 3.0_dp * plasma%spacing
 
     ! 1. Field of the sheet 3 grid spacings outside the boundary, along the normal.

@@ -135,12 +135,33 @@ if(TIAGO_ENABLE_RECONSTRUCTION)
     if(NOT EXISTS "${TIAGO_ENZYME_PLUGIN}")
         message(FATAL_ERROR "set -DTIAGO_ENZYME_PLUGIN=/path/to/ClangEnzyme-NN.so (see README)")
     endif()
+    option(TIAGO_EXPERIMENTAL_ENZYME_TOOLCHAIN
+        "Allow an unverified Clang major version for reconstruction adjoints" OFF)
+    if(NOT (CMAKE_CXX_COMPILER_VERSION VERSION_GREATER_EQUAL 20 AND
+            CMAKE_CXX_COMPILER_VERSION VERSION_LESS 21) AND
+       NOT (CMAKE_CXX_COMPILER_VERSION VERSION_GREATER_EQUAL 22 AND
+            CMAKE_CXX_COMPILER_VERSION VERSION_LESS 23))
+        if(NOT TIAGO_EXPERIMENTAL_ENZYME_TOOLCHAIN)
+            message(FATAL_ERROR "Reconstruction adjoints are verified with Clang 20.1.8 / "
+                "Enzyme v0.0.264 and Clang 22.1.8 / Enzyme v0.0.293. Other Clang majors require "
+                "-DTIAGO_EXPERIMENTAL_ENZYME_TOOLCHAIN=ON and independent derivative validation.")
+        endif()
+        message(WARNING "Experimental reconstruction toolchain: validate the physical adjoints "
+            "against re-solved finite differences before using reconstruction results.")
+    endif()
+    execute_process(COMMAND ${CMAKE_CXX_COMPILER} -Xclang -load
+        -Xclang ${TIAGO_ENZYME_PLUGIN} -x c++ -fsyntax-only /dev/null
+        RESULT_VARIABLE _tiago_enzyme_load_result ERROR_VARIABLE _tiago_enzyme_load_error)
+    if(NOT _tiago_enzyme_load_result EQUAL 0)
+        message(FATAL_ERROR "Enzyme plugin cannot load into the selected Clang compiler: "
+            "${_tiago_enzyme_load_error}")
+    endif()
     set(TIAGO_VMECPP_HDF5_URL "" CACHE STRING "Mirror of the HDF5 source archive VMEC++ builds")
     set(TIAGO_VMECPP_NETCDF_URL "" CACHE STRING "Mirror of the netCDF-C source archive VMEC++ builds")
     set(VMECPP_ENABLE_ENZYME ON CACHE BOOL "" FORCE)
     set(VMECPP_ENZYME_PLUGIN "${TIAGO_ENZYME_PLUGIN}" CACHE FILEPATH "" FORCE)
     set(VMECPP_HWCAPS_DISPATCH OFF CACHE BOOL "" FORCE)
-    # One OpenMP runtime in the process: LLVM's libomp. Clang has no code
+    # Use LLVM OpenMP for Clang calls and generic/GOMP entry points. Clang has no code
     # generation for libgomp (-fopenmp=libgomp silently drops the pragmas, so
     # VMEC++'s radial threads would not run), while libomp also implements
     # the GOMP ABI of gfortran's OpenMP code. Executables link libomp ahead of
@@ -197,10 +218,17 @@ end module tiago_vmecpp_paths
         Fortran_STANDARD_REQUIRED YES)
     target_link_libraries(tiago_reconstruction PUBLIC ${TIAGO_LIBOMP} tiago_solver
         fortplot::fortplot tiago_vmecpp_adapter ${LAPACK_LIBRARIES})
+    # Dependency sorting can place libneo's libgomp before libomp. Force libomp
+    # into DT_NEEDED first, so generic omp_* and Clang's __kmpc_* calls use the
+    # same runtime. LLVM also supplies the GOMP entry points used by gfortran.
+    target_link_options(tiago_reconstruction INTERFACE
+        "LINKER:--no-as-needed" "${TIAGO_LIBOMP}" "LINKER:--as-needed")
     set_target_properties(tiago_reconstruction PROPERTIES LINKER_LANGUAGE Fortran)
     add_dependencies(tiago_reconstruction indata2json)
     add_executable(test_vmecpp_equilibrium tests/test_vmecpp_equilibrium.f90)
     target_link_libraries(test_vmecpp_equilibrium PRIVATE tiago_reconstruction)
+    add_executable(test_reconstruction_shape_cache tests/test_reconstruction_shape_cache.f90)
+    target_link_libraries(test_reconstruction_shape_cache PRIVATE tiago_reconstruction)
     add_executable(tiago_reconstruct src/cli/tiago_reconstruct.f90)
     target_link_libraries(tiago_reconstruct PRIVATE tiago_reconstruction tiago_build_config)
     add_executable(tiago_plot_pulls benchmarks/reconstruction/plot_pulls.f90)
@@ -225,10 +253,21 @@ add_test(NAME tiago_download_wout_li383
     COMMAND ${CMAKE_COMMAND} -DURL=${TIAGO_WOUT_SIMSOPT_SMALL_URL} -DDEST=${TIAGO_WOUT_SIMSOPT_SMALL}
             -P ${CMAKE_SOURCE_DIR}/cmake/DownloadFile.cmake)
 set_tests_properties(tiago_download_wout_li383 PROPERTIES FIXTURES_SETUP wout_li383 TIMEOUT 120)
+add_executable(test_plasma_projection tests/test_plasma_projection.f90)
+target_link_libraries(test_plasma_projection PRIVATE tiago_solver)
+add_test(NAME tiago_plasma_projection COMMAND $<TARGET_FILE:test_plasma_projection>)
 add_executable(test_plasma_support tests/test_plasma_support.f90)
 target_link_libraries(test_plasma_support PRIVATE tiago_solver)
 add_test(NAME tiago_plasma_support COMMAND $<TARGET_FILE:test_plasma_support> ${TIAGO_WOUT_SIMSOPT_SMALL})
 set_tests_properties(tiago_plasma_support PROPERTIES FIXTURES_REQUIRED wout_li383)
+add_test(NAME tiago_plasma_covariant
+    COMMAND $<TARGET_FILE:test_plasma_support> ${TIAGO_WOUT_SIMSOPT_SMALL} covariant)
+set_tests_properties(tiago_plasma_covariant PROPERTIES FIXTURES_REQUIRED wout_li383)
+add_test(NAME tiago_plasma_conservative
+    COMMAND $<TARGET_FILE:test_plasma_support> ${TIAGO_WOUT_SIMSOPT_SMALL} conservative)
+set_tests_properties(tiago_plasma_conservative PROPERTIES FIXTURES_REQUIRED wout_li383)
+
+
 
 # Vacuum equilibria (no plasma currents): the sheet field must vanish outside.
 add_executable(test_plasma_vacuum tests/test_plasma_vacuum.f90)
@@ -242,6 +281,10 @@ foreach(case IN ITEMS purely_toroidal_field_reference LandremanPaul2021_QA_lowre
     set_tests_properties(tiago_download_wout_${case} PROPERTIES FIXTURES_SETUP wout_${case} TIMEOUT 120)
     add_test(NAME tiago_plasma_vacuum_${case} COMMAND $<TARGET_FILE:test_plasma_vacuum> ${wout})
     set_tests_properties(tiago_plasma_vacuum_${case} PROPERTIES FIXTURES_REQUIRED wout_${case})
+    add_test(NAME tiago_plasma_vacuum_conservative_${case}
+        COMMAND $<TARGET_FILE:test_plasma_vacuum> ${wout} conservative)
+    set_tests_properties(tiago_plasma_vacuum_conservative_${case} PROPERTIES
+        FIXTURES_REQUIRED wout_${case})
 endforeach()
 
 # CLI: the README example and argument errors (message, exit status 1)
@@ -292,12 +335,32 @@ if(TIAGO_ENABLE_RECONSTRUCTION)
     add_test(NAME tiago_vmecpp_equilibrium
         COMMAND $<TARGET_FILE:test_vmecpp_equilibrium> ${TIAGO_INPUT_LI383}
                 ${CMAKE_BINARY_DIR}/tests/vmecpp_equilibrium)
+    add_test(NAME tiago_vmecpp_parallel
+        COMMAND $<TARGET_FILE:test_vmecpp_equilibrium> ${TIAGO_INPUT_LI383}
+                ${CMAKE_BINARY_DIR}/tests/vmecpp_parallel)
+    set_tests_properties(tiago_vmecpp_parallel PROPERTIES FIXTURES_REQUIRED input_li383
+        TIMEOUT 600 ENVIRONMENT "OMP_NUM_THREADS=4;OPENBLAS_NUM_THREADS=1;TIAGO_VMECPP_VERIFY=1")
     add_test(NAME tiago_reconstruct_exact
         COMMAND ${CMAKE_SOURCE_DIR}/tests/reconstruct_exact.sh $<TARGET_FILE:tiago_reconstruct>
                 ${TIAGO_INPUT_LI383} ${CMAKE_SOURCE_DIR}/benchmarks/reconstruction/sensors.awk
                 ${CMAKE_BINARY_DIR}/tests/reconstruct_exact)
-    set_tests_properties(tiago_vmecpp_equilibrium tiago_reconstruct_exact PROPERTIES
+    add_test(NAME tiago_reconstruct_conservative
+        COMMAND ${CMAKE_SOURCE_DIR}/tests/reconstruct_exact.sh $<TARGET_FILE:tiago_reconstruct>
+                ${TIAGO_INPUT_LI383} ${CMAKE_SOURCE_DIR}/benchmarks/reconstruction/sensors.awk
+                ${CMAKE_BINARY_DIR}/tests/reconstruct_conservative conservative)
+    set_tests_properties(tiago_vmecpp_equilibrium tiago_reconstruct_exact
+        tiago_reconstruct_conservative PROPERTIES
         FIXTURES_REQUIRED input_li383 TIMEOUT 600)
+    add_test(NAME tiago_reconstruction_shape_cache
+        COMMAND $<TARGET_FILE:test_reconstruction_shape_cache> ${TIAGO_INPUT_LI383}
+                ${CMAKE_BINARY_DIR}/tests/reconstruction_shape_cache)
+    set_tests_properties(tiago_reconstruction_shape_cache PROPERTIES
+        FIXTURES_REQUIRED input_li383 TIMEOUT 600)
+    add_test(NAME tiago_vmecpp_covariant
+        COMMAND $<TARGET_FILE:test_vmecpp_equilibrium> ${TIAGO_INPUT_LI383}
+                ${CMAKE_BINARY_DIR}/tests/vmecpp_covariant 1e-5 covariant)
+    set_tests_properties(tiago_vmecpp_covariant PROPERTIES
+        FIXTURES_REQUIRED input_li383 TIMEOUT 600 ENVIRONMENT TIAGO_VMECPP_VERIFY=1)
     # check the extracted adjoint blocks against isolated Hessian-vector products
     set_tests_properties(tiago_vmecpp_equilibrium PROPERTIES ENVIRONMENT TIAGO_VMECPP_VERIFY=1)
 endif()

@@ -2,7 +2,10 @@ module tiago_vmec_edge
     !! The edge vector Tiago's plasma model reads, computed from a VMEC++
     !! equilibrium's geometry, and its reverse-mode derivative:
     !!
-    !!     y = [ B^u_mn, B^v_mn (s = 1),  rmnc_mn, zmns_mn (s = 1) ].
+    !!     y = [ field_u_mn, field_v_mn (s = 1), rmnc_mn, zmns_mn (s = 1) ].
+    !! Field components are contravariant B^u, B^v by default, or covariant
+    !! B_u, B_v with VMEC++'s output blending, mean correction and low-pass
+    !! filter when covariant is enabled.
     !!
     !! B^u, B^v follow VMEC++'s output stage (output_quantities.cc, or its JAX
     !! port vmecpp/autodiff_wout.py) on the two outermost half-grid surfaces:
@@ -24,6 +27,7 @@ module tiago_vmec_edge
     integer, parameter, public :: R_CC = 1, R_SS = 2, Z_SC = 5, Z_CS = 6, L_SC = 9, L_CS = 10
 
     type, public :: vmec_edge_t
+        logical :: covariant = .false.
         integer :: ns, mpol, ntor, nfp, ncurr
         integer :: ntheta_even, ntheta_r, nzeta, mnyq, nnyq
         integer :: mnmax, mnmax_nyq
@@ -47,14 +51,18 @@ module tiago_vmec_edge
 
 contains
 
-    subroutine edge_init(self, ns, mpol, ntor, nfp, ncurr, ntheta_input, nzeta_input)
+    subroutine edge_init(self, ns, mpol, ntor, nfp, ncurr, ntheta_input, &
+            nzeta_input, covariant)
         !! Grid and mode sizes as VMEC++'s Sizes::computeDerivedSizes.
         class(vmec_edge_t), intent(inout) :: self
         integer, intent(in) :: ns, mpol, ntor, nfp, ncurr, ntheta_input, nzeta_input
+        logical, intent(in), optional :: covariant
         real(dp), allocatable :: cosmui(:, :), sinmui(:, :), cosnv(:, :), sinnv(:, :)
         real(dp) :: mscale, nscale, dmult, int_norm, sgn
         integer :: ntheta, k, l, m, n, mn, an
 
+        self%covariant = .false.
+        if (present(covariant)) self%covariant = covariant
         if (ns < 4) error stop 'VMEC edge field needs ns >= 4'
         self%ns = ns
         self%mpol = mpol
@@ -234,6 +242,7 @@ contains
         real(dp), allocatable, intent(out), optional :: parts(:, :, :)
         real(dp), allocatable :: r12(:, :), ru12(:, :), zu12(:, :), rs(:, :), zs(:, :)
         real(dp), allocatable :: tau(:, :), g(:, :), guu(:, :), guv(:, :), bul(:, :)
+        real(dp), allocatable :: gvv(:, :), covu(:, :), covv(:, :)
         real(dp) :: sh, si, so, ds, plasma_current, average
         integer :: k
 
@@ -254,7 +263,7 @@ contains
         g = tau * r12
         bv = hv(a%l(:, :, TE) + phip_a, b%l(:, :, TE) + phip_b, a%l(:, :, TO), b%l(:, :, TO)) / g
         bul = hv(-a%l(:, :, ZE), -b%l(:, :, ZE), -a%l(:, :, ZO), -b%l(:, :, ZO)) / g
-        if (self%ncurr == 1) then
+        if (self%ncurr == 1 .or. self%covariant) then
             guu = metric(a%r(:, :, TE), a%r(:, :, TO), a%r(:, :, TE), a%r(:, :, TO), &
                 b%r(:, :, TE), b%r(:, :, TO), b%r(:, :, TE), b%r(:, :, TO)) &
                 + metric(a%z(:, :, TE), a%z(:, :, TO), a%z(:, :, TE), a%z(:, :, TO), &
@@ -263,6 +272,19 @@ contains
                 b%r(:, :, TE), b%r(:, :, TO), b%r(:, :, ZE), b%r(:, :, ZO)) &
                 + metric(a%z(:, :, TE), a%z(:, :, TO), a%z(:, :, ZE), a%z(:, :, ZO), &
                 b%z(:, :, TE), b%z(:, :, TO), b%z(:, :, ZE), b%z(:, :, ZO))
+        end if
+        if (self%covariant) then
+            gvv = metric(a%r(:, :, VE), a%r(:, :, VO), a%r(:, :, VE), &
+                a%r(:, :, VO), b%r(:, :, VE), b%r(:, :, VO), &
+                b%r(:, :, VE), b%r(:, :, VO)) &
+                + metric(a%r(:, :, ZE), a%r(:, :, ZO), a%r(:, :, ZE), &
+                a%r(:, :, ZO), b%r(:, :, ZE), b%r(:, :, ZO), &
+                b%r(:, :, ZE), b%r(:, :, ZO)) &
+                + metric(a%z(:, :, ZE), a%z(:, :, ZO), a%z(:, :, ZE), &
+                a%z(:, :, ZO), b%z(:, :, ZE), b%z(:, :, ZO), &
+                b%z(:, :, ZE), b%z(:, :, ZO))
+        end if
+        if (self%ncurr == 1) then
             plasma_current = 0.0_dp
             average = 0.0_dp
             do k = 1, self%ntheta_r
@@ -276,7 +298,7 @@ contains
         end if
         bu = bul + chip / g
         if (present(parts)) then
-            allocate(parts(self%nzeta, self%ntheta_r, 10))
+            allocate(parts(self%nzeta, self%ntheta_r, 13))
             parts(:, :, 1) = r12
             parts(:, :, 2) = ru12
             parts(:, :, 3) = zu12
@@ -285,12 +307,22 @@ contains
             parts(:, :, 6) = tau
             parts(:, :, 7) = g
             parts(:, :, 8) = bul
-            if (self%ncurr == 1) then
+            if (self%ncurr == 1 .or. self%covariant) then
                 parts(:, :, 9) = guu
                 parts(:, :, 10) = guv
             else
                 parts(:, :, 9:10) = 0.0_dp
             end if
+            parts(:, :, 11) = 0.0_dp
+            if (self%covariant) parts(:, :, 11) = gvv
+            parts(:, :, 12) = bv
+            parts(:, :, 13) = bu
+        end if
+        if (self%covariant) then
+            covu = guu * bu + guv * bv
+            covv = guv * bu + gvv * bv
+            bu = covu
+            bv = covv
         end if
     contains
         pure function hv(ea, eb, oa, ob) result(v)
@@ -308,13 +340,14 @@ contains
     end subroutine half_field
 
     subroutine edge_forward(self, coef, phip_full, phip_half, iota_half, current_half, y)
-        !! y = [B^u_mn, B^v_mn, rmnc_mn, zmns_mn] at s = 1.
+        !! y contains the selected field components and boundary rmnc, zmns.
         class(vmec_edge_t), intent(in) :: self
         real(dp), intent(in) :: coef(0:, 0:, :, :), phip_full(:), phip_half(:)
         real(dp), intent(in) :: iota_half(:), current_half(:)
         real(dp), intent(out) :: y(:)
         type(surface_t) :: s(3)
-        real(dp), allocatable :: bu(:, :), bv(:, :)
+        real(dp), allocatable :: bu(:, :), bv(:, :), parts(:, :, :)
+        real(dp), allocatable :: inner(:, :, :), outer(:, :, :), delta(:, :)
         real(dp) :: chip, weight
         integer :: q, h, nb
 
@@ -327,11 +360,26 @@ contains
         do q = 1, 2
             h = self%ns - 3 + q          ! half surfaces ns-2, ns-1 (1-based)
             weight = merge(-0.5_dp, 1.5_dp, q == 1)
-            call half_field(self, s(q), s(q + 1), h, phip_full(h), phip_full(h + 1), &
-                phip_half(h), iota_half(h), current_half(h), bu, bv, chip)
+            if (self%covariant) then
+                call half_field(self, s(q), s(q + 1), h, phip_full(h), &
+                    phip_full(h + 1), phip_half(h), iota_half(h), &
+                    current_half(h), bu, bv, chip, parts)
+                if (q == 1) inner = parts
+                if (q == 2) outer = parts
+            else
+                call half_field(self, s(q), s(q + 1), h, phip_full(h), &
+                    phip_full(h + 1), phip_half(h), iota_half(h), &
+                    current_half(h), bu, bv, chip)
+            end if
             y(:nb) = y(:nb) + weight * analyse(bu)
             y(nb + 1:2 * nb) = y(nb + 1:2 * nb) + weight * analyse(bv)
         end do
+        if (self%covariant) then
+            call mesh_covariant_difference(self, s(2), &
+                phip_full(self%ns - 1), inner, outer, delta)
+            y(nb + 1:2 * nb) = y(nb + 1:2 * nb) &
+                - 0.1_dp / (self%ns - 1) * analyse(delta)
+        end if
         call edge_geometry(self, coef, y(2 * nb + 1:))
     contains
         function analyse(f) result(c)
@@ -340,9 +388,43 @@ contains
             integer :: mn
             do mn = 1, self%mnmax_nyq
                 c(mn) = sum(self%kernel(mn, :, :) * f)
+                if (self%covariant) then
+                    if (self%xm_nyq(mn) >= self%mpol &
+                        .or. abs(self%xn_nyq(mn)) > self%nfp * self%ntor) c(mn) = 0.0_dp
+                end if
             end do
         end function analyse
     end subroutine edge_forward
+
+    subroutine mesh_covariant_difference(self, surface, phip, inner, outer, delta)
+        !! VMEC++ output blends B_v radially, restores its mean, and low-pass
+        !! filters both covariant components. Only the inner of the two edge
+        !! half-surfaces is changed by the blending recurrence.
+        class(vmec_edge_t), intent(in) :: self
+        type(surface_t), intent(in) :: surface
+        real(dp), intent(in) :: phip, inner(:, :, :), outer(:, :, :)
+        real(dp), allocatable, intent(out) :: delta(:, :)
+        real(dp), allocatable :: inner_ratio(:, :), outer_ratio(:, :)
+        real(dp) :: average
+        integer :: k
+
+        inner_ratio = inner(:, :, 11) / inner(:, :, 7)
+        outer_ratio = outer(:, :, 11) / outer(:, :, 7)
+        delta = 0.5_dp * (inner_ratio + outer_ratio) * (surface%l(:, :, TE) + phip) &
+            + 0.5_dp * (inner_ratio * self%sqrt_s_half(self%ns - 2) &
+                + outer_ratio * self%sqrt_s_half(self%ns - 1)) * surface%l(:, :, TO) &
+            + 0.5_dp * (inner(:, :, 10) * inner(:, :, 13) &
+                + outer(:, :, 10) * outer(:, :, 13)) &
+            - 0.5_dp * (inner(:, :, 10) * inner(:, :, 13) &
+                + inner(:, :, 11) * inner(:, :, 12) &
+                + outer(:, :, 10) * outer(:, :, 13) &
+                + outer(:, :, 11) * outer(:, :, 12))
+        average = 0.0_dp
+        do k = 1, self%ntheta_r
+            average = average + self%w_int(k) * sum(delta(:, k))
+        end do
+        delta = delta - average
+    end subroutine mesh_covariant_difference
 
     subroutine edge_geometry(self, coef, yg)
         !! rmnc, zmns (wout modes) of the outermost surface from the product basis:
@@ -383,8 +465,11 @@ contains
         real(dp), intent(out) :: coef_bar(0:, 0:, :, :), iota_bar(:), current_bar(:)
         type(surface_t) :: s(3), sb(3)
         real(dp), allocatable :: bu(:, :), bv(:, :), bub(:, :), bvb(:, :), parts(:, :, :)
-        real(dp) :: chip, weight
-        integer :: q, h, nb, mn, j
+        real(dp), allocatable :: allparts(:, :, :, :), fieldbar(:), meshbar(:, :)
+        real(dp), allocatable :: extra(:, :, :), inner_ratio(:, :)
+        real(dp), allocatable :: outer_ratio(:, :), lu(:, :)
+        real(dp) :: chip, weight, averagebar, sh
+        integer :: q, h, nb, mn, j, k
 
         nb = self%mnmax_nyq
         coef_bar = 0.0_dp
@@ -399,19 +484,70 @@ contains
             sb(q)%z = 0.0_dp
             sb(q)%l = 0.0_dp
         end do
+        allocate(allparts(self%nzeta, self%ntheta_r, 13, 2))
+        fieldbar = ybar(:2 * nb)
+        if (self%covariant) then
+            do mn = 1, nb
+                if (self%xm_nyq(mn) >= self%mpol &
+                    .or. abs(self%xn_nyq(mn)) > self%nfp * self%ntor) then
+                    fieldbar(mn) = 0.0_dp
+                    fieldbar(nb + mn) = 0.0_dp
+                end if
+            end do
+        end if
+        do q = 1, 2
+            h = self%ns - 3 + q
+            call half_field(self, s(q), s(q + 1), h, phip_full(h), phip_full(h + 1), &
+                phip_half(h), iota_half(h), current_half(h), bu, bv, chip, parts)
+            allparts(:, :, :, q) = parts
+        end do
+        allocate(meshbar(self%nzeta, self%ntheta_r))
+        allocate(extra(self%nzeta, self%ntheta_r, 4))
+        meshbar = 0.0_dp
+        if (self%covariant) then
+            do mn = 1, nb
+                meshbar = meshbar - 0.1_dp / (self%ns - 1) &
+                    * fieldbar(nb + mn) * self%kernel(mn, :, :)
+            end do
+            averagebar = sum(meshbar)
+            do k = 1, self%ntheta_r
+                meshbar(:, k) = meshbar(:, k) - averagebar * self%w_int(k)
+            end do
+            inner_ratio = allparts(:, :, 11, 1) / allparts(:, :, 7, 1)
+            outer_ratio = allparts(:, :, 11, 2) / allparts(:, :, 7, 2)
+            sb(2)%l(:, :, TE) = sb(2)%l(:, :, TE) &
+                + 0.5_dp * (inner_ratio + outer_ratio) * meshbar
+            sb(2)%l(:, :, TO) = sb(2)%l(:, :, TO) + 0.5_dp &
+                * (inner_ratio * self%sqrt_s_half(self%ns - 2) &
+                    + outer_ratio * self%sqrt_s_half(self%ns - 1)) * meshbar
+        end if
         do q = 1, 2
             h = self%ns - 3 + q
             weight = merge(-0.5_dp, 1.5_dp, q == 1)
-            call half_field(self, s(q), s(q + 1), h, phip_full(h), phip_full(h + 1), &
-                phip_half(h), iota_half(h), current_half(h), bu, bv, chip, parts)
+            parts = allparts(:, :, :, q)
+            bv = parts(:, :, 12)
             bub = 0.0_dp
             bvb = 0.0_dp
             do mn = 1, nb
-                bub = bub + weight * ybar(mn) * self%kernel(mn, :, :)
-                bvb = bvb + weight * ybar(nb + mn) * self%kernel(mn, :, :)
+                bub = bub + weight * fieldbar(mn) * self%kernel(mn, :, :)
+                bvb = bvb + weight * fieldbar(nb + mn) * self%kernel(mn, :, :)
             end do
-            call half_field_vjp(self, s(q), s(q + 1), sb(q), sb(q + 1), h, bv, chip, parts, &
-                bub, bvb, iota_bar(h), current_bar(h), phip_half(h))
+            extra = 0.0_dp
+            if (self%covariant) then
+                bvb = bvb - 0.5_dp * meshbar
+                sh = self%sqrt_s_half(h)
+                lu = s(2)%l(:, :, TE) + phip_full(self%ns - 1) &
+                    + sh * s(2)%l(:, :, TO)
+                extra(:, :, 1) = 0.5_dp * meshbar * parts(:, :, 10)
+                extra(:, :, 2) = 0.5_dp * meshbar * parts(:, :, 13)
+                extra(:, :, 3) = 0.5_dp * meshbar * lu / parts(:, :, 7)
+                extra(:, :, 4) = -0.5_dp * meshbar * lu * parts(:, :, 11) &
+                    / parts(:, :, 7)**2
+            end if
+            chip = (parts(1, 1, 13) - parts(1, 1, 8)) * parts(1, 1, 7)
+            call half_field_vjp(self, s(q), s(q + 1), sb(q), sb(q + 1), h, &
+                bv, chip, parts, bub, bvb, iota_bar(h), current_bar(h), &
+                phip_half(h), extra)
         end do
         do q = 1, 3
             j = self%ns - 3 + q
@@ -421,20 +557,22 @@ contains
     end subroutine edge_vjp
 
     subroutine half_field_vjp(self, a, b, ab, bb, h, bv, chip, parts, bub, bvb, iota_bar, &
-            current_bar, phip_h)
+            current_bar, phip_h, extra)
         !! Reverse of half_field: accumulates into the surface cotangents ab, bb.
         class(vmec_edge_t), intent(in) :: self
         type(surface_t), intent(in) :: a, b
         type(surface_t), intent(inout) :: ab, bb
         integer, intent(in) :: h
         real(dp), intent(in) :: bv(:, :), chip, parts(:, :, :), phip_h
+        real(dp), intent(in) :: extra(:, :, :)
         real(dp), intent(inout) :: bub(:, :), bvb(:, :)
         real(dp), intent(inout) :: iota_bar, current_bar
         real(dp), allocatable :: r12(:, :), ru12(:, :), zu12(:, :), rs(:, :), zs(:, :)
         real(dp), allocatable :: tau(:, :), g(:, :), bul(:, :), guu(:, :), guv(:, :)
         real(dp), allocatable :: gb(:, :), bulb(:, :), guub(:, :), guvb(:, :), hub(:, :), hvb(:, :)
         real(dp), allocatable :: taub(:, :), r12b(:, :), ru12b(:, :), zu12b(:, :), rsb(:, :), zsb(:, :)
-        real(dp), allocatable :: t2b(:, :)
+        real(dp), allocatable :: t2b(:, :), gvvb(:, :), gvv(:, :)
+        real(dp), allocatable :: bu_contra(:, :), bv_contra(:, :), bu_bar(:, :)
         real(dp) :: sh, si, so, ds, chipb, ipb, averageb, average
         integer :: k
 
@@ -455,13 +593,27 @@ contains
         allocate(gb, bulb, guub, guvb, mold=g)
         guub = 0.0_dp
         guvb = 0.0_dp
+        bv_contra = bv
+        if (self%covariant) then
+            gvv = parts(:, :, 11)
+            bv_contra = parts(:, :, 12)
+            bu_contra = bul + chip / g
+            guub = bub * bu_contra
+            guvb = bub * bv_contra + bvb * bu_contra
+            gvvb = bvb * bv_contra
+            bu_bar = bub * guu + bvb * guv
+            bvb = bub * guv + bvb * gvv
+            bub = bu_bar + extra(:, :, 1)
+            guvb = guvb + extra(:, :, 2)
+            gvvb = gvvb + extra(:, :, 3)
+        end if
         ! bu = bul + chip / g
         bulb = bub
         chipb = 0.0_dp
         do k = 1, self%ntheta_r
             chipb = chipb + sum(bub(:, k) / g(:, k))
         end do
-        gb = -bub * chip / g**2
+        gb = -bub * chip / g**2 + extra(:, :, 4)
         if (self%ncurr == 1) then
             average = 0.0_dp
             do k = 1, self%ntheta_r
@@ -475,7 +627,7 @@ contains
                 guub(:, k) = guub(:, k) + ipb * self%w_int(k) * bul(:, k) &
                     + averageb * self%w_int(k) / g(:, k)
                 bulb(:, k) = bulb(:, k) + ipb * self%w_int(k) * guu(:, k)
-                guvb(:, k) = guvb(:, k) + ipb * self%w_int(k) * bv(:, k)
+                guvb(:, k) = guvb(:, k) + ipb * self%w_int(k) * bv_contra(:, k)
                 bvb(:, k) = bvb(:, k) + ipb * self%w_int(k) * guv(:, k)
                 gb(:, k) = gb(:, k) - averageb * self%w_int(k) * guu(:, k) / g(:, k)**2
             end do
@@ -484,7 +636,7 @@ contains
         end if
         ! bv = hv(lu) / g, bul = hv(lv) / g
         hvb = bvb / g
-        gb = gb - bvb * bv / g
+        gb = gb - bvb * bv_contra / g
         hub = bulb / g
         gb = gb - bulb * bul / g
         call hv_vjp(hvb, ab%l(:, :, TE), bb%l(:, :, TE), ab%l(:, :, TO), bb%l(:, :, TO))
@@ -526,11 +678,16 @@ contains
         call hv_vjp(r12b, ab%r(:, :, VE), bb%r(:, :, VE), ab%r(:, :, VO), bb%r(:, :, VO))
         call hv_vjp(ru12b, ab%r(:, :, TE), bb%r(:, :, TE), ab%r(:, :, TO), bb%r(:, :, TO))
         call hv_vjp(zu12b, ab%z(:, :, TE), bb%z(:, :, TE), ab%z(:, :, TO), bb%z(:, :, TO))
-        if (self%ncurr == 1) then
+        if (self%ncurr == 1 .or. self%covariant) then
             call metric_vjp(guub, TE, TE, 'r')
             call metric_vjp(guub, TE, TE, 'z')
             call metric_vjp(guvb, TE, ZE, 'r')
             call metric_vjp(guvb, TE, ZE, 'z')
+        end if
+        if (self%covariant) then
+            call metric_vjp(gvvb, VE, VE, 'r')
+            call metric_vjp(gvvb, ZE, ZE, 'r')
+            call metric_vjp(gvvb, ZE, ZE, 'z')
         end if
     contains
         subroutine hv_vjp(vb, ea, eb, oa, ob)

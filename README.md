@@ -102,9 +102,28 @@ closer to the boundary than two grid spacings. As in DIAGNO, loops that link
 the plasma poloidally must be flagged `idia = 1`, which adds the plasma
 toroidal flux `phiedge`. Leave out `--coils` for plasma-only signals.
 
+The default `--plasma-contravariant` mode follows DIAGNO. Two optional modes
+use VMEC's covariant boundary field instead. `--plasma-covariant` reads
+`bsubumnc`/`bsubvmnc` without changing their coefficients and reports the
+Fourier curl norm and a bound on the toroidal current ripple. Covariant output
+can retain a finite curl residual; changing representation alone does not
+ensure current conservation.
+
+`--plasma-conservative` additionally projects each Fourier pair `(B_u, B_v)`
+onto `n B_u + m B_v = 0`, with `n` including the field periodicity. This is the
+smallest correction in the unweighted Euclidean norm of the two coefficients;
+it preserves the `m = n = 0` circulation coefficients. The resulting sheet is
+closed and conserves its toroidal current. This projection changes the field
+model and can differ from DIAGNO at finite resolution. The reported projection
+norm measures the coefficient correction; `plasma_model.txt` records the mode
+and these diagnostics alongside the signal files. Field and shape responses include
+the same projection, and covariant response columns refer to the original
+`bsub*` coefficients before projection.
+
 `--plasma-response-out file` writes the derivative of every signal's plasma
-part with respect to the VMEC boundary field coefficients (`bsupumnc`,
-`bsupvmnc` extrapolated to `s = 1`, per mode `m, n`). At fixed boundary shape
+part with respect to the selected VMEC boundary field coefficients (`bsup*`
+for the default contravariant mode or `bsub*` for either covariant mode,
+extrapolated to `s = 1`, per mode `m, n`). At fixed boundary shape
 the plasma part is linear in them, so the Jacobian is exact and
 `sum(value * coefficient)` reproduces it; together with `--response-out` for
 the coil currents this is the linear part of an equilibrium reconstruction.
@@ -135,8 +154,9 @@ contributions are added through the response matrix.
 iterate, plus two cheap solves per residual row. It is built in three steps:
 
 1. **Signals from the edge field.** `dS/dy` comes from the plasma field and
-   shape responses. Here `y` is the edge field (`B^u`, `B^v` extrapolated to
-   `s = 1`) together with the boundary `rmnc`, `zmns`.
+   shape responses. Here `y` is the selected edge field (`B^u`, `B^v` by
+   default, or `B_u`, `B_v` in either covariant mode, extrapolated to `s = 1`)
+   together with the boundary `rmnc`, `zmns`.
 2. **Edge field from the solver state.** `src/equilibrium/vmec_edge.f90`
    computes `y` from VMEC++'s spectral state in Fortran, and runs it in
    reverse mode. It reproduces VMEC++'s wout to 2e-14.
@@ -192,11 +212,14 @@ virtual probes inside the plasma, where the coil field plus the sheet field
 must vanish.
 
 **Building.** Reconstruction is optional, because VMEC++'s exact force
-Jacobian needs Clang with the matching Enzyme plugin:
+Jacobian needs Clang with the matching Enzyme plugin. The verified toolchain
+is Clang 20.1.8 and Enzyme v0.0.264, commit
+`f06646a6d8a6a69a123c7b4184f8db261c03216d`:
 ```bash
 sudo apt-get install clang-20 llvm-20-dev libclang-20-dev lld-20 libomp-20-dev \
     libzstd-dev liblapack-dev ninja-build
 git clone --depth 1 --branch v0.0.264 https://github.com/EnzymeAD/Enzyme.git
+test "$(git -C Enzyme rev-parse HEAD)" = f06646a6d8a6a69a123c7b4184f8db261c03216d
 cmake -G Ninja -S Enzyme/enzyme -B enzyme-build -DCMAKE_BUILD_TYPE=Release \
     -DLLVM_DIR=$(llvm-config-20 --cmakedir) \
     -DClang_DIR=$(llvm-config-20 --prefix)/lib/cmake/clang
@@ -205,7 +228,18 @@ CXX=clang++-20 cmake -S . -B build-vmecpp -G Ninja -DCMAKE_BUILD_TYPE=Release \
     -DTIAGO_ENABLE_RECONSTRUCTION=ON \
     -DTIAGO_ENZYME_PLUGIN=$PWD/enzyme-build/Enzyme/ClangEnzyme-20.so
 cmake --build build-vmecpp
+OMP_NUM_THREADS=1 ctest --test-dir build-vmecpp --output-on-failure
 ```
+Clang 22.1.8 with the installed Enzyme 0.0.293-1 package was also verified
+with the complete test suite at one and four threads. Its tested
+`ClangEnzyme-22.so` SHA256 is
+`8878aaf985a4315922efc095cdafdb4ca8e9df799c2c78371e8463b0762d242a`.
+
+CMake accepts Clang majors 20 and 22 by default and checks that the
+plugin loads into the compiler. `TIAGO_EXPERIMENTAL_ENZYME_TOOLCHAIN=ON`
+allows another major for development; it does not establish correct
+derivatives. Even with Clang 20, use the tested Enzyme pin and run the
+derivative tests.
 CMake fetches the following at pinned commits:
 - VMEC++, built as a C++ library without its Python module;
 - fortplot, for the figures.
@@ -231,6 +265,7 @@ required):
 | `synthesize_measurements`, `truth_values`, `add_noise`, `seed` | synthetic data from the model at `truth_values` |
 | `sigma_relative`, `sigma_flux`, `sigma_segrog`, `sigma_bprobe` | synthetic uncertainty `sigma_relative \|S\| + sigma_<kind>` |
 | `plasma_nphi`, `plasma_ntheta`, `samples`, `gauss` | sheet grid and segment quadrature |
+| `plasma_covariant`, `plasma_conservative` | opt-in covariant field and current-conserving projection; both default false |
 | `vmec_ftol`, `vmec_niter` | VMEC++ convergence (default `1e-14`, `20000`) |
 | `max_iterations`, `check_jacobian`, `fd_step` | LM iterations; compare `J` with finite differences first |
 | `output_dir` | results directory |

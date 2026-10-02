@@ -103,13 +103,17 @@ contains
         call self%plasma%finalize()
     end subroutine vacuum_solver_finalize
 
-    subroutine vacuum_solver_enable_plasma_from_vmec(self, wout_file, nphi, ntheta)
+    subroutine vacuum_solver_enable_plasma_from_vmec(self, wout_file, nphi, ntheta, &
+            covariant, conservative)
         class(vacuum_solver_t), intent(inout) :: self
         character(len=*), intent(in) :: wout_file
         integer(i32), intent(in) :: nphi
         integer(i32), intent(in) :: ntheta
 
-        call self%plasma%init_from_vmec(trim(wout_file), nphi, ntheta)
+        logical, intent(in), optional :: covariant, conservative
+
+        call self%plasma%init_from_vmec(trim(wout_file), nphi, ntheta, &
+            covariant, conservative)
     end subroutine vacuum_solver_enable_plasma_from_vmec
 
     subroutine vacuum_solver_enable_plasma_from_boundary(self, vb, nphi, ntheta)

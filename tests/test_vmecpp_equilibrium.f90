@@ -9,13 +9,15 @@ program test_vmecpp_equilibrium
     !!     chain + PHIEDGE scaling) matches central differences of re-solved
     !!     equilibria for every parameter kind.
     use, intrinsic :: iso_fortran_env, only: dp => real64, error_unit
+    use, intrinsic :: ieee_arithmetic, only: ieee_is_finite
     use tiago_equilibrium, only: equilibrium_t
     implicit none
 
     character(len=16), parameter :: names(7) = [character(len=16) :: 'PRES_SCALE', 'CURTOR', &
         'AM(1)', 'AC(1)', 'RBC(1,1)', 'ZBS(0,1)', 'PHIEDGE']
     type(equilibrium_t) :: eq
-    character(len=512) :: input, workdir, mode
+    character(len=512) :: input, workdir, mode, sheet_mode
+    character(len=8) :: bu_name, bv_name
     real(dp), allocatable :: x0(:), x(:), y0(:), yp(:), ym(:), cot(:, :), jac(:, :), fd(:)
     real(dp), allocatable :: ref(:), b(:, :), coef_bar(:, :, :, :), dcoef(:, :, :, :)
     real(dp), allocatable :: iota_bar(:), current_bar(:), ybar(:), cp(:, :, :, :), cm(:, :, :, :)
@@ -29,11 +31,15 @@ program test_vmecpp_equilibrium
     call get_command_argument(1, input)
     call get_command_argument(2, workdir)
     call get_command_argument(3, mode)
+    call get_command_argument(4, sheet_mode)
     step = 1.0e-5_dp  ! relative FD step; larger for equilibria solved less precisely
     read(mode, *, iostat=ios) step
     if (ios /= 0) step = 1.0e-5_dp
+    if (.not. ieee_is_finite(step)) error stop 'nonfinite FD step'
+    if (step <= 0.0_dp) error stop 'FD step must be positive'
     call execute_command_line('mkdir -p "'//trim(workdir)//'"')
-    call eq%init(trim(input), trim(workdir), names)
+    call eq%init(trim(input), trim(workdir), names, &
+        covariant=trim(sheet_mode) == 'covariant')
     if (trim(mode) /= 'adjoint-only') then  ! else FTOL and NITER of the input
         call eq%vmec%set_input('ftol', 1.0e-14_dp)
         call eq%vmec%set_input('niter', 20000.0_dp)
@@ -60,12 +66,20 @@ program test_vmecpp_equilibrium
     call check_equal('Nyquist mode count', real(nb, dp), real(mnq, dp), 0.0_dp)
     call check_equal('mode count', real(ng, dp), real(mnmax, dp), 0.0_dp)
     call check_equal('xn_nyq table', sum(abs(eq%edge%xn_nyq - eq%vmec%wout('xn_nyq', mnq))), 0.0_dp, 0.0_dp)
-    b = reshape(eq%vmec%wout('bsupumnc', ns * mnq), [mnq, ns])
+    bu_name = 'bsupumnc'
+    bv_name = 'bsupvmnc'
+    if (eq%edge%covariant) then
+        bu_name = 'bsubumnc'
+        bv_name = 'bsubvmnc'
+    end if
+    b = reshape(eq%vmec%wout(trim(bu_name), ns * mnq), [mnq, ns])
     ref = 1.5_dp * b(:, ns) - 0.5_dp * b(:, ns - 1)
-    call check_vector('edge B^u vs VMEC++ wout', eq%y(1:nb), ref, 1.0e-9_dp)
-    b = reshape(eq%vmec%wout('bsupvmnc', ns * mnq), [mnq, ns])
+    call check_vector('edge '//trim(bu_name)//' vs VMEC++ wout', &
+        eq%y(1:nb), ref, 1.0e-9_dp)
+    b = reshape(eq%vmec%wout(trim(bv_name), ns * mnq), [mnq, ns])
     ref = 1.5_dp * b(:, ns) - 0.5_dp * b(:, ns - 1)
-    call check_vector('edge B^v vs VMEC++ wout', eq%y(nb + 1:2 * nb), ref, 1.0e-9_dp)
+    call check_vector('edge '//trim(bv_name)//' vs VMEC++ wout', &
+        eq%y(nb + 1:2 * nb), ref, 1.0e-9_dp)
     b = reshape(eq%vmec%wout('rmnc', ns * mnmax), [mnmax, ns])
     call check_vector('edge rmnc vs VMEC++ wout', eq%y(2 * nb + 1:2 * nb + ng), b(:, ns), 1.0e-12_dp)
     b = reshape(eq%vmec%wout('zmns', ns * mnmax), [mnmax, ns])
@@ -111,11 +125,14 @@ program test_vmecpp_equilibrium
     if (trim(mode) /= 'adjoint-only') then
         xp = x0 * (1.0_dp + 1.0e-3_dp)
         call eq%solve(xp, ok)
+        if (.not. ok) error stop 'hot restart equilibrium failed'
         yhot = eq%y
         call eq%vmec%set_input('hot_restart', 0.0_dp)
         call eq%solve(xp, ok)
+        if (.not. ok) error stop 'cold restart equilibrium failed'
         call check_vector('hot restart vs cold solve', yhot, eq%y, 1.0e-6_dp)
         call eq%solve(x0, ok)
+        if (.not. ok) error stop 'reference equilibrium failed'
     end if
 
     ! 4. full Jacobian vs central differences of re-solved equilibria. Cold
@@ -128,6 +145,7 @@ program test_vmecpp_equilibrium
     cot = (cot - 0.5_dp) / spread(max(abs(y0), 1.0e-3_dp * maxval(abs(y0))), 1, 4)
     t0 = wall()
     call eq%jacobian(x0, cot, jac)
+    if (.not. all(ieee_is_finite(jac))) error stop 'nonfinite physical Jacobian'
     t1 = wall()
     print '(A,F7.2,A)', 'Jacobian (4 cotangents, incl. factorization): ', t1 - t0, ' s'
     if (trim(mode) == 'adjoint-only') then
@@ -144,11 +162,17 @@ program test_vmecpp_equilibrium
         x = x0
         x(k) = x0(k) + h
         call eq%solve(x, ok)
+        if (.not. ok) error stop 'positive FD equilibrium failed'
         yp = eq%y
+        if (.not. all(ieee_is_finite(yp))) error stop 'nonfinite positive FD edge'
         x(k) = x0(k) - h
         call eq%solve(x, ok)
+        if (.not. ok) error stop 'negative FD equilibrium failed'
         ym = eq%y
+        if (.not. all(ieee_is_finite(ym))) error stop 'nonfinite negative FD edge'
         fd = matmul(cot, yp - ym) / (2.0_dp * h)
+        if (.not. all(ieee_is_finite(fd))) error stop 'nonfinite physical FD oracle'
+        if (maxval(abs(fd)) <= tiny(1.0_dp)) error stop 'zero physical FD oracle'
         err = maxval(abs(jac(:, k) - fd)) / maxval(abs(fd))
         if (err > 2.0e-3_dp) then
             write(error_unit, '(A,A12,A,ES10.3)') 'FAIL Jacobian ', trim(names(k)), &
@@ -175,6 +199,9 @@ contains
         character(len=*), intent(in) :: name
         real(dp), intent(in) :: actual(:), expected(:), rtol
         real(dp) :: e
+        if (.not. all(ieee_is_finite(actual)) &
+            .or. .not. all(ieee_is_finite(expected)) &
+            .or. .not. ieee_is_finite(rtol)) error stop 'nonfinite vector comparison'
         e = maxval(abs(actual - expected)) / max(maxval(abs(expected)), tiny(1.0_dp))
         if (e > rtol) then
             write(error_unit, '(A,ES10.3)') 'FAIL '//name//': max rel diff ', e
@@ -187,6 +214,8 @@ contains
     subroutine check_close(name, actual, expected, atol)
         character(len=*), intent(in) :: name
         real(dp), intent(in) :: actual, expected, atol
+        if (.not. ieee_is_finite(actual) .or. .not. ieee_is_finite(expected) &
+            .or. .not. ieee_is_finite(atol)) error stop 'nonfinite scalar comparison'
         if (abs(actual - expected) > atol) then
             write(error_unit, '(A,3ES24.16)') 'FAIL '//name//': ', actual, expected, atol
             failures = failures + 1
@@ -198,6 +227,8 @@ contains
     subroutine check_equal(name, actual, expected, rtol)
         character(len=*), intent(in) :: name
         real(dp), intent(in) :: actual, expected, rtol
+        if (.not. ieee_is_finite(actual) .or. .not. ieee_is_finite(expected) &
+            .or. .not. ieee_is_finite(rtol)) error stop 'nonfinite scalar comparison'
         if (abs(actual - expected) > rtol * max(abs(expected), tiny(1.0_dp))) then
             write(error_unit, '(A,2ES24.16)') 'FAIL '//name//': ', actual, expected
             failures = failures + 1

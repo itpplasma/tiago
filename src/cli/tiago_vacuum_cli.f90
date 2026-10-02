@@ -29,6 +29,7 @@ program tiago_vacuum_cli
     integer :: argc
     character(len=512) :: coil_extcur_path
     logical :: use_plasma_sample
+    logical :: covariant_plasma = .false., conservative_plasma = .false.
     ! Magnetic probes and response matrices (set in parse_options by host association)
     character(len=512) :: bprobe_path = '', bprobe_out_path = 'tiago_bprobes.csv'
     character(len=512) :: bprobe_turn_path = '', response_out_path = ''
@@ -159,6 +160,15 @@ subroutine parse_options(argc, output_dir, flux_out_path, segrog_out_path, &
             i = i + 1
             call ensure_arg(argc, i, '--coil-extcur')
             call get_command_argument(i, coil_extcur_path)
+        case ('--plasma-conservative')
+            covariant_plasma = .true.
+            conservative_plasma = .true.
+        case ('--plasma-covariant')
+            covariant_plasma = .true.
+            conservative_plasma = .false.
+        case ('--plasma-contravariant')
+            covariant_plasma = .false.
+            conservative_plasma = .false.
         case ('--plasma-wout')
             i = i + 1
             call ensure_arg(argc, i, '--plasma-wout')
@@ -372,7 +382,21 @@ subroutine run_solver(coil_path, flux_path, segrog_path, output_dir, &
     call solver%set_nfp(nfp_value)
 
     if (len_trim(plasma_wout) > 0) then
-        call solver%enable_plasma_from_vmec(plasma_wout, plasma_nphi, plasma_ntheta)
+        call solver%enable_plasma_from_vmec(plasma_wout, plasma_nphi, &
+            plasma_ntheta, covariant_plasma, conservative_plasma)
+        call write_plasma_provenance(solver, trim(output_dir)//'/plasma_model.txt')
+        if (solver%plasma%covariant) then
+            write(error_unit, '(A,ES12.4)') &
+                'Plasma Fourier curl norm [T m]: ', solver%plasma%curl_norm
+            write(error_unit, '(A,ES12.4)') &
+                'Plasma toroidal current ripple bound [A]: ', &
+                solver%plasma%current_ripple
+            if (solver%plasma%conservative) then
+                write(error_unit, '(A,ES12.4)') &
+                    'Plasma coefficient projection norm [T m]: ', &
+                    solver%plasma%projection_norm
+            end if
+        end if
     end if
 
     if (have_flux) then
@@ -475,6 +499,23 @@ subroutine write_response(solver, rule, loops, segs, probes, path)
     end do
     close(unit)
 end subroutine write_response
+
+subroutine write_plasma_provenance(solver, path)
+    type(vacuum_solver_t), intent(in) :: solver
+    character(len=*), intent(in) :: path
+    integer :: unit, status
+
+    open(newunit=unit, file=path, status='replace', iostat=status)
+    if (status /= 0) call die('cannot write plasma model provenance: '//path)
+    write(unit, '(A,L1)') 'covariant = ', solver%plasma%covariant
+    write(unit, '(A,L1)') 'conservative_projection = ', solver%plasma%conservative
+    write(unit, '(A,ES24.16)') 'Fourier_curl_norm_T_m = ', solver%plasma%curl_norm
+    write(unit, '(A,ES24.16)') 'toroidal_current_ripple_bound_A = ', &
+        solver%plasma%current_ripple
+    write(unit, '(A,ES24.16)') 'coefficient_projection_norm_T_m = ', &
+        solver%plasma%projection_norm
+    close(unit)
+end subroutine write_plasma_provenance
 
 subroutine write_plasma_response(solver, rule, loops, segs, probes, path, shape_path)
     !! kind,label,coefficient,m,n,value: derivative of each signal's plasma part
@@ -733,6 +774,8 @@ subroutine usage_and_stop(status)
     write(error_unit, '(A)') '       [--coil-extcur vmec_input_or_list]'
     write(error_unit, '(A)') '       [--flux-turns file] [--segrog-turns file]'
     write(error_unit, '(A)') '       [--plasma-wout file] [--plasma-sample]'
+    write(error_unit, '(A)') '       [--plasma-covariant | --plasma-conservative | '// &
+        '--plasma-contravariant]'
     write(error_unit, '(A)') '       [--plasma-nphi N_per_period] [--plasma-ntheta N] (default 64 64)'
     write(error_unit, '(A)') '       [--bprobes file [--rphiz] [--bprobe-out file] [--bprobe-turns file]]'
     write(error_unit, '(A)') '       [--response-out file]  (signals per unit EXTCUR per coil group)'

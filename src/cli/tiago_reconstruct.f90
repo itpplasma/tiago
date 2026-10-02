@@ -29,12 +29,14 @@ program tiago_reconstruct
     integer :: vmec_niter = 20000
     logical :: gauss = .true., synthesize_measurements = .false., check_jacobian = .false., &
         add_noise = .true.
-    logical :: rphiz = .false.
+    logical :: rphiz = .false., plasma_covariant = .false.
+    logical :: plasma_conservative = .false.
     namelist /reconstruction/ vmec_input, vmec_boundary_wout, output_dir, coils, coil_extcur, &
         flux, segrog, bprobes, measurements, consistency_points, parameters, start_values, &
         truth_values, parameter_scale, prior_values, prior_sigma, consistency_sigma, seg_area, &
         sigma_relative, sigma_flux, sigma_segrog, sigma_bprobe, fd_step, vmec_ftol, vmec_niter, samples, plasma_nphi, &
-        plasma_ntheta, max_iterations, seed, gauss, synthesize_measurements, add_noise, check_jacobian, rphiz
+        plasma_ntheta, max_iterations, seed, gauss, synthesize_measurements, &
+        add_noise, check_jacobian, rphiz, plasma_covariant, plasma_conservative
 
     character(len=512) :: input_file
     real(dp), allocatable :: x(:), x_start(:), x_truth(:), defaults(:), cov(:, :), jac(:, :)
@@ -147,7 +149,8 @@ contains
         end do
         workdir = trim(output_dir)//'/work'
         call execute_command_line('mkdir -p "'//workdir//'"')
-        call rec%eq%init(trim(vmec_input), workdir, eq_names)
+        call rec%eq%init(trim(vmec_input), workdir, eq_names, &
+            plasma_covariant, plasma_conservative)
         call rec%eq%vmec%set_input('ftol', vmec_ftol)
         call rec%eq%vmec%set_input('niter', real(vmec_niter, dp))
         if (len_trim(vmec_boundary_wout) > 0) call boundary_from_wout(trim(vmec_boundary_wout))
@@ -499,6 +502,8 @@ contains
 
         open(newunit=unit, file=trim(output_dir)//'/summary.txt', status='replace')
         write(unit, '(A)') 'Tiago equilibrium reconstruction'
+        write(unit, '(A,L1)') 'plasma_covariant = ', rec%eq%edge%covariant
+        write(unit, '(A,L1)') 'plasma_conservative = ', rec%eq%conservative
         write(unit, '(A,I0,A,I0,A,I0,A,I0)') 'residuals: ', n_rows(), ' (measurements ', &
             rec%n_meas, ', consistency ', rec%n_fb, ', priors ', rec%n_prior
         write(unit, '(A,ES12.4,A,ES12.4,A,I0,A,F8.3)') 'chi^2 start ', sum(r_start**2), &
