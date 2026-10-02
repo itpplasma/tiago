@@ -1,0 +1,24 @@
+{
+  "tiago_commit": "1fe6c6946a081d520a7fef5e6c634d3de12c6d4e",
+  "tiago_patch_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  "reference_commit": "2f181f0d4e71f28afe076967d606b2c020c9db33",
+  "compiler": "GNU Fortran (GCC) 16.2.1 20260810",
+  "platform": "Linux-7.2.6-arch2-1-x86_64-with-glibc2.44",
+  "cpu": "model name\t: AMD Ryzen 9 5950X 16-Core Processor",
+  "threads": 4,
+  "timing": "one observation per case; whole process including MPI startup and input loading; shared workstation",
+  "tiago_flags": "Release -O3, portable CPU; -fno-math-errno on coil kernels",
+  "reference_flags": "-O2 -march=native -fcheck=all,no-array-temps; stock and documented minimal patched controls",
+  "hashes": {
+    "build/tiago_vacuum_cli": "ca74fb9456da772de5e9d804038df2f59c7ad556ef50cf3f86fb45b4f46bceb9",
+    "benchmarks/xdiagno/_work/bin/xdiagno_checked": "be0625ca89f1735334f30de99aa94aa466411c8010d2f25f63baafd60883d4bc",
+    "benchmarks/xdiagno/_work/bin/xdiagno_patched_checked": "67f381947c532e0c4e61c6936c1c14e12afe514c97174a3782e2b737ada03db0",
+    "benchmarks/xdiagno/_work/bin/xvmec2000": "d0512c4412c50f2a306e60173156a38cae94f854458a98011579116fd70989f7",
+    "benchmarks/xdiagno/_work/data/coils.M16N08": "df1e6aca26c38fcf8c6268e40ce046cc14816e3d0a5f0f120c0c2ad578a8895e",
+    "benchmarks/xdiagno/_work/data/coils.NCSX": "3c429da06f4c062887a497a16e2d2bd10f0ecb0b8858c252698631f3853da428",
+    "benchmarks/xdiagno/_work/data/coils.NCSX_nfp1": "eaae3af7b9df8a1056a88bf76e5c9084fd26d09275b7a8e365aa41268bf3aca0",
+    "benchmarks/xdiagno/_work/data/input.li383_low_res": "605d9211733368e8f5cf76a844d1abcca8a2d2950df75af8e588ba2aea8648ce",
+    "benchmarks/xdiagno/_work/data/input.ncsx": "6d6de0aaf9361d68a8b6a7a80e710719d59f71089a0c12d23c3c54677c94ef20",
+    "benchmarks/xdiagno/_work/data/wout_ncsx.nc": "12b5c429d532d72197b2217beb54a7489a52d9cfc2eaf273597f3b34925c88bc"
+  }
+}
