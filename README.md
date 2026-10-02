@@ -27,7 +27,7 @@ STELLOPT's `xdiagno`.
 cmake -S . -B build
 cmake --build build
 # optional: -DTIAGO_LIBNEO_TAG=<commit> to use another libneo, and
-# -DCMAKE_Fortran_FLAGS="-march=native" for a machine-specific build
+# -DTIAGO_ENABLE_NATIVE_OPTIMIZATION=ON for a machine-specific build
 # (about 2x faster Biot-Savart kernels through AVX vectorisation)
 
 # or the convenience wrappers
@@ -39,6 +39,12 @@ Pass extra cache entries through `CMAKE_ARGS`, e.g.
 The standard `LIBNEO_BRANCH` CMake or environment variable overrides the
 selected libneo ref for release validation; a nonempty CMake value takes
 precedence over the environment. Removing it restores `TIAGO_LIBNEO_TAG`.
+`-DTIAGO_MATCH_LIBNEO_BRANCH=ON` optionally selects the current Tiago branch
+when the same branch exists in libneo, falling back to `TIAGO_LIBNEO_TAG`.
+Explicit `LIBNEO_BRANCH` overrides take precedence. Both branch matching and
+native CPU optimization are off by default. Native optimization uses
+`-mcpu=native` on ARM and `-march=native -mtune=native` elsewhere, and requires
+a native build.
 
 ## Vacuum CLI usage
 ```

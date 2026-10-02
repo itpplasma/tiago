@@ -1,16 +1,43 @@
 cmake_minimum_required(VERSION 3.24)
 project(TIAGO LANGUAGES Fortran)
 
+option(TIAGO_ENABLE_NATIVE_OPTIMIZATION "Optimize for the build machine CPU" OFF)
+if(TIAGO_ENABLE_NATIVE_OPTIMIZATION)
+    if(CMAKE_CROSSCOMPILING)
+        message(FATAL_ERROR "Native optimization requires a native build")
+    endif()
+    if(CMAKE_SYSTEM_PROCESSOR MATCHES "aarch64|arm64|ARM64")
+        add_compile_options(-mcpu=native)
+    else()
+        add_compile_options(-march=native -mtune=native)
+    endif()
+endif()
+
 include(FetchContent)
 
 set(TIAGO_LIBNEO_GIT "https://github.com/itpplasma/libneo.git" CACHE STRING "libneo upstream to fetch")
 set(TIAGO_LIBNEO_TAG "f1bef44e80c4508f04594d4d2ca120eaf17564f8" CACHE STRING "libneo commit/branch/tag used by Tiago")
+option(TIAGO_MATCH_LIBNEO_BRANCH "Use the matching libneo branch when available" OFF)
 # Use a local effective ref so removing an override restores the pinned default.
 set(_tiago_libneo_ref "${TIAGO_LIBNEO_TAG}")
 if(DEFINED LIBNEO_BRANCH AND NOT "${LIBNEO_BRANCH}" STREQUAL "")
     set(_tiago_libneo_ref "${LIBNEO_BRANCH}")
 elseif(DEFINED ENV{LIBNEO_BRANCH} AND NOT "$ENV{LIBNEO_BRANCH}" STREQUAL "")
     set(_tiago_libneo_ref "$ENV{LIBNEO_BRANCH}")
+elseif(TIAGO_MATCH_LIBNEO_BRANCH)
+    execute_process(COMMAND git symbolic-ref --quiet --short HEAD
+        WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
+        OUTPUT_VARIABLE _tiago_branch OUTPUT_STRIP_TRAILING_WHITESPACE
+        RESULT_VARIABLE _tiago_branch_status)
+    if(_tiago_branch_status EQUAL 0)
+        execute_process(
+            COMMAND git ls-remote --heads "${TIAGO_LIBNEO_GIT}" "refs/heads/${_tiago_branch}"
+            OUTPUT_VARIABLE _libneo_branch_exists OUTPUT_STRIP_TRAILING_WHITESPACE
+            RESULT_VARIABLE _libneo_query_status)
+        if(_libneo_query_status EQUAL 0 AND NOT "${_libneo_branch_exists}" STREQUAL "")
+            set(_tiago_libneo_ref "${_tiago_branch}")
+        endif()
+    endif()
 endif()
 set(LIBNEO_ENABLE_TESTS OFF CACHE BOOL "Disable libneo's own tests when vendored" FORCE)
 set(ENABLE_OPENMP OFF CACHE BOOL "Disable libneo OpenMP flags unless explicitly requested" FORCE)
