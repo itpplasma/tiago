@@ -22,17 +22,25 @@ program test_coil_potential
     do polarity = -1, 1, 2
         do l = 1, size(lengths)
             length = lengths(l)
-            x = length*[0.0_dp, 0.5_dp, 0.5_dp, 1.0_dp]
+            x(1) = 0.0_dp
+            x(2) = 0.5_dp*length
+            x(3) = x(2)
+            x(4) = length
             y = 0.0_dp
             z = 0.0_dp
-            current = real(polarity, dp)*[2.0_dp, 99.0_dp, 2.0_dp, 0.0_dp]
+            current(1) = 2.0_dp*real(polarity, dp)
+            current(2) = 99.0_dp*real(polarity, dp)
+            current(3) = current(1)
+            current(4) = 0.0_dp
             coil = build_coil_set(x, y, z, current)
             if (coil%n_segments() /= 2) error stop 'repeated node became active'
             do a = 1, size(axial)
                 u = axial(a)*length
                 do r = 1, size(radial)
                     rho = radial(r)*length
-                    point(:, r) = [u, rho, 0.0_dp]
+                    point(1, r) = u
+                    point(2, r) = rho
+                    point(3, r) = 0.0_dp
                     expected(r) = 2.0e-7_dp*real(polarity, dp) &
                         *(asinh(u/rho) - asinh((u - length)/rho))
                 end do
@@ -70,11 +78,18 @@ program test_coil_potential
     ! Place samples on both sides of the polynomial/log boundary at every scale.
     do l = 1, size(lengths)
         length = lengths(l)
-        coil = build_coil_set([0.0_dp, length], [0.0_dp, 0.0_dp], &
-            [0.0_dp, 0.0_dp], [2.0_dp, 0.0_dp])
+        x(1) = 0.0_dp
+        x(2) = length
+        y = 0.0_dp
+        z = 0.0_dp
+        current(1) = 2.0_dp
+        current(2) = 0.0_dp
+        coil = build_coil_set(x(:2), y(:2), z(:2), current(:2))
         do r = 1, size(ratios)
             rho = 0.5_dp*length*sqrt(1.0_dp/ratios(r)**2 - 1.0_dp)
-            threshold_point(:, r) = [0.5_dp*length, rho, 0.0_dp]
+            threshold_point(1, r) = 0.5_dp*length
+            threshold_point(2, r) = rho
+            threshold_point(3, r) = 0.0_dp
             expected(r) = 4.0e-7_dp*asinh(0.5_dp*length/rho)
         end do
         call coil%vector_potential(threshold_point, threshold_potential)
