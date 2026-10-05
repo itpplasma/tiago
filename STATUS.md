@@ -93,3 +93,27 @@ OMP_NUM_THREADS=4 OPENBLAS_NUM_THREADS=1 FO_JOBS=8 \
 
 The benchmark READMEs provide their separate pinned reference builds and
 reproduction commands. Further development is deferred after this handoff.
+
+
+## Architecture decision, October 5, 2026
+
+Documentation now records the intended long-term boundary with KIN6D. This
+does not change the delivered production code or invalidate the October 2
+verification record above.
+
+- TIAGO owns diagnostic observation models, reconstruction/inference, priors
+  and nuisance/calibration/measurement UQ.
+- KIN6D owns general forward plasma physics, stationary/evolution solves,
+  differentiability, numerical certification and model-reduction error.
+- The existing VMEC++ exact-adjoint reconstruction remains a first-class
+  provider/reference; it is not replaced merely because KIN6D is planned.
+- A provider-neutral seam is introduced only when the first KIN6D consumer
+  requires it, avoiding speculative abstraction churn.
+- Several distinct equilibria remain several physical solutions. TIAGO may fit
+  each locally and optionally report a finite mixture of Laplace/Gaussian
+  approximations; it need not implement a general branch framework.
+- The present covariance is a local Gaussian approximation. Correlated
+  measurement covariance and nuisance/calibration parameters are higher
+  priority than general posterior sampling.
+
+See DESIGN.md and ROADMAP.md for the planned architecture.
