@@ -1,10 +1,17 @@
 # TIAGO: Toolkit for Inference and Analysis of Generalized Observables
 
-Tiago is a modern Fortran toolkit for magnetic diagnostic studies. It reads
-DIAGNO diagnostic files and STELLOPT coil files, and evaluates flux loops and
-segmented Rogowski probes from coil currents (Biot–Savart) and, optionally, the
-plasma currents of a VMEC equilibrium. Results are benchmarked against
-STELLOPT's `xdiagno`.
+Tiago is a modern Fortran toolkit for diagnostic forward models,
+reconstruction and uncertainty quantification. The currently implemented
+production path is magnetic: it reads DIAGNO diagnostic files and STELLOPT coil
+files, evaluates flux loops/Rogowski probes/B-probes from coil currents and a
+VMEC equilibrium, and reconstructs VMEC++ parameters with exact adjoint
+derivatives. Results are benchmarked against STELLOPT's `xdiagno`.
+
+Long-term, TIAGO owns the inverse-problem layer for the ITP plasma stack:
+measurements, diagnostic/calibration models, priors/nuisance parameters and
+posterior uncertainty. Forward equilibrium/kinetic physics remains in its
+own provider, with KIN6D planned as the general differentiable provider while
+the existing VMEC++ path remains an independent reference.
 
 ## Highlights
 - **Drop-in DIAGNO ingestion** – Load STELLOPT-compatible flux loops and
@@ -20,6 +27,20 @@ STELLOPT's `xdiagno`.
   Python is involved at any stage.
 - **Cross-code validation** – `benchmarks/xdiagno/` builds STELLOPT's `xdiagno`
   at a pinned commit and compares accuracy and run time on identical inputs.
+
+## Architecture direction
+
+The current VMEC++ reconstruction is implemented and retained. The intended
+architecture is provider-neutral, but **do not refactor the working VMEC++
+chain speculatively**. Freeze the provider seam only when the first KIN6D
+reconstruction is ready to consume it.
+
+A forward provider supplies a stationary/evolution state and the matrix-free
+tangent/adjoint actions needed by TIAGO's diagnostic map. TIAGO does not own
+Grad--Shafranov, general 3-D MHD, DK/GK/FK or their numerical certificates;
+KIN6D does not own likelihoods or posterior covariance.
+
+See [DESIGN.md](DESIGN.md) and [ROADMAP.md](ROADMAP.md).
 
 ## Quick start
 ```bash
@@ -285,6 +306,36 @@ synthetic reconstructions, with results, timings and figures:
 
 It also compares VMEC++ with VMEC2000 and gives cost estimates against
 STELLOPT.
+
+## Uncertainty semantics
+
+The implemented reconstruction currently uses independent Gaussian measurement
+errors, independent Gaussian priors and the local Gauss--Newton/Laplace
+covariance
+
+\[
+C \simeq (J^T J)^{-1}
+\]
+
+for the whitened residual. The LI383 pull study in
+[benchmarks/reconstruction](benchmarks/reconstruction/README.md) is retained as
+evidence that this local covariance is meaningful for the tested case.
+
+The next UQ extensions are deliberately modest: support correlated measurement
+covariance and shared calibration/nuisance parameters, then keep the local
+Laplace approximation as the default. If the same data are compatible with
+several distinct equilibria, reconstruct each equilibrium separately and,
+when useful, report a finite mixture of their local Laplace/Gaussian
+approximations with explicit weights. Do not average the equilibrium states
+themselves.
+
+General HMC/SMC/MCMC is not a default roadmap requirement. Add it only when a
+concrete posterior is demonstrably non-Gaussian within one equilibrium basin or
+the finite local mixture is inadequate.
+
+TIAGO posterior/measurement/calibration uncertainty remains separate from a
+KIN6D numerical certificate and from KIN6D model-reduction error. They may be
+shown together but are not automatically combined into one error bar.
 
 ## Benchmark against STELLOPT xdiagno
 A manual, reproducible accuracy and performance comparison with the reference
