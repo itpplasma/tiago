@@ -14,6 +14,10 @@ later items already exist.
   matrices for large KIN6D states.
 - Keep inference UQ distinct from forward numerical/model error.
 - Do not introduce Python as a production dependency merely for inference.
+- Reuse libneo for generic interchange/coil/field functionality. When TIAGO or
+  KIN6D exposes a generic defect or missing reusable capability there, repair
+  and test libneo upstream so all existing consumers can benefit; do not keep a
+  private corrected implementation in TIAGO.
 
 ## T0 — retain the delivered magnetic reconstruction
 
@@ -21,6 +25,11 @@ Keep current vacuum/plasma diagnostics, response matrices, VMEC++ implicit
 adjoint, LM solver, local covariance, xdiagno comparison and LI383/NCSX
 benchmarks green. Resolve scientific defects in that path on their own merits;
 do not block maintenance on future KIN6D work.
+
+For shared libneo dependencies such as coil/field/interchange utilities, a
+generic bug discovered here is a libneo task: reproduce it upstream, fix it
+there, and re-run the TIAGO regression. This is part of ordinary maintenance,
+not deferred KIN6D integration work.
 
 ## T1 — first provider seam, only with a real KIN6D consumer
 
