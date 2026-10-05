@@ -155,4 +155,12 @@ normalized state/provenance contract rather than re-parsing source-code-specific
 files. libneo remains the shared interchange/convention library where
 appropriate.
 
+TIAGO follows the same upstream boy-scout rule as KIN6D: if magnetic
+diagnostics, coil handling, format conversion or a shared field utility exposes
+a generic libneo bug or missing reusable capability, add the reproducer/test
+and fix it in libneo rather than maintaining a TIAGO-only corrected copy.
+Bounded refactors should improve all consumers while preserving compatible
+entry points where practical. TIAGO-specific diagnostic likelihoods, reverse
+mode and posterior machinery remain here.
+
 Chris&AI
