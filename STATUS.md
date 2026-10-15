@@ -28,9 +28,11 @@ coil-series repetitions. Reference defects were reported upstream:
 [STELLOPT #506](https://github.com/PrincetonUniversity/STELLOPT/issues/506),
 [#507](https://github.com/PrincetonUniversity/STELLOPT/issues/507),
 [#508](https://github.com/PrincetonUniversity/STELLOPT/issues/508),
-[#509](https://github.com/PrincetonUniversity/STELLOPT/issues/509), and
-[VMEC++ #954](https://github.com/proximafusion/vmecpp/issues/954).
-The corresponding TIAGO reporting tasks are closed.
+[#509](https://github.com/PrincetonUniversity/STELLOPT/issues/509).
+The corresponding TIAGO reporting tasks are closed. The NCSX Jacobian gap
+reported as [VMEC++ #954](https://github.com/proximafusion/vmecpp/issues/954)
+was not a VMEC++ defect but the FTOL bias of the re-solved finite-difference
+reference: at FTOL 1e-18 the adjoint agrees to 2e-4 at NS 29.
 
 ## Verification and measurements
 
