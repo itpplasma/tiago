@@ -220,10 +220,17 @@ Three further savings:
 against an isolated Hessian-vector product; `ctest` runs this on LI383.
 
 **Accuracy.** The Jacobian agrees with central differences of re-solved
-equilibria to about 1e-4 on LI383. At NCSX mode numbers the agreement is only
-0.1–2.5 %, and VMEC++'s own `vmecpp.autodiff` reproduces the same gap (#27,
-upstream). It does not bias the fit, which converges to the minimum of the
-exactly evaluated chi^2.
+equilibria to about 1e-4 on LI383 and to 1.1e-4 (NS 9) and 2.2e-4 (NS 29) on
+fixed-boundary NCSX, for every parameter kind. The NCSX reference needs tight
+re-solves: the residual left at FTOL varies smoothly with the parameters and
+biases central differences by the same amount for every step, so a step sweep
+does not reveal it. At FTOL 1e-14 the apparent NCSX NS 29 error is 3e-3 to
+3e-2; it falls to 2e-4 at FTOL 1e-18 with a 1e-3 relative step. Reproduce with
+`TIAGO_TEST_VMEC_FTOL=1e-18 test_vmecpp_equilibrium input.ncsx29 workdir 1e-3`
+([VMEC++ #954](https://github.com/proximafusion/vmecpp/issues/954)). For the
+same reason, `check_jacobian` at the default `vmec_ftol` reports this bias
+rather than a Jacobian error. The fit converges to the minimum of the exactly
+evaluated chi^2.
 
 **Parameters.** `PRES_SCALE`, `CURTOR`, `PHIEDGE`, `AM(k)`, `AI(k)`, `AC(k)`
 (power-series profiles), `RBC(n,m)`, `ZBS(n,m)` and coil currents

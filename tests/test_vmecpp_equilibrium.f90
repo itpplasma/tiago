@@ -3,6 +3,10 @@ program test_vmecpp_equilibrium
     !! Usage: test_vmecpp_equilibrium <VMEC input (INDATA or JSON)> <workdir> [adjoint-only | FD step]
     !! (adjoint-only: checks 1-2 and the Jacobian timing, no finite differences,
     !! for timing large equilibria)
+    !! TIAGO_TEST_VMEC_FTOL overrides the FTOL of the re-solved equilibria
+    !! (default 1e-14). The residual of a re-solved equilibrium biases the FD
+    !! reference by the same amount for every step, so stiff cases (NCSX at
+    !! NS 29) need FTOL 1e-18 and a 1e-3 step to resolve the Jacobian to 1e-4.
     !!  1. Tiago's edge field y equals VMEC++'s wout (1.5 b(ns) - 0.5 b(ns-1)).
     !!  2. The edge VJP matches directional finite differences of the edge map.
     !!  3. The full Jacobian cot (dy/dx) (edge VJP + VMEC++ adjoint + profile
@@ -41,7 +45,20 @@ program test_vmecpp_equilibrium
     call eq%init(trim(input), trim(workdir), names, &
         covariant=trim(sheet_mode) == 'covariant')
     if (trim(mode) /= 'adjoint-only') then  ! else FTOL and NITER of the input
-        call eq%vmec%set_input('ftol', 1.0e-14_dp)
+        block
+            character(len=32) :: env
+            real(dp) :: ftol
+            ftol = 1.0e-14_dp
+            call get_environment_variable('TIAGO_TEST_VMEC_FTOL', env, status=ios)
+            if (ios == 0) then
+                read(env, *, iostat=ios) ftol
+                if (ios /= 0) error stop 'unreadable TIAGO_TEST_VMEC_FTOL'
+                if (.not. ieee_is_finite(ftol) .or. ftol <= 0.0_dp) &
+                    error stop 'TIAGO_TEST_VMEC_FTOL must be positive'
+            end if
+            print '(A,ES9.2)', 'VMEC++ FTOL: ', ftol
+            call eq%vmec%set_input('ftol', ftol)
+        end block
         call eq%vmec%set_input('niter', 20000.0_dp)
     end if
     x0 = eq%values()
@@ -136,9 +153,10 @@ program test_vmecpp_equilibrium
     end if
 
     ! 4. full Jacobian vs central differences of re-solved equilibria. Cold
-    !    solves: at FTOL = 1e-14 a solve is accurate to ~1e-7, smoothly in x
-    !    along the same (cold) path, but not across hot restarts from
-    !    different start states, which would swamp differences of 1e-5 steps.
+    !    solves: the residual left at FTOL varies smoothly in x along the same
+    !    (cold) path, but not across hot restarts from different start states,
+    !    which would swamp differences of small steps. The smooth part still
+    !    biases the FD derivative independently of the step (VMEC++ #954).
     y0 = eq%y
     allocate(cot(4, size(y0)))
     call random_number(cot)
