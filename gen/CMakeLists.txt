@@ -1,0 +1,9 @@
+cmake_minimum_required(VERSION 3.24)
+project(TiagoMseCodegen LANGUAGES Fortran)
+# Optional development tool; ordinary TIAGO builds use checked-in sources.
+set(FORTSYM_BUILD "" CACHE PATH "Built fortsym tree with include/ and lib/")
+find_library(FORTSYM_LIBRARY fortsym PATHS "${FORTSYM_BUILD}/lib" REQUIRED
+    NO_DEFAULT_PATH)
+add_executable(gen_mse gen_mse.f90)
+target_include_directories(gen_mse PRIVATE "${FORTSYM_BUILD}/include")
+target_link_libraries(gen_mse PRIVATE "${FORTSYM_LIBRARY}")

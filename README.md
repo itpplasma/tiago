@@ -75,7 +75,7 @@ a native build.
     --segrog tests/data/segrog_sample.diagno \
     --output-dir build/tests/output --seg-area 3.40e-4 --samples 8
 ```
-Each of `--flux`, `--segrog` and `--bprobes` is optional (at least one is
+Each of `--flux`, `--segrog`, `--bprobes` and `--mse` is optional (at least one is
 needed). This command emits `tiago_flux.csv` and `tiago_segrog.csv` in the output
 directory (names via `--flux-out`, `--segrog-out`). `--samples` sets the points
 per segment (midpoint rule, as DIAGNO's `int_type='midpoint'`); `--gauss` uses
@@ -111,6 +111,16 @@ signal per unit EXTCUR of each coil group (`kind,label,group,value`, as
 DIAGNO's `-mutual`), so for other coil currents the vacuum signals are
 `sum_g M_g EXTCUR_g` without re-running Biot–Savart; this makes fitting coil
 currents a linear least-squares problem.
+
+## MSE pitch angles
+`--mse file` evaluates point MSE pi-polarization angles at beam–sightline
+closest-approach midpoints and writes `tiago_mse.csv` in radians. Geometry,
+polarization conventions, the six derived coefficients, and an illustrative
+channel file are documented in [docs/mse.md](docs/mse.md). Coil and plasma
+response CSVs include local MSE Jacobians. The library also accepts caller-supplied
+Cartesian fields for internal-plasma measurements; the CLI's existing VMEC
+boundary-sheet model is valid only outside the plasma and cannot supply an
+internal MSE field.
 
 ## Plasma response
 `--plasma-wout wout.nc` adds the field of the plasma currents of a VMEC
