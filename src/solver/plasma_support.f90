@@ -17,6 +17,7 @@ module tiago_plasma_support
     !! misses the toroidal flux inside the boundary, which DIAGNO (and Tiago) add
     !! as phiedge for loops flagged idia = 1.
     use, intrinsic :: iso_fortran_env, only: dp => real64, i32 => int32, error_unit
+    use tiago_plasma_field_source, only: plasma_field_source_t
     use netcdf, only: nf90_open, nf90_close, nf90_inq_varid, nf90_get_var, &
         nf90_inquire_dimension, nf90_inq_dimid, nf90_noerr, nf90_nowrite
     implicit none
@@ -39,12 +40,10 @@ module tiago_plasma_support
         real(dp), allocatable :: bumnc(:), bvmnc(:), bumns(:), bvmns(:)
     end type vmec_boundary_t
 
-    type, public :: plasma_support_t
+    type, extends(plasma_field_source_t), public :: plasma_support_t
         real(dp), allocatable :: xs(:, :)      !! (3, n) boundary points [m]
         real(dp), allocatable :: sheet(:, :)   !! (3, n) (n x B) dS / (4 pi) [T m^2]
         real(dp) :: spacing = 0.0_dp           !! largest grid spacing [m]
-        real(dp) :: diamagnetic_flux = 0.0_dp  !! phiedge * signgs [Wb]
-        logical :: enabled = .false.
         logical :: covariant = .false., conservative = .false.
         real(dp) :: curl_norm = 0.0_dp, current_ripple = 0.0_dp
         real(dp) :: projection_norm = 0.0_dp
@@ -62,6 +61,7 @@ module tiago_plasma_support
     contains
         procedure :: init_from_vmec => plasma_init_from_vmec
         procedure :: init_from_boundary => plasma_init_from_boundary
+        procedure :: init_from_surface => plasma_init_from_surface
         procedure :: shape_response => plasma_shape_response
         procedure :: n_shape_columns => plasma_n_shape_columns
         procedure :: shape_column_name => plasma_shape_column_name
@@ -77,6 +77,33 @@ module tiago_plasma_support
     end type plasma_support_t
 
 contains
+
+    subroutine plasma_init_from_surface(self, xs, xt, xp, b, dtheta, dphi)
+        !! Reuse Tiago's virtual-casing kernels for an already sampled closed
+        !! flux surface. Tangents are Cartesian derivatives in theta and phi;
+        !! the signed volume fixes their orientation. No VMEC response columns.
+        class(plasma_support_t), intent(inout) :: self
+        real(dp), intent(in) :: xs(:, :), xt(:, :), xp(:, :), b(:, :)
+        real(dp), intent(in) :: dtheta, dphi
+        real(dp) :: ds(3), volume
+        integer :: k
+
+        call self%finalize()
+        self%xs = xs
+        allocate(self%sheet(3, size(xs, 2)))
+        volume = 0.0_dp
+        do k = 1, size(xs, 2)
+            ds = cross(xt(:, k), xp(:, k)) * (dtheta * dphi)
+            self%sheet(:, k) = cross(ds, b(:, k)) * inv_four_pi
+            volume = volume + dot_product(xs(:, k), ds) / 3.0_dp
+            self%spacing = max(self%spacing, norm2(xt(:, k)) * dtheta, &
+                norm2(xp(:, k)) * dphi)
+        end do
+        if (abs(volume) <= tiny(volume)) error stop 'degenerate casing surface'
+        self%sheet_scale = sign(dtheta * dphi * inv_four_pi, volume)
+        if (volume < 0.0_dp) self%sheet = -self%sheet
+        self%enabled = .true.
+    end subroutine plasma_init_from_surface
 
     subroutine plasma_init_from_vmec(self, wout_file, nphi, ntheta, &
             covariant, conservative)
@@ -121,6 +148,7 @@ contains
         end if
         if (nphi < 4 .or. ntheta < 4) error stop 'plasma grid needs at least 4x4 points'
         self%diamagnetic_flux = vb%phiedge * real(vb%signgs, dp)
+        self%linked_flux_known = .true.
 
         nphi_total = vb%nfp * nphi
         dphi = 2.0_dp * pi / real(nphi_total, dp)
@@ -397,6 +425,7 @@ contains
         if (allocated(self%xt)) deallocate(self%xt, self%xp, self%bu, self%bv)
         self%spacing = 0.0_dp
         self%diamagnetic_flux = 0.0_dp
+        self%linked_flux_known = .false.
         self%enabled = .false.
     end subroutine plasma_finalize
 
