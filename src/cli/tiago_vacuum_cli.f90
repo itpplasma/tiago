@@ -6,6 +6,9 @@ program tiago_vacuum_cli
     use tiago_segmented_rogowski, only: read_segmented_rogowski_file
     use tiago_bprobes, only: read_bprobe_file
     use tiago_vacuum_forward, only: vacuum_solver_t, quadrature_rule_t
+#ifdef TIAGO_ENABLE_SPECTRE
+    use tiago_spectre_source, only: spectre_source_t
+#endif
     use tiago_build_config, only: simsopt_sample_path, simsopt_sample_url, &
         download_script_path
     implicit none
@@ -24,6 +27,9 @@ program tiago_vacuum_cli
     logical :: have_flux
     logical :: have_seg
     character(len=512) :: plasma_wout
+    character(len=512) :: plasma_spectre = ''
+    real(dp) :: plasma_linked_flux = 0.0_dp
+    logical :: have_linked_flux = .false.
     integer(i32) :: plasma_nphi
     integer(i32) :: plasma_ntheta
     integer :: argc
@@ -68,9 +74,23 @@ program tiago_vacuum_cli
         call die('nothing to evaluate: pass --flux, --segrog and/or --bprobes')
     end if
     if (len_trim(coil_path) == 0 .and. len_trim(plasma_wout) == 0 .and. &
-        .not. use_plasma_sample) then
+        len_trim(plasma_spectre) == 0 .and. .not. use_plasma_sample) then
         call die('no field source: pass --coils and/or --plasma-wout')
     end if
+    if (len_trim(plasma_spectre) > 0) then
+        if (len_trim(plasma_wout) > 0 .or. use_plasma_sample) &
+            call die('--plasma-spectre and --plasma-wout/--plasma-sample '// &
+                'are mutually exclusive')
+        if (covariant_plasma .or. conservative_plasma) &
+            call die('VMEC coefficient options do not apply to --plasma-spectre')
+        if (len_trim(plasma_response_out_path) + len_trim(plasma_shape_out_path) > 0) &
+            call die('VMEC coefficient responses do not apply to --plasma-spectre')
+#ifndef TIAGO_ENABLE_SPECTRE
+        call die('--plasma-spectre requires a build with TIAGO_ENABLE_SPECTRE=ON')
+#endif
+    end if
+    if (have_linked_flux .and. len_trim(plasma_spectre) == 0) &
+        call die('--plasma-linked-flux requires --plasma-spectre')
     call validate_options(samples_per_segment, nfp_value, seg_area, plasma_nphi, plasma_ntheta)
     call prepare_plasma_support(plasma_wout, use_plasma_sample)
     call ensure_paths(output_dir, flux_out_path, segrog_out_path)
@@ -169,6 +189,16 @@ subroutine parse_options(argc, output_dir, flux_out_path, segrog_out_path, &
         case ('--plasma-contravariant')
             covariant_plasma = .false.
             conservative_plasma = .false.
+        case ('--plasma-spectre')
+            i = i + 1
+            call ensure_arg(argc, i, '--plasma-spectre')
+            call get_command_argument(i, plasma_spectre)
+        case ('--plasma-linked-flux')
+            i = i + 1
+            call ensure_arg(argc, i, '--plasma-linked-flux')
+            call get_command_argument(i, arg)
+            plasma_linked_flux = parse_real(arg, '--plasma-linked-flux')
+            have_linked_flux = .true.
         case ('--plasma-wout')
             i = i + 1
             call ensure_arg(argc, i, '--plasma-wout')
@@ -360,6 +390,9 @@ subroutine run_solver(coil_path, flux_path, segrog_path, output_dir, &
     integer(i32), intent(in) :: plasma_ntheta
 
     type(vacuum_solver_t) :: solver
+#ifdef TIAGO_ENABLE_SPECTRE
+    type(spectre_source_t) :: source
+#endif
     type(quadrature_rule_t) :: rule
     type(flux_loop_t), allocatable :: loops(:)
     type(segmented_rogowski_t), allocatable :: segs(:)
@@ -380,6 +413,19 @@ subroutine run_solver(coil_path, flux_path, segrog_path, output_dir, &
         call solver%init(coil_path)
     end if
     call solver%set_nfp(nfp_value)
+
+#ifdef TIAGO_ENABLE_SPECTRE
+    if (len_trim(plasma_spectre) > 0) then
+        if (have_linked_flux) then
+            call source%init(trim(plasma_spectre), plasma_nphi, plasma_ntheta, &
+                linked_flux=plasma_linked_flux)
+        else
+            call source%init(trim(plasma_spectre), plasma_nphi, plasma_ntheta)
+        end if
+        call solver%set_plasma_source(source)
+        call write_spectre_provenance(solver, trim(output_dir)//'/plasma_model.txt')
+    end if
+#endif
 
     if (len_trim(plasma_wout) > 0) then
         call solver%enable_plasma_from_vmec(plasma_wout, plasma_nphi, &
@@ -420,13 +466,15 @@ subroutine run_solver(coil_path, flux_path, segrog_path, output_dir, &
 
     if (have_flux .and. have_seg) then
         call solver%flux_and_segrog(loops, fluxes, segs, voltages, rule)
-        call finalize_flux_signals(loops, fluxes, solver%plasma%diamagnetic_flux)
+        call finalize_flux_signals(loops, fluxes, &
+            solver%plasma_flux(required=any(loops%idia == 1)))
         call scale_segrog_turns(segs, voltages)
         call write_result(flux_out_path, loops, fluxes)
         call write_segrog(segrog_out_path, segs, voltages)
     else if (have_flux) then
         call solver%flux_loops(loops, fluxes, rule)
-        call finalize_flux_signals(loops, fluxes, solver%plasma%diamagnetic_flux)
+        call finalize_flux_signals(loops, fluxes, &
+            solver%plasma_flux(required=any(loops%idia == 1)))
         call write_result(flux_out_path, loops, fluxes)
     else if (have_seg) then
         call solver%segrog(segs, voltages, rule)
@@ -499,6 +547,24 @@ subroutine write_response(solver, rule, loops, segs, probes, path)
     end do
     close(unit)
 end subroutine write_response
+
+subroutine write_spectre_provenance(solver, path)
+    type(vacuum_solver_t), intent(in) :: solver
+    character(len=*), intent(in) :: path
+    integer :: unit, status
+
+    open(newunit=unit, file=path, status='replace', iostat=status)
+    if (status /= 0) call die('cannot write plasma model provenance: '//path)
+    write(unit, '(A)') 'source = libneo SPECTRE'
+    write(unit, '(A)') 'equilibrium = '//trim(plasma_spectre)
+    write(unit, '(A)') 'exterior = virtual casing on plasma boundary'
+    write(unit, '(A,I0)') 'nphi_per_period = ', plasma_nphi
+    write(unit, '(A,I0)') 'ntheta = ', plasma_ntheta
+    write(unit, '(A,L1)') 'linked_flux_supplied = ', have_linked_flux
+    if (have_linked_flux) &
+        write(unit, '(A,ES24.16)') 'signed_linked_flux_Wb = ', solver%plasma_flux()
+    close(unit)
+end subroutine write_spectre_provenance
 
 subroutine write_plasma_provenance(solver, path)
     type(vacuum_solver_t), intent(in) :: solver
@@ -774,6 +840,10 @@ subroutine usage_and_stop(status)
     write(error_unit, '(A)') '       [--coil-extcur vmec_input_or_list]'
     write(error_unit, '(A)') '       [--flux-turns file] [--segrog-turns file]'
     write(error_unit, '(A)') '       [--plasma-wout file] [--plasma-sample]'
+    write(error_unit, '(A)') '       [--plasma-spectre file.h5] '// &
+        '(requires TIAGO_ENABLE_SPECTRE=ON)'
+    write(error_unit, '(A)') '       [--plasma-linked-flux Wb] '// &
+        '(signed flux for SPECTRE idia=1 loops)'
     write(error_unit, '(A)') '       [--plasma-covariant | --plasma-conservative | '// &
         '--plasma-contravariant]'
     write(error_unit, '(A)') '       [--plasma-nphi N_per_period] [--plasma-ntheta N] (default 64 64)'

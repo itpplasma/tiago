@@ -16,7 +16,8 @@ endif()
 include(FetchContent)
 
 set(TIAGO_LIBNEO_GIT "https://github.com/itpplasma/libneo.git" CACHE STRING "libneo upstream to fetch")
-set(TIAGO_LIBNEO_TAG "f1bef44e80c4508f04594d4d2ca120eaf17564f8" CACHE STRING "libneo commit/branch/tag used by Tiago")
+set(TIAGO_LIBNEO_TAG "f6090e8150c2f5b1c0afde09baadf79b50b1ffe7" CACHE STRING "libneo commit/branch/tag used by Tiago")
+option(TIAGO_ENABLE_SPECTRE "Build the libneo SPECTRE plasma source (HDF5, fortnum)" OFF)
 option(TIAGO_MATCH_LIBNEO_BRANCH "Use the matching libneo branch when available" OFF)
 # Use a local effective ref so removing an override restores the pinned default.
 set(_tiago_libneo_ref "${TIAGO_LIBNEO_TAG}")
@@ -41,8 +42,8 @@ elseif(TIAGO_MATCH_LIBNEO_BRANCH)
 endif()
 set(LIBNEO_ENABLE_TESTS OFF CACHE BOOL "Disable libneo's own tests when vendored" FORCE)
 set(ENABLE_OPENMP OFF CACHE BOOL "Disable libneo OpenMP flags unless explicitly requested" FORCE)
-# Tiago uses libneo only to read coil files; its numerics (and its own fortnum) are not needed.
-set(LIBNEO_BUILD_NUMERICS OFF CACHE BOOL "Skip libneo numerics components" FORCE)
+# The SPECTRE field and coordinates are part of libneo's numerics targets.
+set(LIBNEO_BUILD_NUMERICS ${TIAGO_ENABLE_SPECTRE} CACHE BOOL "Build libneo field evaluators" FORCE)
 
 option(TIAGO_ENABLE_OPENMP "Enable OpenMP parallelism inside Tiago loops" ON)
 
@@ -66,7 +67,15 @@ add_library(tiago_solver STATIC
     src/solver/coil_kernels.f90
     src/solver/vacuum_forward.f90
     src/solver/coil_loader.f90
+    src/solver/plasma_field_source.f90
     src/solver/plasma_support.f90)
+if(TIAGO_ENABLE_SPECTRE)
+    if(NOT TARGET LIBNEO::spectre_field)
+        message(FATAL_ERROR "SPECTRE requires libneo's LIBNEO::spectre_field target")
+    endif()
+    target_sources(tiago_solver PRIVATE src/solver/spectre_source.f90)
+    target_link_libraries(tiago_solver PUBLIC LIBNEO::spectre_field)
+endif()
 set_target_properties(tiago_solver PROPERTIES
     Fortran_STANDARD 2018
     Fortran_STANDARD_REQUIRED YES)
@@ -103,6 +112,10 @@ target_link_libraries(tiago_cli PRIVATE tiago_diagnostics)
 add_library(tiago_build_config STATIC ${TIAGO_GENERATED_DIR}/tiago_config.f90)
 
 add_executable(tiago_vacuum_cli src/cli/tiago_vacuum_cli.f90)
+set_source_files_properties(src/cli/tiago_vacuum_cli.f90 PROPERTIES Fortran_PREPROCESS ON)
+if(TIAGO_ENABLE_SPECTRE)
+    target_compile_definitions(tiago_vacuum_cli PRIVATE TIAGO_ENABLE_SPECTRE)
+endif()
 target_link_libraries(tiago_vacuum_cli PRIVATE tiago_solver tiago_build_config)
 
 # Equilibrium reconstruction (tiago_reconstruct): Levenberg-Marquardt in Tiago
@@ -237,6 +250,51 @@ endif()
 
 enable_testing()
 
+if(TIAGO_ENABLE_SPECTRE)
+    add_executable(test_spectre_source tests/test_spectre_source.f90)
+    target_link_libraries(test_spectre_source PRIVATE tiago_solver)
+    set(spectre_fixture ${libneo_SOURCE_DIR}/test/spectre/data/spectre_test.h5)
+    set(spectre_reference ${libneo_SOURCE_DIR}/test/spectre/data/reference_eval.dat)
+    add_test(NAME tiago_spectre_source COMMAND $<TARGET_FILE:test_spectre_source>
+        ${spectre_fixture} ${spectre_reference})
+    foreach(mode IN ITEMS reject_exterior reject_interior reject_missing_flux)
+        add_test(NAME tiago_spectre_${mode} COMMAND $<TARGET_FILE:test_spectre_source>
+            ${spectre_fixture} ${spectre_reference} ${mode})
+    endforeach()
+    set_tests_properties(tiago_spectre_reject_exterior PROPERTIES
+        PASS_REGULAR_EXPRESSION "virtual casing requires exterior diagnostic points")
+    set_tests_properties(tiago_spectre_reject_interior PROPERTIES
+        PASS_REGULAR_EXPRESSION "interior point outside SPECTRE chart")
+    set_tests_properties(tiago_spectre_reject_missing_flux PROPERTIES
+        PASS_REGULAR_EXPRESSION "idia=1 requires signed linked plasma flux metadata")
+    add_test(NAME tiago_cli_spectre COMMAND $<TARGET_FILE:tiago_vacuum_cli>
+        --plasma-spectre ${spectre_fixture}
+        --bprobes ${CMAKE_SOURCE_DIR}/tests/data/spectre/probes.diagno
+        --plasma-nphi 32 --plasma-ntheta 32
+        --output-dir ${CMAKE_BINARY_DIR}/tests/cli_spectre)
+    set(nested_wout ${CMAKE_BINARY_DIR}/tests/cases/wout_qa_nested.nc)
+    add_test(NAME tiago_download_wout_qa_nested COMMAND ${CMAKE_COMMAND}
+        -DURL=https://raw.githubusercontent.com/hiddenSymmetries/simsopt/9e027eac38028d57aa23777be52a781aa860e347/tests/test_files/wout_LandremanPaul2021_QA_reactorScale_lowres_reference.nc
+        -DDEST=${nested_wout} -P ${CMAKE_SOURCE_DIR}/cmake/DownloadFile.cmake)
+    set_tests_properties(tiago_download_wout_qa_nested PROPERTIES
+        FIXTURES_SETUP qa_nested TIMEOUT 120)
+    add_executable(test_spectre_vmec tests/test_spectre_vmec.f90)
+    target_link_libraries(test_spectre_vmec PRIVATE tiago_solver)
+    add_test(NAME tiago_spectre_vmec COMMAND $<TARGET_FILE:test_spectre_vmec>
+        ${CMAKE_SOURCE_DIR}/tests/data/spectre/qa_nested.h5 ${nested_wout}
+        ${CMAKE_SOURCE_DIR}/tests/data/spectre/qa_vmec_cartesian.dat)
+    add_test(NAME tiago_spectre_vmec_refined COMMAND $<TARGET_FILE:test_spectre_vmec>
+        ${CMAKE_SOURCE_DIR}/tests/data/spectre/qa_nested.h5 ${nested_wout}
+        ${CMAKE_SOURCE_DIR}/tests/data/spectre/qa_vmec_cartesian.dat 128)
+    set_tests_properties(tiago_spectre_vmec tiago_spectre_vmec_refined PROPERTIES
+        FIXTURES_REQUIRED qa_nested TIMEOUT 180)
+else()
+    add_test(NAME tiago_cli_spectre_disabled COMMAND $<TARGET_FILE:tiago_vacuum_cli>
+        --plasma-spectre absent.h5 --bprobes absent.diagno)
+    set_tests_properties(tiago_cli_spectre_disabled PROPERTIES
+        PASS_REGULAR_EXPRESSION "requires a build with TIAGO_ENABLE_SPECTRE=ON")
+endif()
+
 add_executable(tiago_coil_loader_tests tests/test_coil_loader.f90)
 target_link_libraries(tiago_coil_loader_tests PRIVATE tiago_solver)
 add_test(NAME tiago_coil_loader_tests
@@ -268,6 +326,11 @@ add_executable(test_plasma_support tests/test_plasma_support.f90)
 target_link_libraries(test_plasma_support PRIVATE tiago_solver)
 add_test(NAME tiago_plasma_support COMMAND $<TARGET_FILE:test_plasma_support> ${TIAGO_WOUT_SIMSOPT_SMALL})
 set_tests_properties(tiago_plasma_support PROPERTIES FIXTURES_REQUIRED wout_li383)
+add_executable(test_field_source tests/test_field_source.f90)
+target_link_libraries(test_field_source PRIVATE tiago_solver)
+add_test(NAME tiago_field_source COMMAND $<TARGET_FILE:test_field_source>
+    ${CMAKE_SOURCE_DIR}/tests/data/coils_sample.coils ${TIAGO_WOUT_SIMSOPT_SMALL})
+set_tests_properties(tiago_field_source PROPERTIES FIXTURES_REQUIRED wout_li383)
 add_test(NAME tiago_plasma_covariant
     COMMAND $<TARGET_FILE:test_plasma_support> ${TIAGO_WOUT_SIMSOPT_SMALL} covariant)
 set_tests_properties(tiago_plasma_covariant PROPERTIES FIXTURES_REQUIRED wout_li383)
@@ -307,7 +370,9 @@ foreach(bad IN ITEMS
         "no_source|no field source|--flux;x.diagno"
         "positional|unknown option|x.coils;x.diagno;y.diagno"
         "bad_samples|--samples expects an integer|--flux;x;--coils;y;--samples;6x"
-        "missing_value|--flux requires an argument|--coils;y;--flux")
+        "missing_value|--flux requires an argument|--coils;y;--flux"
+        "conflicting_plasma|mutually exclusive|--flux;x;--plasma-wout;y;--plasma-spectre;z"
+        "linked_flux_without_source|--plasma-linked-flux requires|--flux;x;--coils;y;--plasma-linked-flux;1")
     string(REPLACE "|" ";" parts "${bad}")
     list(POP_FRONT parts name regex)
     add_test(NAME tiago_cli_rejects_${name} COMMAND $<TARGET_FILE:tiago_vacuum_cli> ${parts})
