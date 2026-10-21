@@ -169,6 +169,79 @@ comes from `tiago_reconstruct` (below). The `equilibrium` suite of the xdiagno
 benchmark checks the chain rule against central finite differences over VMEC
 runs.
 
+## General plasma field sources
+
+`tiago_plasma_field_source::plasma_field_source_t` is the diagnostic field
+interface. Its batch methods take Cartesian points in meters and return
+exterior **plasma** B in tesla and A in tesla meters. The existing
+`plasma_support_t` implements this interface with the unchanged VMEC virtual
+casing, including its coefficient and shape responses. A solver owns a copy
+of a source installed with `solver%set_plasma_source(source)`.
+
+SPECTRE support is optional:
+
+```bash
+cmake -S . -B build-spectre -DTIAGO_ENABLE_SPECTRE=ON
+cmake --build build-spectre -j4
+OMP_NUM_THREADS=4 ctest --test-dir build-spectre --output-on-failure
+./build-spectre/tiago_vacuum_cli --plasma-spectre equilibrium.h5 \
+    --bprobes probes.diagno --output-dir signals
+```
+
+This uses libneo's `spectre_field_t`, its coordinate inverse, and its Cartesian
+transforms. The file must pass libneo's chart validity checks; a folded
+interface blend is rejected. Exterior plasma B and A come from TIAGO's existing
+virtual-casing kernels, sampled on the outer **plasma** interface. Internal islands and
+interface currents do not require nested flux surfaces inside that boundary.
+A free-boundary file uses the vacuum-side boundary field, including a physical
+boundary sheet current. A fixed-boundary file supplies only the plasma-side
+field: interpreting it as the exterior plasma source assumes no additional
+physical current sheet on that boundary. The outer boundary must be a flux
+surface; a sampled relative normal field above `1e-6` is rejected. Sensors
+must lie outside the plasma and away from the singular sheet. Increase
+`--plasma-nphi` and `--plasma-ntheta` to check quadrature convergence.
+The inverse-map guard rejects recognized interior points; libneo currently
+does not distinguish an exterior point from failed Newton convergence.
+
+For interior B, including future MSE operators, use:
+
+```fortran
+use tiago_spectre_source, only: spectre_source_t
+! source is type(spectre_source_t); solver is type(vacuum_solver_t)
+call source%init('equilibrium.h5', 64, 64)
+call solver%set_plasma_source(source)
+call solver%sample_bfield(points, bfield, interior=.true.)
+```
+
+Initialize the solver's coils first with `solver%init(coil_file)` (or `''`).
+The interior call returns the SPECTRE **total** field directly, without adding
+coils. Exterior diagnostics add the configured coil field once. Interior A,
+VMEC interior total B, MSE geometry, and SPECTRE coefficient/shape responses
+are outside this interface's implemented scope. Libneo currently cannot
+invert the singular magnetic axis; use off-axis interior sample points.
+
+Loops with `idia=1` additionally need signed global toroidal flux metadata.
+Libneo currently reads normalized interface fluxes but omits SPECTRE's
+`phiedge`; volume-local A circulations cannot replace the missing global
+quantity. Pass `--plasma-linked-flux <signed_Wb>` for these loops, or
+`linked_flux=` to `source%init`. Use the same physical sign convention as the
+VMEC correction `phiedge * signgs`. Missing metadata is rejected for linked
+loops. Library callers apply `finalize_flux_signals` with
+`solver%plasma_flux(required=any(loops%idia == 1))`. Ordinary exterior loops,
+probes, and Rogowski paths do not need this metadata. `plasma_model.txt`
+records the SPECTRE input, grid, and supplied flux. An upstream libneo
+extension should expose the signed global flux rather than duplicating its
+reader or a volume-gauge reconstruction here.
+
+Verified tests cover analytic diagnostic integrals, exact VMEC dispatch
+identity, 90 independent SPECTRE field samples, and Cartesian finite
+differences of exterior A. The nested QA cross-check uses 512 independent
+VMEC Cartesian samples (maximum relative B tolerance `2e-3`, RMS `6e-4`)
+and exterior B/A and all three diagnostics, at 64 and 128 poloidal points
+and toroidal points per field period. See [fixture provenance](tests/data/spectre/PROVENANCE.md)
+for tolerances and limitations. This vacuum, fixed-interface control is not
+a force-relaxed island equilibrium or a nonzero-plasma-current cross-check.
+
 ## Equilibrium reconstruction
 `tiago_reconstruct input.nml` fits the parameters of a VMEC input to measured
 flux loops, segmented Rogowskis and B-probes. It minimises

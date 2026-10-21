@@ -100,7 +100,7 @@ field supplied by the caller. Check `ierr == 0` before using any output.
 
 `vacuum_solver_t%mse(channels, angles, ierr, message, coil_jacobian,
 plasma_jacobian, shape_jacobian)` evaluates the existing coil kernels plus
-optional VMEC virtual-casing field at the midpoints. Its optional Jacobians
+the selected exterior plasma field source at the midpoints. Its optional Jacobians
 have `(nchannel,nparameter)` shape. Coil columns follow EXTCUR group order;
 plasma columns follow the existing `mode_column_name`/`shape_column_name` APIs.
 Coil derivatives hold the plasma source fixed; they do not re-solve equilibrium.

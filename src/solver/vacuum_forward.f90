@@ -15,6 +15,7 @@ module tiago_vacuum_forward
         bprobe_t, mse_channel_t
     use tiago_mse, only: mse_geometry, mse_angles
     use tiago_plasma_support, only: plasma_support_t, vmec_boundary_t
+    use tiago_plasma_field_source, only: plasma_field_source_t
     implicit none
     private
 
@@ -32,6 +33,7 @@ module tiago_vacuum_forward
         logical :: is_ready = .false.
         integer(i32) :: nfp = 1_i32
         type(plasma_support_t) :: plasma
+        class(plasma_field_source_t), allocatable :: field_source
         real(dp), allocatable :: x(:), y(:), z(:)  !! coil nodes [m] (response matrices)
         integer, allocatable :: group(:)           !! coil group of every node
         real(dp), allocatable :: unit_current(:)   !! current per unit EXTCUR [A]
@@ -42,6 +44,9 @@ module tiago_vacuum_forward
         procedure :: set_nfp => vacuum_solver_set_nfp
         procedure :: enable_plasma_from_vmec => vacuum_solver_enable_plasma_from_vmec
         procedure :: enable_plasma_from_boundary => vacuum_solver_enable_plasma_from_boundary
+        procedure :: set_plasma_source
+        procedure :: plasma_flux
+        procedure :: sample_bfield
         procedure :: flux_loops => vacuum_solver_flux_loops
         procedure :: segrog => vacuum_solver_segrog
         procedure :: flux_and_segrog => vacuum_solver_flux_and_segrog
@@ -104,6 +109,7 @@ contains
         class(vacuum_solver_t), intent(inout) :: self
         self%is_ready = .false.
         call self%plasma%finalize()
+        if (allocated(self%field_source)) deallocate(self%field_source)
     end subroutine vacuum_solver_finalize
 
     subroutine vacuum_solver_enable_plasma_from_vmec(self, wout_file, nphi, ntheta, &
@@ -115,6 +121,7 @@ contains
 
         logical, intent(in), optional :: covariant, conservative
 
+        if (allocated(self%field_source)) deallocate(self%field_source)
         call self%plasma%init_from_vmec(trim(wout_file), nphi, ntheta, &
             covariant, conservative)
     end subroutine vacuum_solver_enable_plasma_from_vmec
@@ -126,8 +133,92 @@ contains
         integer(i32), intent(in) :: nphi
         integer(i32), intent(in) :: ntheta
 
+        if (allocated(self%field_source)) deallocate(self%field_source)
         call self%plasma%init_from_boundary(vb, nphi, ntheta)
     end subroutine vacuum_solver_enable_plasma_from_boundary
+
+    subroutine set_plasma_source(self, source)
+        !! Own a copy, so the caller's source may go out of scope safely.
+        class(vacuum_solver_t), intent(inout) :: self
+        class(plasma_field_source_t), intent(in) :: source
+        class(plasma_field_source_t), allocatable :: replacement
+
+        if (.not. source%has_data()) error stop 'plasma source not initialized'
+        allocate(replacement, source=source)
+        call move_alloc(replacement, self%field_source)
+        call self%plasma%finalize()
+    end subroutine set_plasma_source
+
+    real(dp) function plasma_flux(self, required)
+        class(vacuum_solver_t), intent(in) :: self
+        logical, intent(in), optional :: required
+        logical :: needs_flux
+
+        needs_flux = .true.
+        if (present(required)) needs_flux = required
+        plasma_flux = self%plasma%diamagnetic_flux
+        if (allocated(self%field_source)) then
+            if (needs_flux .and. .not. self%field_source%linked_flux_known) &
+                error stop 'idia=1 requires signed linked plasma flux metadata'
+            plasma_flux = self%field_source%diamagnetic_flux
+        end if
+    end function plasma_flux
+
+    subroutine sample_bfield(self, points, bfield, interior)
+        !! Total B [T] at Cartesian points [m]. Interior evaluation uses the
+        !! equilibrium's total field directly (e.g. MSE), without adding coils.
+        class(vacuum_solver_t), intent(in) :: self
+        real(dp), intent(in) :: points(:, :)
+        real(dp), intent(out) :: bfield(:, :)
+        logical, intent(in), optional :: interior
+        real(dp) :: bp(3, size(points, 2))
+
+        call assert_ready(self)
+        if (present(interior)) then
+            if (interior) then
+                if (allocated(self%field_source)) then
+                    call self%field_source%sample_interior_bfield(points, bfield)
+                else
+                    call self%plasma%sample_interior_bfield(points, bfield)
+                end if
+                return
+            end if
+        end if
+        call self%coils%field(points, bfield)
+        call sample_plasma(self, points, bp)
+        bfield = bfield + bp
+    end subroutine sample_bfield
+
+    subroutine sample_plasma(self, points, values, potential)
+        !! Both VMEC and other sources pass through the abstract interface.
+        class(vacuum_solver_t), intent(in) :: self
+        real(dp), intent(in) :: points(:, :)
+        real(dp), intent(out) :: values(:, :)
+        logical, intent(in), optional :: potential
+
+        if (allocated(self%field_source)) then
+            call sample_source(self%field_source, points, values, potential)
+        else
+            call sample_source(self%plasma, points, values, potential)
+        end if
+    end subroutine sample_plasma
+
+    subroutine sample_source(source, points, values, potential)
+        class(plasma_field_source_t), intent(in) :: source
+        real(dp), intent(in) :: points(:, :)
+        real(dp), intent(out) :: values(:, :)
+        logical, intent(in), optional :: potential
+
+        values = 0.0_dp
+        if (.not. source%has_data()) return
+        if (present(potential)) then
+            if (potential) then
+                call source%sample_vector_potential(points, values)
+                return
+            end if
+        end if
+        call source%sample_bfield(points, values)
+    end subroutine sample_source
 
     integer function vacuum_solver_n_groups(self)
         class(vacuum_solver_t), intent(in) :: self
@@ -196,7 +287,7 @@ contains
         type(bprobe_t), allocatable :: probes(:)
         type(flux_loop_t), allocatable :: loops(:)
         type(segmented_rogowski_t), allocatable :: segs(:)
-        real(dp), allocatable :: points(:, :), b(:, :), bp(:, :), gradient(:, :)
+        real(dp), allocatable :: points(:, :), b(:, :), gradient(:, :)
         real(dp), allocatable :: fr(:, :), sr(:, :), pr(:, :)
         real(dp), allocatable :: fs(:, :), ss(:, :), ps(:, :)
         real(dp) :: coefficients(6)
@@ -213,12 +304,7 @@ contains
             call mse_geometry(channels(j), points(:, j), coefficients, ierr, message)
             if (ierr /= 0) return
         end do
-        call self%coils%field(points, b)
-        if (self%plasma%has_data()) then
-            allocate(bp(3, size(channels)))
-            call self%plasma%sample_bfield(points, bp)
-            b = b + bp
-        end if
+        call self%sample_bfield(points, b)
         call mse_angles(channels, b, angles, ierr, message, gradient)
         if (ierr /= 0) return
         if (.not. (present(coil_jacobian) .or. present(plasma_jacobian) &
@@ -307,6 +393,8 @@ contains
         integer :: j, nc, ng
         logical :: shape
 
+        if (allocated(self%field_source)) &
+            error stop 'coefficient responses require the VMEC plasma source'
         if (.not. self%plasma%has_data()) error stop 'plasma response needs --plasma-wout'
         shape = present(flux_shape)
         nc = self%plasma%n_mode_columns()
@@ -370,9 +458,9 @@ contains
         call sample_loops(loops, self%nfp, rule, points, dls, owner)
         allocate(a(3, size(owner)))
         call coils%vector_potential(points, a)
-        if (with_plasma .and. self%plasma%has_data()) then
+        if (with_plasma) then
             allocate(ap(3, size(owner)))
-            call self%plasma%sample_vector_potential(points, ap)
+            call sample_plasma(self, points, ap, potential=.true.)
             a = a + ap
         end if
         fluxes = 0.0_dp
@@ -398,9 +486,9 @@ contains
         call sample_segrogs(segs, rule, points, dls, owner)
         allocate(b(3, size(owner)))
         call coils%field(points, b)
-        if (with_plasma .and. self%plasma%has_data()) then
+        if (with_plasma) then
             allocate(bp(3, size(owner)))
-            call self%plasma%sample_bfield(points, bp)
+            call sample_plasma(self, points, bp)
             b = b + bp
         end if
         signals = 0.0_dp
@@ -422,8 +510,8 @@ contains
             points(:, j) = probes(j)%position
         end do
         call coils%field(points, b)
-        if (with_plasma .and. self%plasma%has_data()) then
-            call self%plasma%sample_bfield(points, bp)
+        if (with_plasma) then
+            call sample_plasma(self, points, bp)
             b = b + bp
         end if
         do j = 1, size(probes)
