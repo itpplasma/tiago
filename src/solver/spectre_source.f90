@@ -6,6 +6,7 @@ module tiago_spectre_source
     use tiago_plasma_support, only: plasma_support_t
     use field_spectre, only: spectre_field_t, create_spectre_field
     use field_base, only: magnetic_field_t
+    use libneo_coordinates, only: SPECTRE_SUCCESS, SPECTRE_OUTSIDE_DOMAIN
     implicit none
     private
     public :: spectre_source_t
@@ -125,7 +126,7 @@ contains
 !$omp parallel do private(j, u, ierr) schedule(static)
         do j = 1, size(points, 2)
             call locate(self, points(:, j), u, ierr)
-            if (ierr /= 0) error stop 'interior point outside SPECTRE chart'
+            if (ierr /= SPECTRE_SUCCESS) error stop 'cannot locate interior SPECTRE point'
             if (u(1) >= real(self%plasma_volumes, dp)) &
                 error stop 'interior point outside SPECTRE plasma'
             call chart_bfield(self%field, u, values(:, j))
@@ -156,8 +157,8 @@ contains
     end subroutine locate
 
     subroutine require_exterior(self, points)
-        !! Best-effort guard only: libneo currently uses the same inverse-map
-        !! status for exterior points and nonconvergence. Callers own the domain.
+        !! Accept certified chart exterior or a located vacuum-volume point.
+        !! Numerical failure and unresolved membership do not establish exterior.
         class(spectre_source_t), intent(in) :: self
         real(dp), intent(in) :: points(:, :)
         real(dp) :: u(3)
@@ -166,7 +167,9 @@ contains
         if (.not. self%enabled) error stop 'SPECTRE source not initialized'
         do j = 1, size(points, 2)
             call locate(self, points(:, j), u, ierr)
-            if (ierr /= 0) cycle
+            if (ierr == SPECTRE_OUTSIDE_DOMAIN) cycle
+            if (ierr /= SPECTRE_SUCCESS) &
+                error stop 'cannot determine SPECTRE diagnostic domain'
             if (u(1) <= real(self%plasma_volumes, dp) + 1.0e-9_dp) &
                 error stop 'virtual casing requires exterior diagnostic points'
         end do
