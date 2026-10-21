@@ -1,0 +1,6 @@
+# Illustrative Cartesian geometry, NOT measured LHD BL3 geometry.
+# label beam_point(3) beam_direction(3) sight_point(3) sight_direction(3)
+#       reference(3) max_gap[m]    (one complete channel per line)
+2
+NOMINAL_01 3 -1 0  1 1 0  6 0 0  1 0 0  0 0 1  0.001
+NOMINAL_02 1 3 0.1  -1 1 0  0 6 0.1  0 1 0  0 0 1  0.001

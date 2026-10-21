@@ -4,6 +4,8 @@ program tiago_vacuum_cli
     use tiago_diagnostic_types, only: flux_loop_t, segmented_rogowski_t, bprobe_t
     use tiago_flux_loops, only: read_flux_loop_file, finalize_flux_signals
     use tiago_segmented_rogowski, only: read_segmented_rogowski_file
+    use tiago_mse, only: read_mse_file
+    use tiago_diagnostic_types, only: mse_channel_t
     use tiago_bprobes, only: read_bprobe_file
     use tiago_vacuum_forward, only: vacuum_solver_t, quadrature_rule_t
 #ifdef TIAGO_ENABLE_SPECTRE
@@ -40,6 +42,7 @@ program tiago_vacuum_cli
     character(len=512) :: bprobe_path = '', bprobe_out_path = 'tiago_bprobes.csv'
     character(len=512) :: bprobe_turn_path = '', response_out_path = ''
     character(len=512) :: plasma_response_out_path = '', plasma_shape_out_path = ''
+    character(len=512) :: mse_path = '', mse_out_path = 'tiago_mse.csv'
     logical :: rphiz = .false.
     logical :: use_gauss = .false.   ! Gauss-Legendre instead of midpoint samples
 
@@ -70,8 +73,9 @@ program tiago_vacuum_cli
         use_plasma_sample)
     have_flux = len_trim(flux_path) > 0
     have_seg = len_trim(segrog_path) > 0
-    if (.not. (have_flux .or. have_seg .or. len_trim(bprobe_path) > 0)) then
-        call die('nothing to evaluate: pass --flux, --segrog and/or --bprobes')
+    if (.not. (have_flux .or. have_seg .or. len_trim(bprobe_path) > 0 &
+        .or. len_trim(mse_path) > 0)) then
+        call die('nothing to evaluate: pass --flux, --segrog, --bprobes and/or --mse')
     end if
     if (len_trim(coil_path) == 0 .and. len_trim(plasma_wout) == 0 .and. &
         len_trim(plasma_spectre) == 0 .and. .not. use_plasma_sample) then
@@ -215,6 +219,14 @@ subroutine parse_options(argc, output_dir, flux_out_path, segrog_out_path, &
             plasma_ntheta = parse_int(arg, '--plasma-ntheta')
         case ('--plasma-sample')
             use_plasma_sample = .true.
+        case ('--mse')
+            i = i + 1
+            call ensure_arg(argc, i, '--mse')
+            call get_command_argument(i, mse_path)
+        case ('--mse-out')
+            i = i + 1
+            call ensure_arg(argc, i, '--mse-out')
+            call get_command_argument(i, mse_out_path)
         case ('--bprobes')
             i = i + 1
             call ensure_arg(argc, i, '--bprobes')
@@ -269,6 +281,7 @@ subroutine ensure_paths(output_dir, flux_out_path, segrog_out_path)
     call in_output_dir(output_dir, flux_out_path)
     call in_output_dir(output_dir, segrog_out_path)
     call in_output_dir(output_dir, bprobe_out_path)
+    call in_output_dir(output_dir, mse_out_path)
     if (len_trim(response_out_path) > 0) call in_output_dir(output_dir, response_out_path)
     if (len_trim(plasma_response_out_path) > 0) then
         call in_output_dir(output_dir, plasma_response_out_path)
@@ -503,12 +516,77 @@ subroutine run_solver(coil_path, flux_path, segrog_path, output_dir, &
             trim(plasma_response_out_path), trim(plasma_shape_out_path))
     end if
 
+    if (len_trim(mse_path) > 0) call write_mse_results(solver)
+
     call solver%finalize()
 
     if (have_flux) call check_finite('flux', loops_labels(loops), fluxes)
     if (have_seg) call check_finite('segrog', segrog_labels(segs), voltages)
     if (allocated(probes)) call check_finite('B-probe', probe_labels(probes), probe_values)
 end subroutine run_solver
+
+subroutine write_mse_results(solver)
+    type(vacuum_solver_t), intent(in) :: solver
+    type(mse_channel_t), allocatable :: channels(:)
+    real(dp), allocatable :: angles(:), coil_jac(:, :), plasma_jac(:, :), shape_jac(:, :)
+    integer(i32) :: ierr
+    integer :: unit, i, c, m, n
+    character(len=:), allocatable :: message, coefficient
+
+    call read_mse_file(trim(mse_path), channels, ierr, message)
+    if (ierr /= 0) call die('MSE parse failed: '//message)
+    if (solver%plasma%has_data()) then
+        write(error_unit, '(A)') 'WARNING: MSE uses the boundary-sheet field; '// &
+            'inside the plasma this is not the physical internal field (docs/mse.md).'
+    end if
+    if (len_trim(plasma_shape_out_path) > 0) then
+        call solver%mse(channels, angles, ierr, message, coil_jac, plasma_jac, shape_jac)
+    else if (len_trim(plasma_response_out_path) > 0) then
+        call solver%mse(channels, angles, ierr, message, coil_jac, plasma_jac)
+    else
+        call solver%mse(channels, angles, ierr, message, coil_jac)
+    end if
+    if (ierr /= 0) call die('MSE evaluation failed: '//message)
+    open(newunit=unit, file=trim(mse_out_path), action='write', status='replace')
+    write(unit, '(A)') 'label,gamma_rad'
+    do i = 1, size(channels)
+        write(unit, '(A,",",ES24.16)') channels(i)%label, angles(i)
+    end do
+    close(unit)
+    if (len_trim(response_out_path) > 0) then
+        open(newunit=unit, file=trim(response_out_path), position='append', status='old')
+        do c = 1, size(coil_jac, 2)
+            do i = 1, size(channels)
+                write(unit, '(A,",",I0,",",ES24.16)') &
+                    'mse,'//channels(i)%label, c, coil_jac(i, c)
+            end do
+        end do
+        close(unit)
+    end if
+    if (len_trim(plasma_response_out_path) > 0) then
+        open(newunit=unit, file=trim(plasma_response_out_path), &
+            position='append', status='old')
+        do c = 1, size(plasma_jac, 2)
+            call solver%plasma%mode_column_name(c, coefficient, m, n)
+            do i = 1, size(channels)
+                write(unit, '(A,2(",",I0),",",ES24.16)') &
+                    'mse,'//channels(i)%label//','//coefficient, m, n, plasma_jac(i, c)
+            end do
+        end do
+        close(unit)
+    end if
+    if (len_trim(plasma_shape_out_path) > 0) then
+        open(newunit=unit, file=trim(plasma_shape_out_path), position='append', status='old')
+        do c = 1, size(shape_jac, 2)
+            call solver%plasma%shape_column_name(c, coefficient, m, n)
+            do i = 1, size(channels)
+                write(unit, '(A,2(",",I0),",",ES24.16)') &
+                    'mse,'//channels(i)%label//','//coefficient, m, n, shape_jac(i, c)
+            end do
+        end do
+        close(unit)
+    end if
+end subroutine write_mse_results
 
 subroutine write_response(solver, rule, loops, segs, probes, path)
     !! kind,label,group,value: signal per unit EXTCUR of each coil group, with
@@ -848,7 +926,8 @@ subroutine usage_and_stop(status)
         '--plasma-contravariant]'
     write(error_unit, '(A)') '       [--plasma-nphi N_per_period] [--plasma-ntheta N] (default 64 64)'
     write(error_unit, '(A)') '       [--bprobes file [--rphiz] [--bprobe-out file] [--bprobe-turns file]]'
-    write(error_unit, '(A)') '       [--response-out file]  (signals per unit EXTCUR per coil group)'
+    write(error_unit, '(A)') '       [--mse file [--mse-out file]] (pi angle in radians)'
+    write(error_unit, '(A)') '       [--response-out file]  (unit EXTCUR response; MSE: local Jacobian)'
     write(error_unit, '(A)') '       [--plasma-response-out file]  (d signal / d VMEC boundary B coefficients)'
     write(error_unit, '(A)') '       [--plasma-shape-response-out file]  (d signal / d boundary rmnc, zmns)'
     if (status == 0) stop

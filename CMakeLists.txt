@@ -57,7 +57,10 @@ add_library(tiago_diagnostics STATIC
     src/diagnostics/diagnostic_types.f90
     src/diagnostics/flux_loops.f90
     src/diagnostics/segmented_rogowski.f90
-    src/diagnostics/bprobes.f90)
+    src/diagnostics/bprobes.f90
+    src/generated/mse_rows.f90
+    src/generated/mse_local.f90
+    src/diagnostics/mse.f90)
 set_target_properties(tiago_diagnostics PROPERTIES
     Fortran_STANDARD 2018
     Fortran_STANDARD_REQUIRED YES)
@@ -295,6 +298,11 @@ else()
         PASS_REGULAR_EXPRESSION "requires a build with TIAGO_ENABLE_SPECTRE=ON")
 endif()
 
+add_executable(test_mse tests/test_mse.f90)
+target_link_libraries(test_mse PRIVATE tiago_solver)
+add_test(NAME tiago_mse COMMAND $<TARGET_FILE:test_mse>
+    ${CMAKE_SOURCE_DIR}/tests/data ${CMAKE_SOURCE_DIR}/examples/mse_channels.txt)
+
 add_executable(tiago_coil_loader_tests tests/test_coil_loader.f90)
 target_link_libraries(tiago_coil_loader_tests PRIVATE tiago_solver)
 add_test(NAME tiago_coil_loader_tests
@@ -319,6 +327,14 @@ add_test(NAME tiago_download_wout_li383
     COMMAND ${CMAKE_COMMAND} -DURL=${TIAGO_WOUT_SIMSOPT_SMALL_URL} -DDEST=${TIAGO_WOUT_SIMSOPT_SMALL}
             -P ${CMAKE_SOURCE_DIR}/cmake/DownloadFile.cmake)
 set_tests_properties(tiago_download_wout_li383 PROPERTIES FIXTURES_SETUP wout_li383 TIMEOUT 120)
+add_executable(test_mse_plasma tests/test_mse_plasma.f90)
+target_link_libraries(test_mse_plasma PRIVATE tiago_solver)
+foreach(mode IN ITEMS contravariant covariant conservative)
+    add_test(NAME tiago_mse_plasma_${mode} COMMAND $<TARGET_FILE:test_mse_plasma>
+        ${TIAGO_WOUT_SIMSOPT_SMALL} ${CMAKE_SOURCE_DIR}/tests/data/mse_coils.coils ${mode})
+    set_tests_properties(tiago_mse_plasma_${mode} PROPERTIES FIXTURES_REQUIRED wout_li383)
+endforeach()
+
 add_executable(test_plasma_projection tests/test_plasma_projection.f90)
 target_link_libraries(test_plasma_projection PRIVATE tiago_solver)
 add_test(NAME tiago_plasma_projection COMMAND $<TARGET_FILE:test_plasma_projection>)
@@ -357,6 +373,11 @@ foreach(case IN ITEMS purely_toroidal_field_reference LandremanPaul2021_QA_lowre
     set_tests_properties(tiago_plasma_vacuum_conservative_${case} PROPERTIES
         FIXTURES_REQUIRED wout_${case})
 endforeach()
+
+add_test(NAME tiago_mse_cli
+    COMMAND sh ${CMAKE_SOURCE_DIR}/tests/mse_cli.sh $<TARGET_FILE:tiago_vacuum_cli>
+        ${CMAKE_SOURCE_DIR}/tests/data/mse_coils.coils
+        ${CMAKE_SOURCE_DIR}/examples/mse_channels.txt ${CMAKE_BINARY_DIR}/tests/mse_cli)
 
 # CLI: the README example and argument errors (message, exit status 1)
 add_test(NAME tiago_cli_sample

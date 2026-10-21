@@ -45,7 +45,7 @@ program test_field_source
     use tiago_plasma_support, only: plasma_support_t
     use tiago_vacuum_forward, only: vacuum_solver_t
     use tiago_diagnostic_types, only: flux_loop_t, segmented_rogowski_t, &
-                                      bprobe_t, loop_point_t
+                                      bprobe_t, loop_point_t, mse_channel_t
     use tiago_flux_loops, only: finalize_flux_signals
     implicit none
     type(uniform_source_t) :: source
@@ -54,9 +54,12 @@ program test_field_source
     type(flux_loop_t), allocatable :: loops(:)
     type(segmented_rogowski_t), allocatable :: segs(:)
     type(bprobe_t) :: probes(1)
+    type(mse_channel_t) :: channels(1)
     real(dp), allocatable :: signals(:), reference(:)
     real(dp) :: points(3, 2), b(3, 2), expected(3, 2), err
     character(len=1024) :: coilfile, wout
+    character(len=:), allocatable :: message
+    integer :: ierr
 
     call get_command_argument(1, coilfile)
     call get_command_argument(2, wout)
@@ -87,6 +90,18 @@ program test_field_source
     probes(1)%eff_area = 0.25_dp
     call solver%bprobes(probes, signals)
     call check(abs(signals(1) - 0.5_dp), 1.0e-14_dp, 'uniform probe')
+
+    channels(1)%beam_point = [1.0_dp, 0.0_dp, 0.0_dp]
+    channels(1)%beam_direction = [1.0_dp, 1.0_dp, 0.0_dp]
+    channels(1)%sight_point = [3.0_dp, 1.0_dp, 0.0_dp]
+    channels(1)%sight_direction = [1.0_dp, 0.0_dp, 0.0_dp]
+    call solver%mse(channels, signals, ierr, message)
+    if (ierr /= 0) then
+        print '(A)', message
+        error stop 'MSE did not sample the selected plasma source'
+    end if
+    call check(abs(signals(1) + acos(-1.0_dp)/2.0_dp), 1.0e-14_dp, &
+        'uniform vertical field MSE polarization')
 
     call with_coils%init(trim(coilfile))
     call with_coils%set_plasma_source(source)

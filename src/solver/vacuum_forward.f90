@@ -11,7 +11,9 @@ module tiago_vacuum_forward
     use neo_biotsavart_field, only: biotsavart_field_t
     use tiago_coil_loader, only: load_coils_into_field
     use tiago_coil_kernels, only: coil_set_t, build_coil_set
-    use tiago_diagnostic_types, only: flux_loop_t, segmented_rogowski_t, bprobe_t
+    use tiago_diagnostic_types, only: flux_loop_t, segmented_rogowski_t, &
+        bprobe_t, mse_channel_t
+    use tiago_mse, only: mse_geometry, mse_angles
     use tiago_plasma_support, only: plasma_support_t, vmec_boundary_t
     use tiago_plasma_field_source, only: plasma_field_source_t
     implicit none
@@ -49,6 +51,7 @@ module tiago_vacuum_forward
         procedure :: segrog => vacuum_solver_segrog
         procedure :: flux_and_segrog => vacuum_solver_flux_and_segrog
         procedure :: bprobes => vacuum_solver_bprobes
+        procedure :: mse => vacuum_solver_mse
         procedure :: response => vacuum_solver_response
         procedure :: plasma_response => vacuum_solver_plasma_response
         procedure :: n_groups => vacuum_solver_n_groups
@@ -269,6 +272,61 @@ contains
         call assert_ready(self)
         signals = probe_signals(self, self%coils, probes, .true.)
     end subroutine vacuum_solver_bprobes
+
+    subroutine vacuum_solver_mse(self, channels, angles, ierr, message, &
+            coil_jacobian, plasma_jacobian, shape_jacobian)
+        !! Local angle Jacobians at the current total field, in rad / parameter.
+        !! The existing virtual-casing field is only physical outside the plasma.
+        class(vacuum_solver_t), intent(in) :: self
+        type(mse_channel_t), intent(in) :: channels(:)
+        real(dp), allocatable, intent(out) :: angles(:)
+        integer(i32), intent(out) :: ierr
+        character(len=:), allocatable, intent(out) :: message
+        real(dp), allocatable, intent(out), optional :: coil_jacobian(:, :), &
+            plasma_jacobian(:, :), shape_jacobian(:, :)
+        type(bprobe_t), allocatable :: probes(:)
+        type(flux_loop_t), allocatable :: loops(:)
+        type(segmented_rogowski_t), allocatable :: segs(:)
+        real(dp), allocatable :: points(:, :), b(:, :), gradient(:, :)
+        real(dp), allocatable :: fr(:, :), sr(:, :), pr(:, :)
+        real(dp), allocatable :: fs(:, :), ss(:, :), ps(:, :)
+        real(dp) :: coefficients(6)
+        integer :: j
+
+        call assert_ready(self)
+        ierr = 1_i32
+        message = 'MSE plasma Jacobian requires a plasma source'
+        if (present(plasma_jacobian) .or. present(shape_jacobian)) then
+            if (.not. self%plasma%has_data()) return
+        end if
+        allocate(points(3, size(channels)), b(3, size(channels)))
+        do j = 1, size(channels)
+            call mse_geometry(channels(j), points(:, j), coefficients, ierr, message)
+            if (ierr /= 0) return
+        end do
+        call self%sample_bfield(points, b)
+        call mse_angles(channels, b, angles, ierr, message, gradient)
+        if (ierr /= 0) return
+        if (.not. (present(coil_jacobian) .or. present(plasma_jacobian) &
+            .or. present(shape_jacobian))) return
+        ! A probe with normal dgamma/dB contracts every existing field response.
+        allocate(probes(size(channels)))
+        do j = 1, size(channels)
+            probes(j)%position = points(:, j)
+            probes(j)%normal = gradient(:, j)
+        end do
+        if (present(coil_jacobian)) then
+            call self%response(loops, segs, probes, fr, sr, coil_jacobian)
+        end if
+        if (present(shape_jacobian)) then
+            call self%plasma_response(loops, segs, probes, fr, sr, pr, &
+                flux_shape=fs, seg_shape=ss, probe_shape=ps)
+            shape_jacobian = ps
+            if (present(plasma_jacobian)) plasma_jacobian = pr
+        else if (present(plasma_jacobian)) then
+            call self%plasma_response(loops, segs, probes, fr, sr, plasma_jacobian)
+        end if
+    end subroutine vacuum_solver_mse
 
     subroutine vacuum_solver_response(self, loops, segs, probes, flux_resp, seg_resp, &
             probe_resp, rule)
