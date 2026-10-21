@@ -16,7 +16,7 @@ endif()
 include(FetchContent)
 
 set(TIAGO_LIBNEO_GIT "https://github.com/itpplasma/libneo.git" CACHE STRING "libneo upstream to fetch")
-set(TIAGO_LIBNEO_TAG "f6090e8150c2f5b1c0afde09baadf79b50b1ffe7" CACHE STRING "libneo commit/branch/tag used by Tiago")
+set(TIAGO_LIBNEO_TAG "dd692e80d269b819029bf8c025465616bb9527ab" CACHE STRING "libneo commit/branch/tag used by Tiago")
 option(TIAGO_ENABLE_SPECTRE "Build the libneo SPECTRE plasma source (HDF5, fortnum)" OFF)
 option(TIAGO_MATCH_LIBNEO_BRANCH "Use the matching libneo branch when available" OFF)
 # Use a local effective ref so removing an override restores the pinned default.
@@ -267,7 +267,7 @@ if(TIAGO_ENABLE_SPECTRE)
     set_tests_properties(tiago_spectre_reject_exterior PROPERTIES
         PASS_REGULAR_EXPRESSION "virtual casing requires exterior diagnostic points")
     set_tests_properties(tiago_spectre_reject_interior PROPERTIES
-        PASS_REGULAR_EXPRESSION "interior point outside SPECTRE chart")
+        PASS_REGULAR_EXPRESSION "cannot locate interior SPECTRE point")
     set_tests_properties(tiago_spectre_reject_missing_flux PROPERTIES
         PASS_REGULAR_EXPRESSION "idia=1 requires signed linked plasma flux metadata")
     add_test(NAME tiago_cli_spectre COMMAND $<TARGET_FILE:tiago_vacuum_cli>
