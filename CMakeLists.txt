@@ -16,7 +16,7 @@ endif()
 include(FetchContent)
 
 set(TIAGO_LIBNEO_GIT "https://github.com/itpplasma/libneo.git" CACHE STRING "libneo upstream to fetch")
-set(TIAGO_LIBNEO_TAG "dd692e80d269b819029bf8c025465616bb9527ab" CACHE STRING "libneo commit/branch/tag used by Tiago")
+set(TIAGO_LIBNEO_TAG "42b04688a2fa2805bb84273c68dc35e78b50f72e" CACHE STRING "libneo commit/branch/tag used by Tiago")
 option(TIAGO_ENABLE_SPECTRE "Build the libneo SPECTRE plasma source (HDF5, fortnum)" OFF)
 option(TIAGO_MATCH_LIBNEO_BRANCH "Use the matching libneo branch when available" OFF)
 # Use a local effective ref so removing an override restores the pinned default.
@@ -200,6 +200,15 @@ if(TIAGO_ENABLE_RECONSTRUCTION)
             -DNETCDF_URL=${TIAGO_VMECPP_NETCDF_URL} -P ${CMAKE_SOURCE_DIR}/cmake/PatchVmecpp.cmake
         EXCLUDE_FROM_ALL)
     FetchContent_MakeAvailable(vmecpp)
+    # VMEC++ builds Release with ThinLTO. Enzyme >= 0.0.303 with Clang 23 then
+    # defers its pass to link time and leaves __enzyme_* unresolved unless lld
+    # loads LLDEnzyme; compiling the two Enzyme translation units without LTO
+    # runs the pass at compile time with every toolchain.
+    set_source_files_properties(
+        ${vmecpp_SOURCE_DIR}/src/vmecpp/cpp/vmecpp/vmec/ideal_mhd_model/exact_force_jvp.cc
+        ${vmecpp_SOURCE_DIR}/src/vmecpp/cpp/vmecpp/vmec/ideal_mhd_model/exact_force_vjp.cc
+        DIRECTORY ${vmecpp_SOURCE_DIR}
+        PROPERTIES COMPILE_OPTIONS "-march=x86-64;-O2;-fno-lto;-fplugin=${TIAGO_ENZYME_PLUGIN}")
     FetchContent_GetProperties(eigen)
     FetchContent_GetProperties(abseil-cpp)
     FetchContent_GetProperties(abscab-cpp)
