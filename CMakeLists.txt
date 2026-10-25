@@ -71,9 +71,18 @@ add_library(tiago_diagnostics STATIC
     src/generated/mse_rows.f90
     src/generated/mse_local.f90
     src/diagnostics/mse.f90
+    src/diagnostics/sensor_set.f90
     src/generated/hermite_basis.f90
+    src/generated/circular_state.f90
+    src/generated/cold_resonance.f90
     src/diagnostics/radial_interp.f90
-    src/diagnostics/real_space_state.f90)
+    src/diagnostics/real_space_state.f90
+    src/diagnostics/label_profile.f90
+    src/diagnostics/analytic_state.f90
+    src/diagnostics/los_geometry.f90
+    src/diagnostics/thomson.f90
+    src/diagnostics/ece.f90
+    src/diagnostics/line_integrals.f90)
 set_target_properties(tiago_diagnostics PROPERTIES
     Fortran_STANDARD 2018
     Fortran_STANDARD_REQUIRED YES)
@@ -84,7 +93,9 @@ add_library(tiago_solver STATIC
     src/solver/vacuum_forward.f90
     src/solver/coil_loader.f90
     src/solver/plasma_field_source.f90
-    src/solver/plasma_support.f90)
+    src/solver/plasma_support.f90
+    src/solver/sensor_signals.f90
+    src/solver/vmec_state.f90)
 if(TIAGO_ENABLE_SPECTRE)
     if(NOT TARGET LIBNEO::spectre_field)
         message(FATAL_ERROR "SPECTRE requires libneo's LIBNEO::spectre_field target")
@@ -382,6 +393,25 @@ foreach(mode IN ITEMS contravariant covariant conservative)
     set_tests_properties(tiago_mse_plasma_${mode} PROPERTIES FIXTURES_REQUIRED wout_li383)
 endforeach()
 
+add_executable(test_sensor_set tests/test_sensor_set.f90)
+target_link_libraries(test_sensor_set PRIVATE tiago_solver)
+set(TIAGO_TEST_SENSOR_GEOMETRY ${CMAKE_BINARY_DIR}/tests/sensors)
+file(MAKE_DIRECTORY ${TIAGO_TEST_SENSOR_GEOMETRY})
+add_test(NAME tiago_sensor_set COMMAND $<TARGET_FILE:test_sensor_set>
+    ${CMAKE_SOURCE_DIR}/tests/data/sensors/synthetic.sensors)
+add_test(NAME tiago_sensor_set_plasma COMMAND $<TARGET_FILE:test_sensor_set>
+    ${CMAKE_SOURCE_DIR}/tests/data/sensors/synthetic.sensors ${TIAGO_WOUT_SIMSOPT_SMALL})
+set_tests_properties(tiago_sensor_set tiago_sensor_set_plasma PROPERTIES
+    ENVIRONMENT TIAGO_TEST_SENSOR_GEOMETRY=${TIAGO_TEST_SENSOR_GEOMETRY} RESOURCE_LOCK sensor_geometry)
+set_tests_properties(tiago_sensor_set_plasma PROPERTIES FIXTURES_REQUIRED wout_li383)
+
+add_executable(test_profile_diagnostics tests/test_profile_diagnostics.f90)
+target_link_libraries(test_profile_diagnostics PRIVATE tiago_solver)
+add_test(NAME tiago_profile_diagnostics COMMAND $<TARGET_FILE:test_profile_diagnostics>)
+add_test(NAME tiago_profile_diagnostics_vmec
+    COMMAND $<TARGET_FILE:test_profile_diagnostics> ${TIAGO_WOUT_SIMSOPT_SMALL})
+set_tests_properties(tiago_profile_diagnostics_vmec PROPERTIES FIXTURES_REQUIRED wout_li383)
+
 add_executable(test_plasma_projection tests/test_plasma_projection.f90)
 target_link_libraries(test_plasma_projection PRIVATE tiago_solver)
 add_test(NAME tiago_plasma_projection COMMAND $<TARGET_FILE:test_plasma_projection>)
@@ -470,6 +500,13 @@ add_test(NAME tiago_diag_lint_invalid
             ${CMAKE_SOURCE_DIR}/tests/data/fluxloop_invalid.diagno
             --kind flux)
 set_tests_properties(tiago_diag_lint_invalid PROPERTIES WILL_FAIL TRUE)
+
+# Private machine geometry (e.g. W7-X in plasma/data) is never in this
+# repository; set TIAGO_W7X_SENSORS to its sensor-set manifest to lint it.
+add_test(NAME tiago_w7x_sensor_set
+    COMMAND sh -c "test -n \"$TIAGO_W7X_SENSORS\" || exit 77; exec \"$0\" diag lint \"$TIAGO_W7X_SENSORS\" --kind sensors"
+        $<TARGET_FILE:tiago_cli>)
+set_tests_properties(tiago_w7x_sensor_set PROPERTIES SKIP_RETURN_CODE 77)
 
 if(TIAGO_ENABLE_RECONSTRUCTION)
     # VMEC++ equilibrium chain (edge field, edge reverse mode, full Jacobian vs
