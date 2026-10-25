@@ -15,7 +15,7 @@ program test_joint_model
     use tiago_synthetic_case, only: setup_magnetics, place_probes, synthesize_magnetics, &
         synthesize_profiles
     use tiago_kinetic_profiles, only: P_NE, P_TE, P_TI, P_ZEFF
-    use tiago_flux_map, only: located_t
+    use tiago_real_space_state, only: located_t, locate_ok
     use tiago_inference_engines, only: map_fit, laplace, laplace_t
     use fortnum_rng, only: rng_t, rng_seed
     use fortnum_status, only: fortnum_status_t
@@ -25,9 +25,9 @@ program test_joint_model
     type(rng_t) :: rng
     type(fortnum_status_t) :: st
     type(laplace_t) :: lap
-    type(located_t) :: loc
+    type(located_t) :: loc(3)
     real(dp), allocatable :: theta0(:), theta_true(:), theta(:), r(:), rp(:), rm(:), jac(:, :)
-    real(dp), allocatable :: y_series(:), p(:), s(:), am(:), x(:, :), colfd(:)
+    real(dp), allocatable :: y_series(:), p(:), s(:), am(:), colfd(:)
     real(dp) :: h, err, rr, zz, d(2, 3), pres_scale, chi2_start
     integer :: i, k, fails, steps, col
     integer, allocatable :: cols(:)
@@ -76,16 +76,43 @@ program test_joint_model
     call model%residual(theta0, r, ok)
     if (.not. ok) error stop 'no equilibrium at the prior mean'
 
-    ! --- 2. flux map round trip
-    allocate(x(3, 3))
+    ! --- 2. point location round trip
+    err = 0.0_dp
     do i = 1, 3
-        call model%map%point(0.3_dp * i, 0.7_dp * i, 0.2_dp * i, rr, zz, d)
-        x(:, i) = [rr, 0.2_dp * i, zz]
+        call model%state%point(0.3_dp * i, 0.7_dp * i, 0.2_dp * i, rr, zz, d)
+        call model%state%locate([rr * cos(0.2_dp * i), rr * sin(0.2_dp * i), zz], loc(i))
+        err = max(err, maxval(abs(loc(i)%u - [0.3_dp * i, 0.7_dp * i, 0.2_dp * i])))
     end do
-    call model%map%locate(x, loc)
-    err = maxval(abs(loc%rho - [0.3_dp, 0.6_dp, 0.9_dp])) + &
-        maxval(abs(loc%theta - [0.7_dp, 1.4_dp, 2.1_dp]))
-    call expect(err < 1.0e-10_dp .and. all(loc%converged), 'flux map round trip')
+    call expect(err < 1.0e-10_dp .and. all(loc%status == locate_ok), 'point location round trip')
+    ! state contract: label derivatives of X and |B| against central differences,
+    ! param_vjp as the adjoint of param_jvp
+    block
+        real(dp) :: u(3), xu(3), dxdu(3, 3), b0, dbdu(3), xp(3), xm(3), bp, bm, jt(3, 3), dbt(3)
+        real(dp) :: dx(3), db, xbar(3), lhs, rhs
+        real(dp), allocatable :: pdot(:), pbar(:)
+        u = [0.55_dp, 1.1_dp, 0.3_dp]
+        call model%state%eval(u, xu, dxdu, b0, dbdu)
+        err = 0.0_dp
+        do k = 1, 3
+            u(k) = u(k) + 1.0e-6_dp
+            call model%state%eval(u, xp, jt, bp, dbt)
+            u(k) = u(k) - 2.0e-6_dp
+            call model%state%eval(u, xm, jt, bm, dbt)
+            u(k) = u(k) + 1.0e-6_dp
+            err = max(err, maxval(abs((xp - xm) / 2.0e-6_dp - dxdu(:, k))) / maxval(abs(dxdu)), &
+                abs((bp - bm) / 2.0e-6_dp - dbdu(k)) / max(maxval(abs(dbdu)), 1.0e-12_dp))
+        end do
+        call expect(err < 1.0e-7_dp .and. b0 > 0.0_dp, 'state label derivatives of X and |B|')
+        allocate(pdot(model%state%n_params()), pbar(model%state%n_params()))
+        pdot = [(sin(0.37_dp * i), i = 1, size(pdot))]
+        xbar = [0.3_dp, -0.7_dp, 0.5_dp]
+        call model%state%param_jvp(u, pdot, dx, db)
+        pbar = 0.0_dp
+        call model%state%param_vjp(u, xbar, 0.9_dp, pbar)
+        lhs = dot_product(xbar, dx) + 0.9_dp * db
+        rhs = dot_product(pbar, pdot)
+        call expect(abs(lhs - rhs) < 1.0e-12_dp * max(abs(lhs), 1.0_dp), 'state param_vjp adjoint of param_jvp')
+    end block
 
     ! --- probes and noise-free synthetic data at a perturbed truth
     call place_probes(model, [0.25_dp, 0.45_dp, 0.65_dp, 0.85_dp], 0.3_dp, 0.0_dp, &

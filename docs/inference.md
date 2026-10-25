@@ -72,6 +72,43 @@ Rules for diagnostic authors:
 `tiago_point_probe` is the reference implementation (ideal local ne/Te/Ti
 values with a rigid (dR, dZ) alignment shift) used by the synthetic tests.
 
+## Provider states and point location
+
+Points are located in a provider state through `tiago_real_space_state`
+(`real_space_state_t`: labels u = (rho, theta, phi) to Cartesian x and |B|,
+parameter JVP/VJP at fixed labels, Newton location and implicit-function
+derivatives; introduced with the synthetic-diagnostics work). There is one
+location path. `tiago_state_sampler` fills the rows Q_S and Q_B of a
+`plasma_sample_t` and maps their cotangents to the state parameters.
+
+`tiago_vmecpp_state` implements the interface for a solved VMEC++
+equilibrium. Its parameters are the solver's geometry coefficients (the
+cotangent the implicit adjoint accepts) followed by the |B| spectrum bmnc,
+each a C1 Hermite interpolant in rho. The joint model passes the geometry
+cotangent to `tiago_equilibrium%jacobian` (`coef_cot`). The bmnc cotangent
+has no adjoint to the VMEC++ inputs yet, so |B| is exact in position and
+labels but its change with the equilibrium inputs at a fixed label is not
+propagated; `joint_model_t%b_cotangent_dropped` records the size of the
+dropped cotangent. This matters for diagnostics that read |B| (ECE).
+
+## Likelihood and engines
+
+`tiago_joint_model` stacks the magnetic rows of `tiago_reconstruction`
+(whitened with a full covariance plus a model-error variance), the
+free-boundary consistency rows and parameter priors, the profile diagnostics
+L^-1 (g y - d) with their own full covariance, model-error term, alignment
+and gain nuisances, and N(0, I) rows for the latent priors. The kinetic
+pressure enters VMEC++ as a line-segment profile with knots at the half-grid
+surfaces, so the solver's pressure cotangents apply directly.
+
+`tiago_inference_engines` provides the MAP (Levenberg-Marquardt; VMEC++
+hot-restarts from the previous equilibrium), the Laplace covariance and log
+evidence, NUTS from fortnum with the Laplace covariance as dense metric, and
+Pareto-smoothed importance sampling from the Laplace Gaussian (k-hat).
+`tiago_infer` runs the synthetic study (truth drawn from the prior, synthetic
+noise, MAP, Laplace, PSIS, NUTS) and writes CSV files for
+`tools/inference_plots.py` and `tools/inference_coverage.py`.
+
 ## References and reference implementations
 
 - Profile prior kernel: the non-stationary Gibbs kernel with a tanh

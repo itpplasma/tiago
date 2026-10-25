@@ -70,7 +70,10 @@ add_library(tiago_diagnostics STATIC
     src/diagnostics/bprobes.f90
     src/generated/mse_rows.f90
     src/generated/mse_local.f90
-    src/diagnostics/mse.f90)
+    src/diagnostics/mse.f90
+    src/generated/hermite_basis.f90
+    src/diagnostics/radial_interp.f90
+    src/diagnostics/real_space_state.f90)
 set_target_properties(tiago_diagnostics PROPERTIES
     Fortran_STANDARD 2018
     Fortran_STANDARD_REQUIRED YES)
@@ -116,6 +119,7 @@ if(TIAGO_ENABLE_OPENMP)
     find_package(OpenMP COMPONENTS Fortran)
     if(OpenMP_Fortran_FOUND)
         target_link_libraries(tiago_solver PUBLIC OpenMP::OpenMP_Fortran)
+        target_link_libraries(tiago_diagnostics PUBLIC OpenMP::OpenMP_Fortran)
     endif()
 endif()
 
@@ -126,11 +130,12 @@ add_library(tiago_inference STATIC
     src/inference/kinetic_profiles.f90
     src/inference/profile_diagnostic.f90
     src/inference/point_probe.f90
-    src/inference/flux_map.f90)
+    src/inference/state_sampler.f90
+    src/inference/vmecpp_state.f90)
 set_target_properties(tiago_inference PROPERTIES
     Fortran_STANDARD 2018
     Fortran_STANDARD_REQUIRED YES)
-target_link_libraries(tiago_inference PUBLIC fortnum)
+target_link_libraries(tiago_inference PUBLIC fortnum tiago_diagnostics)
 if(TIAGO_ENABLE_OPENMP AND OpenMP_Fortran_FOUND)
     target_link_libraries(tiago_inference PUBLIC OpenMP::OpenMP_Fortran)
 endif()
@@ -285,6 +290,8 @@ end module tiago_vmecpp_paths
     target_link_libraries(test_joint_model PRIVATE tiago_reconstruction)
     add_executable(test_reconstruction_shape_cache tests/test_reconstruction_shape_cache.f90)
     target_link_libraries(test_reconstruction_shape_cache PRIVATE tiago_reconstruction)
+    add_executable(tiago_infer src/cli/tiago_infer.f90)
+    target_link_libraries(tiago_infer PRIVATE tiago_reconstruction)
     add_executable(tiago_reconstruct src/cli/tiago_reconstruct.f90)
     target_link_libraries(tiago_reconstruct PRIVATE tiago_reconstruction tiago_build_config)
     add_executable(tiago_plot_pulls benchmarks/reconstruction/plot_pulls.f90)
@@ -497,6 +504,12 @@ if(TIAGO_ENABLE_RECONSTRUCTION)
                 ${CMAKE_SOURCE_DIR}/benchmarks/reconstruction/sensors.awk
                 ${CMAKE_BINARY_DIR}/tests/joint_model)
     set_tests_properties(tiago_joint_model PROPERTIES
+        FIXTURES_REQUIRED input_li383 TIMEOUT 900 ENVIRONMENT "OMP_NUM_THREADS=4;OPENBLAS_NUM_THREADS=1")
+    add_test(NAME tiago_infer_smoke
+        COMMAND ${CMAKE_SOURCE_DIR}/tests/infer_smoke.sh $<TARGET_FILE:tiago_infer> ${TIAGO_INPUT_LI383}
+                ${CMAKE_SOURCE_DIR}/benchmarks/reconstruction/sensors.awk
+                ${CMAKE_BINARY_DIR}/tests/infer_smoke)
+    set_tests_properties(tiago_infer_smoke PROPERTIES
         FIXTURES_REQUIRED input_li383 TIMEOUT 900 ENVIRONMENT "OMP_NUM_THREADS=4;OPENBLAS_NUM_THREADS=1")
     add_test(NAME tiago_reconstruction_shape_cache
         COMMAND $<TARGET_FILE:test_reconstruction_shape_cache> ${TIAGO_INPUT_LI383}
