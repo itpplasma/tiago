@@ -125,7 +125,8 @@ add_library(tiago_inference STATIC
     src/generated/kinetic_pressure.f90
     src/inference/kinetic_profiles.f90
     src/inference/profile_diagnostic.f90
-    src/inference/point_probe.f90)
+    src/inference/point_probe.f90
+    src/inference/flux_map.f90)
 set_target_properties(tiago_inference PROPERTIES
     Fortran_STANDARD 2018
     Fortran_STANDARD_REQUIRED YES)
@@ -262,11 +263,14 @@ end module tiago_vmecpp_paths
         src/equilibrium/vmec_edge.f90
         src/equilibrium/equilibrium.f90
         src/reconstruct/reconstruction.f90
-        src/reconstruct/reconstruction_plots.f90)
+        src/reconstruct/reconstruction_plots.f90
+        src/inference/joint_model.f90
+        src/inference/inference_engines.f90
+        src/inference/synthetic_case.f90)
     set_target_properties(tiago_reconstruction PROPERTIES
         Fortran_STANDARD 2018
         Fortran_STANDARD_REQUIRED YES)
-    target_link_libraries(tiago_reconstruction PUBLIC ${TIAGO_LIBOMP} tiago_solver
+    target_link_libraries(tiago_reconstruction PUBLIC ${TIAGO_LIBOMP} tiago_solver tiago_inference
         fortplot::fortplot tiago_vmecpp_adapter ${LAPACK_LIBRARIES})
     # Dependency sorting can place libneo's libgomp before libomp. Force libomp
     # into DT_NEEDED first, so generic omp_* and Clang's __kmpc_* calls use the
@@ -277,6 +281,8 @@ end module tiago_vmecpp_paths
     add_dependencies(tiago_reconstruction indata2json)
     add_executable(test_vmecpp_equilibrium tests/test_vmecpp_equilibrium.f90)
     target_link_libraries(test_vmecpp_equilibrium PRIVATE tiago_reconstruction)
+    add_executable(test_joint_model tests/test_joint_model.f90)
+    target_link_libraries(test_joint_model PRIVATE tiago_reconstruction)
     add_executable(test_reconstruction_shape_cache tests/test_reconstruction_shape_cache.f90)
     target_link_libraries(test_reconstruction_shape_cache PRIVATE tiago_reconstruction)
     add_executable(tiago_reconstruct src/cli/tiago_reconstruct.f90)
@@ -486,6 +492,12 @@ if(TIAGO_ENABLE_RECONSTRUCTION)
     set_tests_properties(tiago_vmecpp_equilibrium tiago_reconstruct_exact
         tiago_reconstruct_conservative PROPERTIES
         FIXTURES_REQUIRED input_li383 TIMEOUT 600)
+    add_test(NAME tiago_joint_model
+        COMMAND $<TARGET_FILE:test_joint_model> ${TIAGO_INPUT_LI383}
+                ${CMAKE_SOURCE_DIR}/benchmarks/reconstruction/sensors.awk
+                ${CMAKE_BINARY_DIR}/tests/joint_model)
+    set_tests_properties(tiago_joint_model PROPERTIES
+        FIXTURES_REQUIRED input_li383 TIMEOUT 900 ENVIRONMENT "OMP_NUM_THREADS=4;OPENBLAS_NUM_THREADS=1")
     add_test(NAME tiago_reconstruction_shape_cache
         COMMAND $<TARGET_FILE:test_reconstruction_shape_cache> ${TIAGO_INPUT_LI383}
                 ${CMAKE_BINARY_DIR}/tests/reconstruction_shape_cache)

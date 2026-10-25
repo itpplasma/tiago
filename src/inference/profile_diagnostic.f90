@@ -38,9 +38,10 @@ module tiago_profile_diagnostic
         real(dp), allocatable :: q(:, :)          !! (N_QUANTITIES, n)
         real(dp), allocatable :: dq_dx(:, :, :)   !! (3, N_QUANTITIES, n): d q / d (R, phi, Z)
     end type plasma_sample_t
-    !! Outside the plasma (inside = .false.) ne = Te = Ti = 0, Zeff = 1, s is
-    !! the provider's extrapolation and |B| remains defined; the profile rows of
-    !! dq_dx are zero there.
+    !! Outside the plasma (inside = .false.) s is the provider's extrapolation
+    !! (> 1), |B| remains defined and the kinetic profiles decay as
+    !! f(1) exp(-(s - 1) / sol_decay) (Zeff constant), so predictions are
+    !! continuous and differentiable across the boundary.
 
     type, abstract, public :: profile_diagnostic_t
     contains
@@ -113,7 +114,6 @@ contains
         !! difference between jvp and central differences of predict along a
         !! fixed pseudo-random direction (q, eta), step h relative to |q|;
         !! adjoint_error: relative mismatch of <y_bar, J v> and <J^T y_bar, v>.
-        !! Inside points perturb all rows, outside points only s and |B|.
         class(profile_diagnostic_t), intent(in) :: diag
         type(plasma_sample_t), intent(in) :: sample
         real(dp), intent(in) :: eta(:), h
@@ -130,7 +130,6 @@ contains
         do j = 1, sample%n
             do i = 1, N_QUANTITIES
                 q_dot(i, j) = sin(1.7_dp * i + 0.31_dp * j) * max(abs(sample%q(i, j)), 1.0e-3_dp)
-                if (.not. sample%inside(j) .and. i > Q_B) q_dot(i, j) = 0.0_dp
             end do
         end do
         eta_dot = [(cos(0.9_dp * i) * max(abs(eta(i)), 1.0e-3_dp), i = 1, size(eta))]

@@ -39,6 +39,12 @@ module tiago_equilibrium
         real(dp), allocatable :: mass_half(:)
         real(dp) :: lamscale = 0.0_dp
         integer :: signgs = 1
+        ! kinetic pressure: VMEC++ line-segment pressure with knots at the
+        ! half-grid s_h, values pressure_half [Pa] (set_pressure)
+        logical :: kinetic = .false.
+        real(dp), allocatable :: pressure_half(:)
+        ! cotangents on mu0 p_h of the last jacobian call, (ns - 1, rows)
+        real(dp), allocatable :: pressure_bar(:, :)
         ! bookkeeping
         integer :: solves = 0, adjoint_solves = 0
         real(dp) :: t_solve = 0.0_dp, t_adjoint = 0.0_dp
@@ -51,6 +57,8 @@ module tiago_equilibrium
         procedure :: jacobian => equilibrium_jacobian
         procedure :: write_wout => equilibrium_write_wout
         procedure :: n_y => equilibrium_n_y
+        procedure :: set_pressure => equilibrium_set_pressure
+        procedure :: s_half => equilibrium_s_half
     end type equilibrium_t
 
 contains
@@ -207,6 +215,55 @@ contains
             self%current_half, self%y)
     end subroutine equilibrium_solve
 
+    function equilibrium_s_half(self) result(s)
+        !! Half-grid flux label s_h = (h - 1/2) / (ns - 1), h = 1 ... ns - 1.
+        class(equilibrium_t), intent(in) :: self
+        real(dp), allocatable :: s(:)
+        integer :: h
+        s = [((h - 0.5_dp) / (self%ns - 1), h = 1, self%ns - 1)]
+    end function equilibrium_s_half
+
+    subroutine equilibrium_set_pressure(self, p_half)
+        !! Prescribe the pressure [Pa] on the half grid. VMEC++ evaluates its
+        !! line-segment profile exactly at the knots s_h, so mu0 p_h is the
+        !! solver's mass and the implicit adjoint's pressure cotangent applies
+        !! to p_half directly. Requires the identity flux mapping (no aphi),
+        !! bloat = 1, spres_ped >= 1 and gamma = 0; AM and PRES_SCALE are then
+        !! not parameters.
+        class(equilibrium_t), intent(inout) :: self
+        real(dp), intent(in) :: p_half(:)
+        real(dp), allocatable :: s(:)
+        integer :: h
+
+        if (size(p_half) /= self%ns - 1) error stop 'set_pressure: one value per half-grid surface'
+        if (.not. self%kinetic) then
+            if (self%vmec%input_length('aphi') > 0) then
+                if (any([(self%vmec%get_input('aphi', h), h = 2, self%vmec%input_length('aphi'))] &
+                    /= 0.0_dp) .or. self%vmec%get_input('aphi', 1) /= 1.0_dp) &
+                    error stop 'set_pressure: needs the identity aphi'
+            end if
+            if (self%vmec%get_input('bloat') /= 1.0_dp .or. self%vmec%get_input('spres_ped') < 1.0_dp &
+                .or. self%vmec%get_input('gamma') /= 0.0_dp) &
+                error stop 'set_pressure: needs bloat = 1, spres_ped >= 1, gamma = 0'
+            if (any(self%key == 'am') .or. any(self%key == 'pres_scale')) &
+                error stop 'set_pressure: AM and PRES_SCALE cannot be parameters'
+            call self%vmec%set_string('pmass_type', 'line_segment')
+            call self%vmec%set_input('pres_scale', 1.0_dp)
+            call self%vmec%resize_input('am_aux_s', self%ns - 1)
+            call self%vmec%resize_input('am_aux_f', self%ns - 1)
+            s = self%s_half()
+            do h = 1, self%ns - 1
+                call self%vmec%set_input('am_aux_s', s(h), h)
+            end do
+            self%kinetic = .true.
+        end if
+        do h = 1, self%ns - 1
+            call self%vmec%set_input('am_aux_f', p_half(h), h)
+        end do
+        self%pressure_half = p_half
+        self%solved = .false.
+    end subroutine equilibrium_set_pressure
+
     integer function equilibrium_n_y(self)
         class(equilibrium_t), intent(in) :: self
         equilibrium_n_y = self%edge%n_y()
@@ -236,11 +293,15 @@ contains
         vb%zmns = self%y(2 * nb + ng + 1:)
     end subroutine equilibrium_boundary
 
-    subroutine equilibrium_jacobian(self, x, cot, jac)
+    subroutine equilibrium_jacobian(self, x, cot, jac, coef_cot)
         !! jac = cot (dy/dx) at the last solve (which must be at x); cot(k, n_y).
+        !! coef_cot(size(coef), k) adds cotangents on the geometry coefficients
+        !! (layout of tiago_vmecpp%geometry) to row k. The cotangents on the
+        !! half-grid mu0 p_h are kept in pressure_bar(ns - 1, k).
         class(equilibrium_t), intent(inout) :: self
         real(dp), intent(in) :: x(:), cot(:, :)
         real(dp), allocatable, intent(out) :: jac(:, :)
+        real(dp), intent(in), optional :: coef_cot(:, :)
         real(dp), allocatable :: coef_bar(:, :, :, :), gbar(:, :), bbar(:, :), pbar(:, :)
         real(dp), allocatable :: iota_d(:, :), current_d(:, :), ps_col(:), cur_col(:), yb(:)
         real(dp), allocatable :: g_mass_ps(:), g_mass_am(:, :), g_iota_ai(:, :), g_cur(:, :)
@@ -258,6 +319,7 @@ contains
                 self%current_half, cot(r, :), coef_bar, iota_d(:, r), current_d(:, r))
             gbar(:, r) = reshape(coef_bar, [size(coef_bar)])
         end do
+        if (present(coef_cot)) gbar = gbar + coef_cot
         call self%vmec%adjoint(gbar, bbar, pbar, self%max_block)
         call system_clock(finish)
         self%t_adjoint = self%t_adjoint + real(finish - start, dp) / rate
@@ -267,6 +329,7 @@ contains
         flip = merge(-1, 1, self%vmec%get_int('have_to_flip_theta') == 1)
         pbar(nh + 1:2 * nh, :) = pbar(nh + 1:2 * nh, :) + flip * iota_d
         pbar(2 * nh + 1:3 * nh, :) = pbar(2 * nh + 1:3 * nh, :) + current_d
+        self%pressure_bar = pbar(1:nh, :)
 
         call profile_gradients(self, g_mass_ps, g_mass_am, g_iota_ai, g_cur)
         pres_scale = self%vmec%get_input('pres_scale')
@@ -340,6 +403,8 @@ contains
         am = [(self%vmec%get_input('am', k), k = 1, n_am)]
         allocate(g_mass_am(nh, 0:n_am - 1), g_iota_ai(nh, 0:n_ai - 1), g_cur(nh, 0:n_ac + 10))
         g_mass_ps = mu0 * [(sum([(am(k + 1) * xm(h)**k, k = 0, n_am - 1)]), h = 1, nh)]
+        ! line-segment pressure (pres_scale = 1): d (mu0 p_h) / d ln(scale) = mu0 p_h
+        if (self%kinetic) g_mass_ps = mu0 * self%pressure_half
         do k = 0, n_am - 1
             g_mass_am(:, k) = mu0 * pres_scale * xm**k
         end do

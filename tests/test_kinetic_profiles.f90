@@ -40,7 +40,7 @@ program test_kinetic_profiles
     call expect(kp%n_latent == 5 * kp%ncoef, 'latent count')
     allocate(z(kp%n_latent), zbar(kp%n_latent))
     z = [(0.3_dp * sin(1.3_dp * i), i = 1, kp%n_latent)]
-    s = [0.0_dp, 0.05_dp, 0.2_dp, 0.47_dp, 0.81_dp, 0.99_dp]
+    s = [0.0_dp, 0.05_dp, 0.2_dp, 0.47_dp, 0.81_dp, 0.99_dp, 1.08_dp]   ! last: scrape-off
     allocate(f(N_PROFILES, size(s)), df(N_PROFILES, size(s)), fbar(N_PROFILES, size(s)), &
         sbar(size(s)), fp(N_PROFILES, size(s)), fm(N_PROFILES, size(s)))
     call kp%evaluate(z, s, f, df)
