@@ -12,7 +12,6 @@ module tiago_inference_engines
     !!                   Pareto smoothing (k-hat) and the importance-weighted
     !!                   posterior moments.
     use, intrinsic :: iso_fortran_env, only: dp => real64, int64
-    use, intrinsic :: ieee_arithmetic, only: ieee_is_finite
     use fortnum_status, only: fortnum_status_t, status_set, FORTNUM_OK, FORTNUM_DOMAIN_ERROR
     use fortnum_rng, only: rng_t, rng_seed, rng_normal
     use fortnum_nuts, only: nuts_options_t, nuts_result_t, nuts_sample

@@ -6,19 +6,18 @@ module tiago_synthetic_case
     !! ideal local profile probes (Thomson-like ne/Te points on one toroidal
     !! cut, CXRS-like Ti points on another) placed at given (rho, theta) of a
     !! reference equilibrium. No coils: the plasma signals are the model.
-    use, intrinsic :: iso_fortran_env, only: dp => real64, i32 => int32, int64
+    use, intrinsic :: iso_fortran_env, only: dp => real64, i32 => int32
     use tiago_diagnostic_types, only: bprobe_t
     use tiago_flux_loops, only: read_flux_loop_file
     use tiago_segmented_rogowski, only: read_segmented_rogowski_file
     use tiago_bprobes, only: read_bprobe_file
     use tiago_reconstruction, only: rec, KIND_FLUX, KIND_SEGROG, KIND_BPROBE, model_signals, &
         signal_value
-    use tiago_joint_model, only: joint_model_t, diagnostic_slot_t
+    use tiago_joint_model, only: joint_model_t
     use tiago_point_probe, only: point_probe_t
     use tiago_profile_diagnostic, only: Q_NE, Q_TE, Q_TI, plasma_sample_t
     use tiago_real_space_state, only: located_t
-    use fortnum_status, only: fortnum_status_t
-    use fortnum_rng, only: rng_t, rng_seed, rng_normal
+    use fortnum_rng, only: rng_t, rng_normal
     implicit none
     private
 

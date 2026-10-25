@@ -5,12 +5,12 @@ program tiago_infer
     !! -> optional PSIS check and NUTS -> CSV outputs for coverage statistics
     !! and figures (tools/inference_plots.py, tools/inference_coverage.py).
     !! Usage: tiago_infer input.nml
-    use, intrinsic :: iso_fortran_env, only: dp => real64, int64, error_unit
+    use, intrinsic :: iso_fortran_env, only: dp => real64, int64
     use tiago_reconstruction, only: rec
     use tiago_joint_model, only: joint_model_t
     use tiago_synthetic_case, only: setup_magnetics, place_probes, synthesize_magnetics, &
         synthesize_profiles
-    use tiago_kinetic_profiles, only: P_NE, P_TE, P_TI, P_ZEFF, N_PROFILES, elementary_charge
+    use tiago_kinetic_profiles, only: P_NE, P_TE, P_TI, P_ZEFF, N_PROFILES
     use tiago_inference_engines, only: map_fit, laplace, laplace_t, sample_nuts, psis_validate, &
         psis_result_t
     use fortnum_rng, only: rng_t, rng_seed, rng_normal, rng_split
