@@ -17,8 +17,11 @@ module tiago_joint_model
     !! The pressure given to VMEC++ is the kinetic pressure of z_prof on the
     !! half grid (tiago_equilibrium%set_pressure); the magnetic Jacobian with
     !! respect to z_prof follows from VMEC++'s pressure cotangents, and the
-    !! profile diagnostics' dependence on the equilibrium from the flux-label
-    !! map's implicit VJP composed with the same adjoint. Covariances include
+    !! profile diagnostics' dependence on the equilibrium from the implicit VJP
+    !! of point location in the VMEC++ state (tiago_vmecpp_state, a
+    !! real_space_state_t) composed with the same adjoint. The |B| cotangent on
+    !! the state's bmnc nodes is not propagated (no adjoint of VMEC++'s output
+    !! stage); b_cotangent_dropped records its size. Covariances include
     !! an additive model-error term (emulator or convergence error).
     use, intrinsic :: iso_fortran_env, only: dp => real64
     use, intrinsic :: ieee_arithmetic, only: ieee_is_finite
@@ -26,7 +29,9 @@ module tiago_joint_model
     use tiago_kinetic_profiles, only: kinetic_profiles_t, N_PROFILES, P_NE, P_TE, P_TI, P_ZEFF
     use tiago_profile_diagnostic, only: profile_diagnostic_t, plasma_sample_t, N_QUANTITIES, &
         Q_S, Q_B, Q_NE, Q_TE, Q_TI, Q_ZEFF
-    use tiago_flux_map, only: flux_map_t, located_t
+    use tiago_vmecpp_state, only: vmecpp_state_t
+    use tiago_real_space_state, only: located_t
+    use tiago_state_sampler, only: sample_state, sample_state_vjp
     implicit none
     private
 
@@ -54,8 +59,9 @@ module tiago_joint_model
         integer :: n_mag = 0, n_fb = 0, n_rec_prior = 0, n_diag_rows = 0
         ! evaluation state
         real(dp), allocatable :: s_half(:)
-        type(flux_map_t) :: map
-        integer :: map_solve = -1
+        type(vmecpp_state_t) :: state
+        integer :: state_solve = -1
+        real(dp) :: b_cotangent_dropped = 0.0_dp
         integer :: evaluations = 0, jacobians = 0
     contains
         procedure :: setup => joint_setup
@@ -204,44 +210,36 @@ contains
         call residual_at(x, r_rec)
         ok = all(ieee_is_finite(r_rec))
         if (.not. ok) return
-        if (self%map_solve /= rec%eq%solves) then
+        if (self%state_solve /= rec%eq%solves) then
             nyq = rec%eq%vmec%get_int('mnmax_nyq')
             xm = rec%eq%vmec%wout('xm_nyq', nyq)
             xn = rec%eq%vmec%wout('xn_nyq', nyq)
             wout_b = rec%eq%vmec%wout('bmnc', nyq * rec%eq%ns)
-            call self%map%init(rec%eq%coef, rec%eq%nfp, xm, xn, reshape(wout_b, [nyq, rec%eq%ns]))
-            self%map_solve = rec%eq%solves
+            call self%state%init(rec%eq%coef, rec%eq%nfp, xm, xn, reshape(wout_b, [nyq, rec%eq%ns]))
+            self%state_solve = rec%eq%solves
         end if
     end subroutine prepare
 
     subroutine joint_sample_at(self, z, x, sample, loc)
-        !! Provider fields and kinetic profiles at points x(3, n) for the
-        !! current equilibrium.
+        !! Provider fields (tiago_state_sampler) and kinetic profiles at points
+        !! x(3, n) = (R, phi, Z) for the current equilibrium.
         class(joint_model_t), intent(in) :: self
         real(dp), intent(in) :: z(:), x(:, :)
         type(plasma_sample_t), intent(out) :: sample
-        type(located_t), intent(out) :: loc
+        type(located_t), allocatable, intent(out) :: loc(:)
         real(dp), allocatable :: f(:, :), df(:, :), s(:)
         integer :: j, i
         integer, parameter :: rows(4) = [Q_NE, Q_TE, Q_TI, Q_ZEFF]
         integer, parameter :: profiles(4) = [P_NE, P_TE, P_TI, P_ZEFF]
 
-        call self%map%locate(x, loc)
-        s = loc%rho**2
+        call sample_state(self%state, x, sample, loc)
+        s = sample%q(Q_S, :)
         allocate(f(N_PROFILES, size(s)), df(N_PROFILES, size(s)))
         call self%prof%evaluate(z, s, f, df)
-        sample%n = size(s)
-        sample%x = x
-        sample%inside = s <= 1.0_dp
-        allocate(sample%q(N_QUANTITIES, size(s)), sample%dq_dx(3, N_QUANTITIES, size(s)))
         do j = 1, size(s)
-            sample%q(Q_S, j) = s(j)
-            sample%q(Q_B, j) = loc%b(j)
-            sample%dq_dx(:, Q_S, j) = loc%ds_dx(:, j)
-            sample%dq_dx(:, Q_B, j) = loc%db_dx(:, j)
             do i = 1, 4
                 sample%q(rows(i), j) = f(profiles(i), j)
-                sample%dq_dx(:, rows(i), j) = df(profiles(i), j) * loc%ds_dx(:, j)
+                sample%dq_dx(:, rows(i), j) = df(profiles(i), j) * sample%dq_dx(:, Q_S, j)
             end do
         end do
     end subroutine joint_sample_at
@@ -253,7 +251,7 @@ contains
         integer, intent(in) :: d
         real(dp), intent(out) :: y(:)
         type(plasma_sample_t), intent(out) :: sample
-        type(located_t), intent(out) :: loc
+        type(located_t), allocatable, intent(out) :: loc(:)
         real(dp), allocatable, intent(out) :: eta(:), dx_deta(:, :, :)
         real(dp), allocatable :: z(:), x(:, :)
 
@@ -271,7 +269,7 @@ contains
         logical, intent(out) :: ok
         real(dp), allocatable :: r_rec(:), y(:), eta(:), dx(:, :, :)
         type(plasma_sample_t) :: sample
-        type(located_t) :: loc
+        type(located_t), allocatable :: loc(:)
         real(dp) :: gain
         integer :: d, row, nm
 
@@ -306,12 +304,12 @@ contains
         real(dp), intent(in) :: theta(:)
         real(dp), allocatable, intent(out) :: jac(:, :)
         real(dp), allocatable :: r_rec(:), jrec(:, :), z(:), zbar(:), y(:), eta(:), dx(:, :, :)
-        real(dp), allocatable :: q_bar(:, :), eta_bar(:), f_bar(:, :), s_bar(:), coef_bar(:, :, :, :)
+        real(dp), allocatable :: q_bar(:, :), eta_bar(:), f_bar(:, :), s_bar(:), p_bar(:), qs_bar(:, :)
         real(dp), allocatable :: coef_cot(:, :), cot(:, :), jeq(:, :), jd(:, :), e(:)
         type(plasma_sample_t) :: sample
-        type(located_t) :: loc
+        type(located_t), allocatable :: loc(:)
         real(dp) :: gain
-        integer :: d, i, j, k, q, row, nm, nrec_rows, ndr, col
+        integer :: d, i, j, k, q, row, nm, nrec_rows, ndr, col, ng
         logical :: ok
         integer, parameter :: rows(4) = [Q_NE, Q_TE, Q_TI, Q_ZEFF]
         integer, parameter :: profiles(4) = [P_NE, P_TE, P_TI, P_ZEFF]
@@ -345,8 +343,8 @@ contains
         ! profile-diagnostic rows
         ndr = self%n_diag_rows
         if (ndr > 0) then
-            allocate(coef_cot(size(rec%eq%coef), ndr))
-            allocate(coef_bar, mold=rec%eq%coef)
+            ng = self%state%n_geometry()
+            allocate(coef_cot(ng, ndr), p_bar(self%state%n_params()))
             row = 0
             do d = 1, size(self%diags)
                 associate (slot => self%diags(d))
@@ -354,7 +352,8 @@ contains
                     call self%predict_diagnostic(theta, d, y, sample, loc, eta, dx)
                     call self%unpack(theta, gain=gain, d=d)
                     allocate(jd(size(y), self%n), q_bar(N_QUANTITIES, sample%n), &
-                        eta_bar(size(eta)), f_bar(N_PROFILES, sample%n), s_bar(sample%n))
+                        eta_bar(size(eta)), f_bar(N_PROFILES, sample%n), s_bar(sample%n), &
+                        qs_bar(N_QUANTITIES, sample%n))
                     jd = 0.0_dp
                     do i = 1, size(y)
                         e = 0.0_dp
@@ -366,7 +365,7 @@ contains
                             f_bar(profiles(k), :) = q_bar(rows(k), :)
                         end do
                         zbar = 0.0_dp
-                        call self%prof%vjp(z, loc%rho**2, f_bar, zbar, s_bar)
+                        call self%prof%vjp(z, sample%q(Q_S, :), f_bar, zbar, s_bar)
                         jd(i, self%n_rec + 1:self%n_rec + self%n_prof) = gain * zbar
                         s_bar = s_bar + q_bar(Q_S, :)
                         ! alignment: direct part plus motion of the points
@@ -381,14 +380,20 @@ contains
                         jd(i, slot%eta_offset + 1:slot%eta_offset + size(eta)) = &
                             gain * eta_bar * slot%eta_sigma
                         if (slot%gain_index > 0) jd(i, slot%gain_index) = slot%gain_sigma * y(i)
-                        ! geometry: s(x) through the flux map (|B| not differentiated)
-                        coef_bar = 0.0_dp
-                        call self%map%s_vjp(loc, gain * s_bar, coef_bar)
-                        coef_cot(:, row + i) = reshape(coef_bar, [size(coef_bar)])
+                        ! geometry: s and |B| at fixed points through the state's
+                        ! implicit VJP; the bmnc part has no solver adjoint
+                        qs_bar = 0.0_dp
+                        qs_bar(Q_S, :) = gain * s_bar
+                        qs_bar(Q_B, :) = gain * q_bar(Q_B, :)
+                        p_bar = 0.0_dp
+                        call sample_state_vjp(self%state, loc, qs_bar, p_bar)
+                        coef_cot(:, row + i) = p_bar(1:ng)
+                        self%b_cotangent_dropped = max(self%b_cotangent_dropped, &
+                            maxval(abs(p_bar(ng + 1:)), mask=.true.))
                     end do
                     jac(nrec_rows + row + 1:nrec_rows + row + size(y), :) = jd
                     row = row + size(y)
-                    deallocate(y, e, jd, q_bar, eta_bar, f_bar, s_bar)
+                    deallocate(y, e, jd, q_bar, eta_bar, f_bar, s_bar, qs_bar)
                 end associate
             end do
             ! equilibrium adjoint for all diagnostic rows at once

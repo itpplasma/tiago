@@ -16,7 +16,7 @@ module tiago_synthetic_case
     use tiago_joint_model, only: joint_model_t, diagnostic_slot_t
     use tiago_point_probe, only: point_probe_t
     use tiago_profile_diagnostic, only: Q_NE, Q_TE, Q_TI, plasma_sample_t
-    use tiago_flux_map, only: located_t
+    use tiago_real_space_state, only: located_t
     use fortnum_status, only: fortnum_status_t
     use fortnum_rng, only: rng_t, rng_seed, rng_normal
     implicit none
@@ -127,16 +127,16 @@ contains
         allocate(a%x0(3, 2 * np), a%quantity(2 * np), b%x0(3, np), b%quantity(np))
         k = 0
         do i = 1, size(rho)
-            call model%map%point(rho(i), theta_cut, phi_ne_te, r, z, d)
+            call model%state%point(rho(i), theta_cut, phi_ne_te, r, z, d)
             a%x0(:, 2 * k + 1) = [r, phi_ne_te, z]
             a%x0(:, 2 * k + 2) = [r, phi_ne_te, z]
-            call model%map%point(rho(i), theta_cut, phi_ti, r, z, d)
+            call model%state%point(rho(i), theta_cut, phi_ti, r, z, d)
             b%x0(:, k + 1) = [r, phi_ti, z]
             k = k + 1
-            call model%map%point(rho(i), theta_cut + acos(-1.0_dp), phi_ne_te, r, z, d)
+            call model%state%point(rho(i), theta_cut + acos(-1.0_dp), phi_ne_te, r, z, d)
             a%x0(:, 2 * k + 1) = [r, phi_ne_te, z]
             a%x0(:, 2 * k + 2) = [r, phi_ne_te, z]
-            call model%map%point(rho(i), theta_cut + acos(-1.0_dp), phi_ti, r, z, d)
+            call model%state%point(rho(i), theta_cut + acos(-1.0_dp), phi_ti, r, z, d)
             b%x0(:, k + 1) = [r, phi_ti, z]
             k = k + 1
         end do
@@ -203,7 +203,7 @@ contains
         logical, intent(in) :: noise
         real(dp), allocatable :: y(:), eta(:), dx(:, :, :), r(:)
         type(plasma_sample_t) :: sample
-        type(located_t) :: loc
+        type(located_t), allocatable :: loc(:)
         real(dp) :: e
         integer :: d, i
         logical :: ok
