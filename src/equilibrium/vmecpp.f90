@@ -65,6 +65,21 @@ module tiago_vmecpp
             integer(c_int), value :: length
             integer(c_int) :: status
         end function c_get_string
+        function c_set_string(handle, name, value) bind(C, name='tiago_vmecpp_set_string') &
+                result(status)
+            import c_ptr, c_char, c_int
+            type(c_ptr), value :: handle
+            character(kind=c_char), intent(in) :: name(*), value(*)
+            integer(c_int) :: status
+        end function c_set_string
+        function c_resize_input(handle, name, length) bind(C, name='tiago_vmecpp_resize_input') &
+                result(status)
+            import c_ptr, c_char, c_int
+            type(c_ptr), value :: handle
+            character(kind=c_char), intent(in) :: name(*)
+            integer(c_int), value :: length
+            integer(c_int) :: status
+        end function c_resize_input
         function c_solve(handle, converged) bind(C, name='tiago_vmecpp_solve') result(status)
             import c_ptr, c_int
             type(c_ptr), value :: handle
@@ -116,6 +131,8 @@ module tiago_vmecpp
         procedure :: input_length => vmecpp_input_length
         procedure :: get_int => vmecpp_get_int
         procedure :: get_string => vmecpp_get_string
+        procedure :: set_string => vmecpp_set_string
+        procedure :: resize_input => vmecpp_resize_input
         procedure :: solve => vmecpp_solve
         procedure :: geometry => vmecpp_geometry
         procedure :: radial => vmecpp_radial
@@ -210,6 +227,19 @@ contains
         value = transfer(buffer, value)
         value = trim(value)
     end function vmecpp_get_string
+
+    subroutine vmecpp_set_string(self, name, value)
+        class(vmecpp_t), intent(inout) :: self
+        character(len=*), intent(in) :: name, value
+        call check(c_set_string(self%handle, cstr(name), cstr(value)), 'set '//name)
+    end subroutine vmecpp_set_string
+
+    subroutine vmecpp_resize_input(self, name, length)
+        class(vmecpp_t), intent(inout) :: self
+        character(len=*), intent(in) :: name
+        integer, intent(in) :: length
+        call check(c_resize_input(self%handle, cstr(name), int(length, c_int)), 'resize '//name)
+    end subroutine vmecpp_resize_input
 
     logical function vmecpp_solve(self, message) result(converged)
         !! .false. (and the reason in message) if VMEC++ found no equilibrium.

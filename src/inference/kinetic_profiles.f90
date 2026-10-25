@@ -27,6 +27,10 @@ module tiago_kinetic_profiles
     !! low-dimensional: a local flattening costs |z|^2 ~ 1e2 under it, while the
     !! Matern kernels (default 5/2) keep such profiles in the prior bulk.
     !!
+    !! Beyond s = 1 (outside the plasma) the positive profiles continue as
+    !! f(1) exp(-(s - 1) / sol_decay) and Zeff as Zeff(1), so predictions stay
+    !! continuous and differentiable when a point crosses the boundary.
+    !!
     !! The prior acts on the log value, not on the log gradient as in
     !! surroBIER's PCA prior, so flat regions (plateaus from islands) have
     !! non-zero prior density. A profile that is not latent keeps fixed
@@ -59,6 +63,7 @@ module tiago_kinetic_profiles
         integer :: ncoef = 0
         real(dp), allocatable :: greville(:)
         real(dp) :: z_imp = 6.0_dp
+        real(dp) :: sol_decay = 0.05_dp               !! e-folding length in s beyond s = 1
         type(profile_t) :: p(N_PROFILES)
         integer :: n_latent = 0
     contains
@@ -201,8 +206,7 @@ contains
         do j = 1, size(s)
             call basis_at(self, s(j), b)
             do i = 1, N_PROFILES
-                u = dot_product(b(0, :), c(:, i))
-                du = dot_product(b(1, :), c(:, i))
+                call u_at(self, i, s(j), b, c(:, i), u, du)
                 call transform(self, i, u, g, dg)
                 f(i, j) = g
                 df_ds(i, j) = dg * du
@@ -230,8 +234,7 @@ contains
             call basis_at(self, s(j), b)
             s_bar(j) = 0.0_dp
             do i = 1, N_PROFILES
-                u = dot_product(b(0, :), c(:, i))
-                du = dot_product(b(1, :), c(:, i))
+                call u_at(self, i, s(j), b, c(:, i), u, du)
                 call transform(self, i, u, g, dg)
                 c_bar(:, i) = c_bar(:, i) + f_bar(i, j) * dg * b(0, :)
                 s_bar(j) = s_bar(j) + f_bar(i, j) * dg * du
@@ -324,8 +327,24 @@ contains
         real(dp), intent(out) :: b(0:, :)
         type(fortnum_status_t) :: st
         call bspline_eval_deriv(self%basis, min(max(s, 0.0_dp), 1.0_dp), 1, b, st)
-        if (s > 1.0_dp .or. s < 0.0_dp) b(1, :) = 0.0_dp
     end subroutine basis_at
+
+    pure subroutine u_at(self, which, s, b, c, u, du)
+        !! Spline value and s derivative, with the scrape-off continuation.
+        type(kinetic_profiles_t), intent(in) :: self
+        integer, intent(in) :: which
+        real(dp), intent(in) :: s, b(0:, :), c(:)
+        real(dp), intent(out) :: u, du
+        u = dot_product(b(0, :), c)
+        du = dot_product(b(1, :), c)
+        if (s > 1.0_dp) then
+            du = 0.0_dp
+            if (which /= P_ZEFF) then
+                u = u - (s - 1.0_dp) / self%sol_decay
+                du = -1.0_dp / self%sol_decay
+            end if
+        end if
+    end subroutine u_at
 
     subroutine transform(self, which, u, g, dg)
         type(kinetic_profiles_t), intent(in) :: self

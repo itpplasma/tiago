@@ -520,6 +520,8 @@ Eigen::VectorXd& Vector(vmecpp::VmecINDATA& in, const std::string& name) {
   if (name == "ai") return in.ai;
   if (name == "ac") return in.ac;
   if (name == "aphi") return in.aphi;
+  if (name == "am_aux_s") return in.am_aux_s;
+  if (name == "am_aux_f") return in.am_aux_f;
   throw std::runtime_error("unknown input array: " + name);
 }
 
@@ -690,6 +692,29 @@ extern "C" int tiago_vmecpp_get_string(const tiago_vmecpp* handle, const char* n
     std::memset(buffer, ' ', static_cast<size_t>(length));
     std::memcpy(buffer, value.data(),
                 std::min(value.size(), static_cast<size_t>(length)));
+  });
+}
+
+extern "C" int tiago_vmecpp_set_string(tiago_vmecpp* handle, const char* name,
+                                       const char* value) {
+  return Guard([&] {
+    const std::string key(name);
+    if (key == "pmass_type") {
+      handle->indata.pmass_type = value;
+    } else {
+      throw std::runtime_error("unknown string: " + key);
+    }
+  });
+}
+
+extern "C" int tiago_vmecpp_resize_input(tiago_vmecpp* handle, const char* name,
+                                         int length) {
+  return Guard([&] {
+    if (length < 0) throw std::runtime_error("negative length");
+    Eigen::VectorXd& v = Vector(handle->indata, name);
+    const auto old = v.size();
+    v.conservativeResize(length);
+    for (Eigen::Index k = old; k < length; ++k) v[k] = 0.0;
   });
 }
 

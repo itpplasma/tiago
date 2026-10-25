@@ -45,7 +45,9 @@ diagnostic extends `profile_diagnostic_t` and implements:
 above 1 outside the plasma), `Q_B` (|B| in T), `Q_NE` (m^-3), `Q_TE` and
 `Q_TI` (eV) and `Q_ZEFF`, their spatial derivatives `dq_dx(3, N_QUANTITIES, n)`
 with respect to (R, phi, Z), and `inside(n)`. Outside the last closed surface
-the kinetic quantities are ne = Te = Ti = 0 and Zeff = 1.
+the kinetic profiles continue as f(1) exp(-(s - 1) / sol_decay) (Zeff
+constant, sol_decay = 0.05 by default), so predictions remain continuous and
+differentiable when a point crosses the boundary during sampling.
 
 The core evaluates the sample, calls the diagnostic and composes the chain
 rule: the diagnostic's q_bar goes through the profiles to the profile latents
