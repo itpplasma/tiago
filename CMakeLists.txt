@@ -47,6 +47,16 @@ set(LIBNEO_BUILD_NUMERICS ${TIAGO_ENABLE_SPECTRE} CACHE BOOL "Build libneo field
 
 option(TIAGO_ENABLE_OPENMP "Enable OpenMP parallelism inside Tiago loops" ON)
 
+# fortnum: B-spline profile bases, NUTS and PSIS for the inference core. Declared
+# before libneo, whose numerics reuse an existing fortnum target.
+set(TIAGO_FORTNUM_TAG "f72a16b18437474f625a5975b61efb487e633cfe" CACHE STRING "fortnum commit used by Tiago")
+if(NOT TARGET fortnum)
+    FetchContent_Declare(fortnum
+        GIT_REPOSITORY https://github.com/lazy-fortran/fortnum.git
+        GIT_TAG        ${TIAGO_FORTNUM_TAG})
+    FetchContent_MakeAvailable(fortnum)
+endif()
+
 FetchContent_Declare(libneo
     GIT_REPOSITORY ${TIAGO_LIBNEO_GIT}
     GIT_TAG        ${_tiago_libneo_ref}
@@ -107,6 +117,21 @@ if(TIAGO_ENABLE_OPENMP)
     if(OpenMP_Fortran_FOUND)
         target_link_libraries(tiago_solver PUBLIC OpenMP::OpenMP_Fortran)
     endif()
+endif()
+
+# Inference core without a provider: kinetic profiles and their prior, the
+# profile-diagnostic contract and the reference point probe.
+add_library(tiago_inference STATIC
+    src/generated/kinetic_pressure.f90
+    src/inference/kinetic_profiles.f90
+    src/inference/profile_diagnostic.f90
+    src/inference/point_probe.f90)
+set_target_properties(tiago_inference PROPERTIES
+    Fortran_STANDARD 2018
+    Fortran_STANDARD_REQUIRED YES)
+target_link_libraries(tiago_inference PUBLIC fortnum)
+if(TIAGO_ENABLE_OPENMP AND OpenMP_Fortran_FOUND)
+    target_link_libraries(tiago_inference PUBLIC OpenMP::OpenMP_Fortran)
 endif()
 
 add_executable(tiago_cli src/cli/tiago_cli.f90)
@@ -409,6 +434,13 @@ foreach(bad IN ITEMS
     set_tests_properties(tiago_cli_rejects_${name} PROPERTIES
         PASS_REGULAR_EXPRESSION "${regex}" WILL_FAIL FALSE)
 endforeach()
+
+add_executable(test_profile_diagnostic tests/test_profile_diagnostic.f90)
+target_link_libraries(test_profile_diagnostic PRIVATE tiago_inference)
+add_test(NAME tiago_profile_diagnostic COMMAND $<TARGET_FILE:test_profile_diagnostic>)
+add_executable(test_kinetic_profiles tests/test_kinetic_profiles.f90)
+target_link_libraries(test_kinetic_profiles PRIVATE tiago_inference)
+add_test(NAME tiago_kinetic_profiles COMMAND $<TARGET_FILE:test_kinetic_profiles>)
 
 add_test(NAME tiago_diag_lint_flux
     COMMAND $<TARGET_FILE:tiago_cli> diag lint

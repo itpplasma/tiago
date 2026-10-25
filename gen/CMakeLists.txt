@@ -7,3 +7,6 @@ find_library(FORTSYM_LIBRARY fortsym PATHS "${FORTSYM_BUILD}/lib" REQUIRED
 add_executable(gen_mse gen_mse.f90)
 target_include_directories(gen_mse PRIVATE "${FORTSYM_BUILD}/include")
 target_link_libraries(gen_mse PRIVATE "${FORTSYM_LIBRARY}")
+add_executable(gen_kinetic gen_kinetic.f90)
+target_include_directories(gen_kinetic PRIVATE "${FORTSYM_BUILD}/include")
+target_link_libraries(gen_kinetic PRIVATE "${FORTSYM_LIBRARY}")
