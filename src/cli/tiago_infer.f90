@@ -350,12 +350,14 @@ contains
     end subroutine write_posterior_solves
 
     subroutine write_iota(u, tag)
+        !! Rotational transform of the current equilibrium (wout iotas, half grid).
         integer, intent(in) :: u, tag
-        real(dp), allocatable :: sh(:)
+        real(dp), allocatable :: sh(:), iotas(:)
         integer :: j
         sh = rec%eq%s_half()
+        iotas = rec%eq%vmec%wout('iotas', rec%eq%ns)
         do j = 1, size(sh)
-            write(u, '(I0,2(",",ES15.7))') tag, sh(j), rec%eq%iota_half(j)
+            write(u, '(I0,2(",",ES15.7))') tag, sh(j), iotas(j + 1)
         end do
     end subroutine write_iota
 
