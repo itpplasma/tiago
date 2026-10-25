@@ -77,12 +77,7 @@ add_library(tiago_diagnostics STATIC
     src/generated/cold_resonance.f90
     src/diagnostics/radial_interp.f90
     src/diagnostics/real_space_state.f90
-    src/diagnostics/label_profile.f90
-    src/diagnostics/analytic_state.f90
-    src/diagnostics/los_geometry.f90
-    src/diagnostics/thomson.f90
-    src/diagnostics/ece.f90
-    src/diagnostics/line_integrals.f90)
+    src/diagnostics/analytic_state.f90)
 set_target_properties(tiago_diagnostics PROPERTIES
     Fortran_STANDARD 2018
     Fortran_STANDARD_REQUIRED YES)
@@ -141,8 +136,13 @@ add_library(tiago_inference STATIC
     src/inference/kinetic_profiles.f90
     src/inference/profile_diagnostic.f90
     src/inference/point_probe.f90
+    src/generated/xics_emissivity.f90
+    src/inference/sight_geometry.f90
     src/inference/state_sampler.f90
-    src/inference/vmecpp_state.f90)
+    src/inference/vmecpp_state.f90
+    src/inference/thomson_scattering.f90
+    src/inference/ece_radiometer.f90
+    src/inference/line_integrals.f90)
 set_target_properties(tiago_inference PROPERTIES
     Fortran_STANDARD 2018
     Fortran_STANDARD_REQUIRED YES)
@@ -405,12 +405,12 @@ set_tests_properties(tiago_sensor_set tiago_sensor_set_plasma PROPERTIES
     ENVIRONMENT TIAGO_TEST_SENSOR_GEOMETRY=${TIAGO_TEST_SENSOR_GEOMETRY} RESOURCE_LOCK sensor_geometry)
 set_tests_properties(tiago_sensor_set_plasma PROPERTIES FIXTURES_REQUIRED wout_li383)
 
-add_executable(test_profile_diagnostics tests/test_profile_diagnostics.f90)
-target_link_libraries(test_profile_diagnostics PRIVATE tiago_solver)
-add_test(NAME tiago_profile_diagnostics COMMAND $<TARGET_FILE:test_profile_diagnostics>)
-add_test(NAME tiago_profile_diagnostics_vmec
-    COMMAND $<TARGET_FILE:test_profile_diagnostics> ${TIAGO_WOUT_SIMSOPT_SMALL})
-set_tests_properties(tiago_profile_diagnostics_vmec PROPERTIES FIXTURES_REQUIRED wout_li383)
+add_executable(test_profile_instruments tests/test_profile_instruments.f90)
+target_link_libraries(test_profile_instruments PRIVATE tiago_inference tiago_solver)
+add_test(NAME tiago_profile_instruments COMMAND $<TARGET_FILE:test_profile_instruments>)
+add_test(NAME tiago_profile_instruments_vmec
+    COMMAND $<TARGET_FILE:test_profile_instruments> ${TIAGO_WOUT_SIMSOPT_SMALL})
+set_tests_properties(tiago_profile_instruments_vmec PROPERTIES FIXTURES_REQUIRED wout_li383)
 
 add_executable(test_plasma_projection tests/test_plasma_projection.f90)
 target_link_libraries(test_plasma_projection PRIVATE tiago_solver)

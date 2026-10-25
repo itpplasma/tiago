@@ -4,12 +4,13 @@ program gen_profile_kernels
     !!   circular_state  shifted-circle tokamak map, |B| = B0 R0 / R and their
     !!                   derivatives in the labels (rho, theta, phi) and the
     !!                   parameters (R0, a, Delta, B0), the analytic test state;
-    !!   cold_resonance  |B| of the n-th electron-cyclotron harmonic at f.
+    !!   cold_resonance  |B| of the n-th electron-cyclotron harmonic at f;
+    !!   xics_emissivity coronal line emissivity and its partial derivatives.
     use, intrinsic :: iso_fortran_env, only: dp => real64
     use fortsym_string, only: str, chars
     use fortsym_arena, only: arena_t
     use fortsym_expr, only: expr_t, sym, real_expr, pi_expr, operator(+), &
-        operator(-), operator(*), operator(/), operator(**), sin, cos
+        operator(-), operator(*), operator(/), operator(**), sin, cos, exp, sqrt
     use fortsym_diff, only: diff
     use fortsym_kernel, only: kernel_spec_t, emit_kernel
     use fortsym_engine, only: engine_result_t
@@ -18,7 +19,7 @@ program gen_profile_kernels
     type(arena_t), target :: arena
     type(symengine_engine_t) :: engine
     type(engine_result_t) :: simplified
-    type(expr_t) :: t, u(3), p(4), x(3), b, roots(40), f, n
+    type(expr_t) :: t, u(3), p(4), x(3), b, roots(40), f, n, ne, te, zeff, zi, el
     type(kernel_spec_t) :: spec
     character(len=5), parameter :: unames(3) = ['rho  ', 'theta', 'phi  ']
     character(len=5), parameter :: pnames(4) = ['r0   ', 'a    ', 'delta', 'b0   ']
@@ -121,6 +122,22 @@ program gen_profile_kernels
     spec%args = [str('f'), str('harmonic')]
     spec%outputs = [str('b_res'), str('db_res_df')]
     call emit('cold_resonance', roots(:2))
+
+    ! Coronal excitation of an impurity line, up to a constant:
+    ! eps = ne n_Z exp(-E / Te) / sqrt(Te),  n_Z = ne (Zeff - 1) / (Z (Z - 1)).
+    ne = sym(arena, 'ne')
+    te = sym(arena, 'te')
+    zeff = sym(arena, 'zeff')
+    zi = sym(arena, 'z_imp')
+    el = sym(arena, 'e_line')
+    roots(1) = ne*ne*(zeff - 1)/(zi*(zi - 1))*exp(-el/te)/sqrt(te)
+    roots(2) = diff(roots(1), ne)
+    roots(3) = diff(roots(1), te)
+    roots(4) = diff(roots(1), zeff)
+    call reset_spec(5, 4)
+    spec%args = [str('ne'), str('te'), str('zeff'), str('z_imp'), str('e_line')]
+    spec%outputs = [str('eps'), str('deps_dne'), str('deps_dte'), str('deps_dzeff')]
+    call emit('xics_emissivity', roots(:4))
 contains
     subroutine reset_spec(nargs, nout)
         integer, intent(in) :: nargs, nout
