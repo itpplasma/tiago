@@ -92,9 +92,9 @@ uncertainties owned explicitly.
 Reuse KIN6D physical forward primitives when appropriate while keeping
 instrument/calibration semantics in TIAGO.
 
-### Profile inference from recorded signals (decision 2026-10-26)
+### Profile inference from recorded signals
 
-Kinetic-profile inference for W7-X, and later ASDEX Upgrade, is a full
+Inference of the electron density and temperature profiles for W7-X, and later ASDEX Upgrade, is a full
 forward model down to the signals the instruments record. It does not compare
 or reconcile processed profile products from different analysis chains. Every
 calibration constant is an explicit parameter whose prior comes from its own
@@ -105,28 +105,28 @@ Synthetic diagnostics at the recorded level:
 
 - Thomson scattering: photon signal per polychromator channel and laser pulse,
   from the scattered spectrum times laser energy, collection efficiency,
-  absolute (Raman/Rayleigh) calibration including laser out-coupling, and the
-  spectral channel calibration.
-- Dispersion interferometer: phase or raw evaluation signals along the real
-  line of sight, including the environmental correction.
-- ECE: radiometer signals including optical depth and calibration.
+  absolute (Raman/Rayleigh) calibration and the spectral channel calibration.
+- Dispersion interferometer: measured phase, or the detector signals it is
+  evaluated from, along the real line of sight, including the corrections
+  applied to the phase.
+- Electron cyclotron emission (ECE): radiometer signals including optical depth and calibration.
 - Magnetics: diamagnetic-loop and flux-loop signals from the equilibrium,
   through the existing DIAGNO-compatible path.
 
-Gaussian-process and multi-fidelity methods sit inside this model: GP profile
-priors, multi-fidelity surrogates for expensive parts (equilibrium and
-mapping), and explicit, constrained per-instrument discrepancy terms
-(Kennedy and O'Hagan 2001). They never replace a recorded signal by a
+Gaussian-process (GP) and multi-fidelity methods sit inside this model: GP
+profile priors, multi-fidelity surrogates for expensive parts (equilibrium and
+flux-surface mapping), and explicit, constrained per-instrument discrepancy terms
+(Kennedy and O'Hagan, J. R. Stat. Soc. B 63, 425 (2001)). They never replace a recorded signal by a
 processed product.
 
-Order, by availability of raw data and geometry:
+Order, by access to raw data and diagnostic geometry:
 
 1. dispersion interferometer and magnetics;
 2. Thomson scattering down to channel signals;
 3. ECE.
 
 Built-in consistency checks: diamagnetic energy against the kinetic energy
-from n and T; interferometer against the Thomson density scale; an
+from the electron and ion density and temperature profiles; interferometer against the Thomson density scale; an
 independently calibrated Thomson density held out from the fit; calibration
 posteriors compared across campaigns to detect drift. Cross-check against the
 published integrated-data-analysis frameworks Minerva (W7-X) and IDA (ASDEX
