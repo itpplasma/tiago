@@ -115,7 +115,7 @@ sCluster array 3369752 ran 50 seeds of `tiago_infer` at 22c28a4 (seeds
 101-150; Clang 22.1.8 / Enzyme 0.0.293, 4 threads each, about 10 min per
 seed). Each seed draws the truth from the prior (CURTOR, PHIEDGE, 7 B-spline
 latents each for ne, Te, Ti, a (dR, dZ) probe alignment: 25 latents), adds
-noise to 72 magnetic signals and 24 profile probes (5 %), and runs MAP,
+noise to 54 magnetic signals and 24 profile probes (5 %), and runs MAP,
 Laplace, PSIS (400 draws) and NUTS (300 warm-up, 400 draws). Fractions of
 truths inside the central intervals (nominal 0.683/0.954 for +-1/2 sd,
 0.68/0.95 for quantile intervals):
