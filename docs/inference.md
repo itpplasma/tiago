@@ -109,6 +109,33 @@ Pareto-smoothed importance sampling from the Laplace Gaussian (k-hat).
 noise, MAP, Laplace, PSIS, NUTS) and writes CSV files for
 `tools/inference_plots.py` and `tools/inference_coverage.py`.
 
+## Synthetic coverage study (LI383, fixed boundary)
+
+sCluster array 3369752 ran 50 seeds of `tiago_infer` at 22c28a4 (seeds
+101-150; Clang 22.1.8 / Enzyme 0.0.293, 4 threads each, about 10 min per
+seed). Each seed draws the truth from the prior (CURTOR, PHIEDGE, 7 B-spline
+latents each for ne, Te, Ti, a (dR, dZ) probe alignment: 25 latents), adds
+noise to 72 magnetic signals and 24 profile probes (5 %), and runs MAP,
+Laplace, PSIS (400 draws) and NUTS (300 warm-up, 400 draws). Fractions of
+truths inside the central intervals (nominal 0.683/0.954 for +-1/2 sd,
+0.68/0.95 for quantile intervals):
+
+| | 68 % | 95 % |
+|---|---|---|
+| latents, Laplace | 0.671 | 0.941 |
+| latents, NUTS | 0.664 | 0.930 |
+| ne, Te, Ti, p at 41 s values, Laplace | 0.669 | 0.938 |
+| same, NUTS | 0.673 | 0.933 |
+| iota (40 re-solved draws) | 0.565 | 0.904 |
+
+Values within a seed are correlated, so the binomial intervals of
+`tools/inference_coverage.py` understate the uncertainty. NUTS had no
+divergences, mean acceptance 0.80-0.86, tree depth 3 and E-BFMI 0.9-1.3;
+PSIS k-hat had median 0.42 and exceeded 0.7 in one seed. The iota bands come
+from only 40 solves per seed and iota is dominated by the single CURTOR
+latent, so its coverage is nearly all-or-nothing per seed; whether the
+under-coverage is sampling noise or a bias has not been established.
+
 ## References and reference implementations
 
 - Profile prior kernel: the non-stationary Gibbs kernel with a tanh
