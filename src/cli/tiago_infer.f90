@@ -106,7 +106,7 @@ program tiago_infer
         if (ok) exit
     end do
     if (.not. ok) error stop 'no equilibrium for 20 prior draws'
-    call synthesize_magnetics(theta_true(1:rec%n) * rec%scale, 0.01_dp, 1.0e-4_dp, 1.0e-8_dp, &
+    call synthesize_magnetics(model, theta_true(1:rec%n) * rec%scale, 0.01_dp, 1.0e-4_dp, 1.0e-8_dp, &
         1.0e-7_dp, rng_noise, noise)
     call synthesize_profiles(model, theta_true, sigma_profile_rel, [0.0_dp, 0.0_dp], rng_noise, noise)
     call rec%eq%write_wout(out//'/wout_truth.nc')
