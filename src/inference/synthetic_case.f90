@@ -164,10 +164,13 @@ contains
         model%diags(2)%model_sigma = [(0.0_dp, i = 1, np)]
     end subroutine place_probes
 
-    subroutine synthesize_magnetics(x_true, sigma_rel, sigma_flux, sigma_segrog, sigma_bprobe, rng, &
-            noise)
+    subroutine synthesize_magnetics(model, x_true, sigma_rel, sigma_flux, sigma_segrog, sigma_bprobe, &
+            rng, noise)
         !! rec measurements and sigmas from the current equilibrium (solved at
-        !! the truth by the caller) at parameters x_true, with Gaussian noise.
+        !! the truth by the caller) at parameters x_true, with Gaussian noise;
+        !! resets the model's diagonal magnetic covariance to these sigmas
+        !! (joint setup factors whatever rec%meas_sigma held before).
+        type(joint_model_t), intent(inout) :: model
         real(dp), intent(in) :: x_true(:), sigma_rel, sigma_flux, sigma_segrog, sigma_bprobe
         type(rng_t), intent(inout) :: rng
         logical, intent(in) :: noise
@@ -191,6 +194,13 @@ contains
             rec%meas_value(i) = exact
             if (noise) rec%meas_value(i) = exact + rec%meas_sigma(i) * e
         end do
+        if (allocated(model%mag_covariance)) deallocate(model%mag_covariance)
+        allocate(model%mag_covariance(rec%n_meas, rec%n_meas))
+        model%mag_covariance = 0.0_dp
+        do i = 1, rec%n_meas
+            model%mag_covariance(i, i) = rec%meas_sigma(i)**2
+        end do
+        if (allocated(model%mag_model_sigma)) call model%update_covariances()
     end subroutine synthesize_magnetics
 
     subroutine synthesize_profiles(model, theta_true, sigma_rel, sigma_floor, rng, noise)

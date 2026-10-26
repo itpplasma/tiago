@@ -10,7 +10,7 @@ program test_joint_model
     !!     finite.
     !! Usage: test_joint_model <VMEC input> <sensors.awk> <workdir>
     use, intrinsic :: iso_fortran_env, only: dp => real64, int64, error_unit
-    use tiago_reconstruction, only: rec
+    use tiago_reconstruction, only: rec, jacobian_at
     use tiago_joint_model, only: joint_model_t
     use tiago_synthetic_case, only: setup_magnetics, place_probes, synthesize_magnetics, &
         synthesize_profiles
@@ -125,8 +125,8 @@ program test_joint_model
         0.5_dp, -0.4_dp]
     call rng_seed(rng, 1_int64, st)
     call model%residual(theta_true, r, ok)
-    call synthesize_magnetics(theta_true(1:2) * rec%scale, 0.01_dp, 1.0e-4_dp, 1.0e-8_dp, 1.0e-7_dp, &
-        rng, .false.)
+    call synthesize_magnetics(model, theta_true(1:2) * rec%scale, 0.01_dp, 1.0e-4_dp, 1.0e-8_dp, &
+        1.0e-7_dp, rng, .false.)
     call synthesize_profiles(model, theta_true, 0.05_dp, [0.0_dp, 0.0_dp], rng, .false.)
 
     ! --- 3. Jacobian against central differences of re-solved equilibria;
@@ -136,6 +136,25 @@ program test_joint_model
     theta = 0.5_dp * (theta0 + theta_true)
     call model%residual(theta, r, ok)
     call model%jacobian(theta, jac)
+    ! magnetic Fisher information of each rec parameter: the joint magnetic
+    ! rows must carry the synthesized measurement sigmas, i.e. agree with the
+    ! reconstruction rows whitened by rec%meas_sigma (regression: a covariance
+    ! factored before synthesize_magnetics kept unit sigmas)
+    block
+        real(dp), allocatable :: jrec(:, :)
+        real(dp) :: f_joint, f_rec, prior_sd
+        call jacobian_at(theta(1:model%n_rec) * rec%scale, jrec)
+        do k = 1, model%n_rec
+            f_joint = sum(jac(1:model%n_mag, k)**2)
+            f_rec = sum((jrec(1:model%n_mag, k) * rec%scale(k))**2)
+            prior_sd = rec%prior_sigma(k) / rec%scale(k)
+            print '(2A,3ES11.3)', trim(rec%names(k)), ': magnetic Fisher joint/rec, '// &
+                'post/prior sd from magnetics + prior: ', f_joint, f_rec, &
+                1.0_dp / sqrt(1.0_dp + f_joint * prior_sd**2)
+            call expect(abs(f_joint - f_rec) <= 1.0e-10_dp * f_rec, &
+                'joint magnetic rows whitened by the measurement sigmas')
+        end do
+    end block
     cols = [1, 2, model%n_rec + 3, model%n_rec + 7 + 4, model%n_rec + 14 + 2, model%n - 1, model%n]
     h = 1.0e-4_dp
     block
