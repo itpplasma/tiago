@@ -170,6 +170,52 @@ writes, for one seed, flux surfaces at three toroidal angles with 68/95 %
 bands of the displacement from the truth, profiles (p, ne, Te, Ti, iota,
 enclosed current) with bands, and the corner plot.
 
+## Diagnostic calibration as nuisance parameters
+
+Planned, not yet implemented. A Thomson scattering system predicts the pair
+(ne, Te) per scattering volume, and a calibration factor multiplies every
+spectral channel. Thomson data alone therefore fix only the product of the
+factor and ne, while Te from channel ratios is calibration independent
+(Fischer, Dinklage and Pasch 2003, PPCF 45, 1095). The calibration is
+modelled as latent parameters beside the profile latents, so that its
+uncertainty propagates into the posterior of the profiles and the equilibrium:
+
+    ne_obs = exp(lc + a) ne + noise,    Te_obs unchanged.
+
+- Campaign scale: lc has a broad Gaussian prior in the logarithm, wide enough
+  to cover a factor of about two in either direction, with heavier
+  (Student-t) tails.
+- Per-laser offsets: a small zero-sum offset per laser on top of the campaign
+  scale.
+- One-sided overlap loss: a is not positive. Laser misalignment lowers the
+  inferred density and changes it per laser and per volume (Merlo et al. 2023,
+  JINST 18, P11012, Nelde et al., arXiv:2111.03562). It is modelled as a
+  transformed smooth function of radius and time, or of the measured beam
+  shift where available, with the extra per-channel scatter as a latent.
+- Cross-calibration: a line-integral interferometer along a nearly identical
+  chord (Kwak et al. 2024, Nucl. Fusion 64, 106022), the diamagnetic energy
+  with the temperature profiles and the dilution, and absolute cutoffs such as
+  the ECE cutoff in a density ramp. The interferometer constrains the scale
+  only up to the unobserved edge density, and the diamagnetic energy depends
+  on Ti and fast ions, so these anchors have independent systematics. Pooling
+  several shots needs one shared interferometer systematic, otherwise the
+  campaign scale gets a false precision below that floor.
+- Identifiability: with Thomson data alone the posterior of lc equals its prior.
+  The contraction of the posterior relative to the prior, a leave-one-diagnostic-out
+  predictive check and the evidence of fixed against free scale quantify what
+  the other diagnostics pin down. A shape discrepancy, if added, needs zero
+  mean, small amplitude and no constant mode, because an unconstrained
+  discrepancy absorbs the scale (Kennedy and O'Hagan 2001, JRSS-B 63, 425).
+
+Planned synthetic test: inject a scale error in both directions, laser offsets
+and a one-sided overlap loss in the truth, and run diagnostic sets from
+Thomson alone through the interferometer, the diamagnetic energy, edge beam
+data and an ECE cutoff ramp up to a multi-shot hierarchy. The Thomson-only set
+must return the prior for lc, and the richer sets must show small bias and
+nominal 68 % and 95 % coverage over at least 50 seeds with flat
+simulation-based-calibration ranks (Talts et al. 2018, arXiv:1804.06788), using
+the coverage machinery of the study below.
+
 ## References and reference implementations
 
 - Profile prior kernel: the non-stationary Gibbs kernel with a tanh
