@@ -201,6 +201,69 @@ def main():
     ax.grid(axis="y", alpha=0.3)
     fig.tight_layout()
     fig.savefig(os.path.join(ens, "coverage.png"), dpi=160)
+    fig.savefig(os.path.join(ens, "coverage.pdf"))
+    plt.close(fig)
+    parameter_coverage(ens, seeds)
+
+
+def parameter_coverage(ens, seeds):
+    """Coverage of each latent (Laplace and NUTS intervals) over the seeds
+    with Wilson 95 % intervals (one binomial trial per seed), and the
+    median Laplace sd relative to the prior sd (CURTOR 2e4 A of 174250 A and
+    PHIEDGE 0.02 of 0.514386 in scaled units; the other latents are N(0,1))."""
+    prior_sd = {"CURTOR": 2.0e4 / 174250.0, "PHIEDGE": 0.02 / 0.514386}
+    acc = {}
+    for d in seeds:
+        for r in rows(os.path.join(d, "parameters.csv")):
+            acc.setdefault(r["name"].strip(), []).append({k: float(v) for k, v in r.items()
+                                                          if k not in ("name", None) and v.strip()})
+    names = list(acc)
+    res = {}
+    for n in names:
+        L = acc[n]
+        t = np.array([x["truth"] for x in L])
+        z = np.abs(t - np.array([x["map"] for x in L])) / np.array([x["laplace_sd"] for x in L])
+        nu = lambda a, b: sum(x[a] <= x["truth"] <= x[b] for x in L)
+        res[n] = {"Laplace": (np.sum(z < 1), np.sum(z < 2)),
+                  "NUTS": (nu("nuts_q16", "nuts_q84"), nu("nuts_q025", "nuts_q975")), "n": len(L),
+                  "ratio": np.median([x["laplace_sd"] for x in L]) / prior_sd.get(n, 1.0)}
+    lines = [f"{'latent':9s} {'sd/prior':>8s}  {'Laplace 68 %':>18s} {'Laplace 95 %':>18s} "
+             f"{'NUTS 68 %':>18s} {'NUTS 95 %':>18s}   (Wilson 95 % CI, n = seeds)"]
+    for n in names:
+        r = res[n]
+        cells = []
+        for m in ("Laplace", "NUTS"):
+            for lv in (0, 1):
+                lo, hi = wilson(r[m][lv], r["n"])
+                cells.append(f"{r[m][lv] / r['n']:.2f} [{lo:.2f},{hi:.2f}]")
+        lines.append(f"{n:9s} {r['ratio']:8.4f}  " + " ".join(f"{c:>18s}" for c in cells))
+    with open(os.path.join(ens, "coverage_parameters.txt"), "w") as f:
+        f.write("\n".join(lines) + "\n")
+    fig, (ax, bx) = plt.subplots(2, 1, figsize=(10, 6.2), sharex=True,
+                                 gridspec_kw={"height_ratios": [3, 1.1]})
+    x = np.arange(len(names))
+    for off, lv, color, marker, nom in ((-0.15, 0, BLUE, "o", 0.683), (0.15, 1, ORANGE, "s", 0.954)):
+        frac = np.array([res[n]["Laplace"][lv] / res[n]["n"] for n in names])
+        ci = np.array([wilson(res[n]["Laplace"][lv], res[n]["n"]) for n in names]).T
+        ax.errorbar(x + off, frac, yerr=[frac - ci[0], ci[1] - frac], fmt=marker, color=color,
+                    capsize=2, ms=4, label=f"Laplace, central {int(round(nom * 100))} % interval")
+        ax.axhline(nom, color=color, ls="--", lw=1.0)
+    ax.set_ylabel("fraction of truths inside")
+    ax.set_ylim(0.3, 1.03)
+    ax.legend(frameon=False, loc="lower left", fontsize=8, ncol=2)
+    ax.grid(axis="y", alpha=0.3)
+    ax.set_title(f"Coverage per latent over {len(seeds)} prior-drawn truths (error bars: Wilson 95 %; "
+                 "dashed: nominal)", fontsize=10)
+    bx.bar(x, [res[n]["ratio"] for n in names], color=VERMILION, alpha=0.8)
+    bx.set_ylabel("posterior sd / prior sd")
+    bx.set_ylim(0, 1.05)
+    bx.grid(axis="y", alpha=0.3)
+    bx.set_xticks(x)
+    bx.set_xticklabels(names, rotation=60, ha="right", fontsize=8)
+    fig.tight_layout()
+    fig.savefig(os.path.join(ens, "coverage_parameters.png"), dpi=200)
+    fig.savefig(os.path.join(ens, "coverage_parameters.pdf"))
+    plt.close(fig)
 
 
 if __name__ == "__main__":
