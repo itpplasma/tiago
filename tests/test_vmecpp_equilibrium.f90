@@ -167,25 +167,29 @@ program test_vmecpp_equilibrium
         sum(bbar * (bmp - bmm)) / (2.0_dp * eps), 1.0e-7_dp * sum(abs(coef_bar * dcoef)))
     block
         real(dp), allocatable :: dv(:), vp(:), vm(:)
+        ! |B| varies with iota/current only through B_v, far below its
+        ! geometry dependence: a larger step keeps the FD roundoff
+        ! (eps_mach |bbar . B| / h) below the tolerance
+        real(dp), parameter :: h = 1.0e-4_dp
         allocate(dv(ns - 1))
         call random_number(dv)
         dv = dv - 0.5_dp
         if (eq%ncurr == 1) then
-            vp = eq%current_half * (1.0_dp + eps * dv)
-            vm = eq%current_half * (1.0_dp - eps * dv)
+            vp = eq%current_half * (1.0_dp + h * dv)
+            vm = eq%current_half * (1.0_dp - h * dv)
             call eq%edge%modb(eq%coef, eq%phip_full, eq%phip_half, eq%iota_half, vp, bmp)
             call eq%edge%modb(eq%coef, eq%phip_full, eq%phip_half, eq%iota_half, vm, bmm)
-            call check_equal('|B| VJP vs FD (current)', &
-                sum(current_bar * eq%current_half * dv), sum(bbar * (bmp - bmm)) / (2.0_dp * eps), &
-                1.0e-7_dp)
+            call check_close('|B| VJP vs FD (current)', &
+                sum(current_bar * eq%current_half * dv), sum(bbar * (bmp - bmm)) / (2.0_dp * h), &
+                1.0e-7_dp * sum(abs(current_bar * eq%current_half * dv)))
         else
-            vp = eq%iota_half * (1.0_dp + eps * dv)
-            vm = eq%iota_half * (1.0_dp - eps * dv)
+            vp = eq%iota_half * (1.0_dp + h * dv)
+            vm = eq%iota_half * (1.0_dp - h * dv)
             call eq%edge%modb(eq%coef, eq%phip_full, eq%phip_half, vp, eq%current_half, bmp)
             call eq%edge%modb(eq%coef, eq%phip_full, eq%phip_half, vm, eq%current_half, bmm)
-            call check_equal('|B| VJP vs FD (iota)', &
-                sum(iota_bar * eq%iota_half * dv), sum(bbar * (bmp - bmm)) / (2.0_dp * eps), &
-                1.0e-7_dp)
+            call check_close('|B| VJP vs FD (iota)', &
+                sum(iota_bar * eq%iota_half * dv), sum(bbar * (bmp - bmm)) / (2.0_dp * h), &
+                1.0e-7_dp * sum(abs(iota_bar * eq%iota_half * dv)))
         end if
     end block
 
