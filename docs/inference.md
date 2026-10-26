@@ -132,15 +132,30 @@ truths inside the central intervals (nominal 0.683/0.954 for +-1/2 sd,
 | latents, NUTS | 0.664 | 0.930 |
 | ne, Te, Ti, p at 41 s values, Laplace | 0.669 | 0.938 |
 | same, NUTS | 0.673 | 0.933 |
-| iota (40 re-solved draws) | 0.565 | 0.904 |
+| iota, 40 re-solved draws (array 3369752) | 0.565 [0.45, 0.67] | 0.904 [0.85, 0.95] |
+| iota, 400 re-solved draws (array 3370049) | 0.596 [0.49, 0.70] | 0.960 [0.91, 0.99] |
 
-Values within a seed are correlated, so the binomial intervals of
-`tools/inference_coverage.py` understate the uncertainty. NUTS had no
-divergences, mean acceptance 0.80-0.86, tree depth 3 and E-BFMI 0.9-1.3;
-PSIS k-hat had median 0.42 and exceeded 0.7 in one seed. The iota bands come
-from only 40 solves per seed and iota is dominated by the single CURTOR
-latent, so its coverage is nearly all-or-nothing per seed; whether the
-under-coverage is sampling noise or a bias has not been established.
+Brackets are 95 % seed-bootstrap intervals. Values within a seed are
+correlated, so `tools/inference_coverage.py` resamples whole seeds; binomial
+intervals over all counted values understate the uncertainty, most for iota,
+whose values at all s follow CURTOR (R^2 0.93 over the draws of a seed). NUTS
+had no divergences, mean acceptance 0.80-0.86, tree depth 3 and E-BFMI
+0.9-1.3; PSIS k-hat had median 0.42 and exceeded 0.7 in one seed.
+
+The iota under-coverage of the first run was not a bias of the re-solve.
+The empirical quantile band of N independent draws contains a calibrated
+truth with probability 0.649/0.905 for N = 40 and 0.676/0.946 for N = 400
+(Monte Carlo), which explains the 95 % value. Array 3370049 reran the same
+binary and seeds (identical NUTS chains) with all 400 draws re-solved. Over
+the same 50 truths, the 68 % coverage of iota equals that of the CURTOR
+latent itself (0.58 to 0.60), and both lie within the sampling uncertainty
+of 50 seeds. Truths re-solved cold and hot-restarted after the chain differ
+in iota by at most 1.5e-5, against posterior sd of about 0.02. In this
+setup the magnetics barely constrain CURTOR (posterior/prior sd 0.98), so
+the iota band is nearly the prior band. A truth in the prior tail (seed 101:
+CURTOR +1.8 prior sd) therefore lies outside the band where iota is most
+sensitive to the current. `tiago_infer` now re-solves 400 draws by default
+and writes flux surfaces for the first 40.
 
 ## References and reference implementations
 

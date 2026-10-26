@@ -18,10 +18,10 @@ program tiago_infer
     use fortnum_nuts, only: nuts_options_t, nuts_result_t
     implicit none
 
-    integer, parameter :: maxk = 32, ns_out = 41
+    integer, parameter :: maxk = 32, ns_out = 41, surface_draws = 40
     character(len=512) :: vmec_input = '', sensors_awk = '', output_dir = 'infer'
     integer :: seed = 1, max_iterations = 30, n_warmup = 200, n_samples = 300, max_depth = 6
-    integer :: psis_draws = 0, posterior_solves = 40, laplace_draws = 400
+    integer :: psis_draws = 0, posterior_solves = 400, laplace_draws = 400
     logical :: noise = .true., truth_from_prior = .true.
     real(dp) :: breakpoints(maxk) = -1.0_dp
     real(dp) :: sigma_f = 0.3_dp, l_core = 0.4_dp, l_edge = 0.2_dp, s0 = 0.6_dp, sw = 0.2_dp
@@ -314,8 +314,11 @@ contains
     end subroutine write_profiles
 
     subroutine write_posterior_solves()
-        !! iota profiles and flux surfaces for the truth, the MAP and up to
-        !! posterior_solves draws (NUTS draws if available, else Laplace).
+        !! iota profiles for the truth, the MAP and up to posterior_solves
+        !! draws (NUTS draws if available, else Laplace), flux surfaces for the
+        !! first surface_draws of them. The iota bands need all draws: the
+        !! empirical 2.5/97.5 % quantiles of 40 draws contain a calibrated
+        !! truth with probability 0.90, of 400 draws 0.945.
         real(dp), allocatable :: draw(:)
         real(dp) :: z(model%n)
         type(rng_t) :: g
@@ -344,7 +347,7 @@ contains
             call model%residual(draw, r, ok)
             if (.not. ok) cycle
             call write_iota(u, k2)
-            call write_surfaces(out//'/surfaces_draws.csv', k2)
+            if (k2 <= surface_draws) call write_surfaces(out//'/surfaces_draws.csv', k2)
         end do
         close(u)
     end subroutine write_posterior_solves
