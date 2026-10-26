@@ -172,7 +172,7 @@ enclosed current) with bands, and the corner plot.
 
 ## Diagnostic calibration as nuisance parameters
 
-Planned, not yet implemented. A Thomson scattering system predicts the pair
+A Thomson scattering system predicts the pair
 (ne, Te) per scattering volume, and a calibration factor multiplies every
 spectral channel. Thomson data alone therefore fix only the product of the
 factor and ne, while Te from channel ratios is calibration independent
@@ -182,11 +182,65 @@ uncertainty propagates into the posterior of the profiles and the equilibrium:
 
     ne_obs = exp(lc + a) ne + noise,    Te_obs unchanged.
 
-- Campaign scale: lc has a broad Gaussian prior in the logarithm, wide enough
-  to cover a factor of about two in either direction, with heavier
-  (Student-t) tails.
-- Per-laser offsets: a small zero-sum offset per laser on top of the campaign
-  scale.
+### Implemented: Thomson density calibration
+
+Thomson scattering measures the product C ne of the density and an absolute
+calibration factor C, while Te follows from the spectral shape and does not
+depend on C. A diagnostic slot of the joint model can therefore carry a
+log-scale calibration (`cal_sigma > 0`). Signal i with `cal_group(i) = l > 0`
+is multiplied by exp(log C + b_l), and signals with group 0 are not scaled
+(`thomson_t%calibration_groups()` maps ne_i to its laser and Te_i to 0).
+
+- Campaign scale: log C = `cal_mean` + `cal_sigma` z_C with z_C ~ N(0, 1)
+  (default width 0.5, so that P(C in [1/2, 2]) = 0.83), or a unit Student-t
+  with `cal_nu` degrees of freedom for heavier tails. The t prior enters the
+  residual as the row sign(z) sqrt(2 phi(z)) with phi = (nu + 1)/2 log(1 + z^2/nu)
+  from the FortSym kernel `student_t_prior`, and `log_normalization` adds
+  its normalization. The Laplace Hessian of that row is the Gauss-Newton one.
+- Per-laser offsets (`laser_sigma > 0` and more than one laser):
+  b = `laser_sigma` H z_b with the orthonormal Helmert contrasts H, which have
+  L - 1 columns orthogonal to the ones vector. The offsets therefore sum to
+  zero, each has the prior sd `laser_sigma` sqrt(1 - 1/L), and log C is the
+  mean log scale over the lasers.
+- Shared systematic of the interferometer: the same latent on the
+  interferometer slot with every chord in group 1 (prior sd 0.03 in
+  `tiago_infer`) represents a common path-length or geometry error. Without
+  it, a chord fixes log C to the statistical noise, which is a false
+  precision. With it, the precision of C is limited by that systematic.
+
+The derivatives d(c y)/dz are c y times the latent's coefficient. All other
+cotangents of a row, which enter through the profiles, the alignment and the
+equilibrium adjoint, are scaled by c, as for the linear gain.
+`tests/test_calibration.f90` checks the layout, the zero-sum offsets,
+unscaled Te, the data reproduced at a C = 1.8 truth, the Jacobian columns of
+all calibration latents, a profile latent and CURTOR against central
+differences of re-solved equilibria, the t prior row and its series branch,
+and the normalization against quadrature.
+
+`tiago_infer` with `calibration_case = 1..4` runs the identifiability study.
+In case 1 only Thomson is used, without magnetics. Case 2 adds an
+interferometer with three horizontal chords, case 3 the diamagnetic loops of
+the synthetic sensor set, and case 4 all magnetic signals and the Ti probes.
+The truth has a fixed `ts_cal_truth` and fixed laser offsets
+`ts_laser_truth` (with their mean removed), while all other latents are
+drawn from the prior. With `ts_cal_sigma = 0` the same data are fitted
+without the latent. `tools/calibration_study.py` reports, for each variant,
+the posterior of log C, its contraction relative to the prior, the bias and
+the coverage, and it plots the posterior of C against the truth and the ne
+bands with and without the latent.
+
+A single run on seed 101 with C = 1.8 and Te0 = 2.5 keV gives a log C
+posterior sd of 0.28, 0.07, 0.07 and 0.05 of the prior sd in cases 1 to 4.
+Even Thomson alone therefore constrains C here, through the pressure: at a
+fixed boundary, C ne sets the Shafranov shift that the inboard and outboard
+volumes at fixed real-space positions see. The contraction is 0.71 at
+Te0 = 250 eV and 0.96 at 25 eV, and it does not change with the width of the
+ne prior (0.3 to 10). Without the calibration latent, the ne posterior misses
+the truth by the factor C, and the interferometer systematic absorbs it
+(MAP at -15 prior sd).
+
+### Not yet implemented
+
 - One-sided overlap loss: a is not positive. Laser misalignment lowers the
   inferred density and changes it per laser and per volume (Merlo et al. 2023,
   JINST 18, P11012, Nelde et al., arXiv:2111.03562). It is modelled as a
@@ -200,18 +254,19 @@ uncertainty propagates into the posterior of the profiles and the equilibrium:
   on Ti and fast ions, so these anchors have independent systematics. Pooling
   several shots needs one shared interferometer systematic, otherwise the
   campaign scale gets a false precision below that floor.
-- Identifiability: with Thomson data alone the posterior of lc equals its prior.
+- Identifiability: through the profiles alone the posterior of lc would equal its prior, but the
+  implemented study above finds that the pressure constraint on the equilibrium
+  contracts it.
   The contraction of the posterior relative to the prior, a leave-one-diagnostic-out
   predictive check and the evidence of fixed against free scale quantify what
   the other diagnostics pin down. A shape discrepancy, if added, needs zero
   mean, small amplitude and no constant mode, because an unconstrained
   discrepancy absorbs the scale (Kennedy and O'Hagan 2001, JRSS-B 63, 425).
 
-Planned synthetic test: inject a scale error in both directions, laser offsets
+Planned extension of the synthetic test: inject a scale error in both directions, laser offsets
 and a one-sided overlap loss in the truth, and run diagnostic sets from
 Thomson alone through the interferometer, the diamagnetic energy, edge beam
-data and an ECE cutoff ramp up to a multi-shot hierarchy. The Thomson-only set
-must return the prior for lc, and the richer sets must show small bias and
+data and an ECE cutoff ramp up to a multi-shot hierarchy. The richer sets must show small bias and
 nominal 68 % and 95 % coverage over at least 50 seeds with flat
 simulation-based-calibration ranks (Talts et al. 2018, arXiv:1804.06788), using
 the coverage machinery of the study below.

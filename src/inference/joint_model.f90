@@ -6,13 +6,27 @@ module tiago_joint_model
     !!                           and coil currents, tiago_reconstruction),
     !!               z_prof     (kinetic-profile latents, N(0, I) prior),
     !!               z_eta      (diagnostic alignment, eta = eta_sigma z_eta),
-    !!               z_gain     (calibration gains, g = 1 + gain_sigma z_gain) ]
+    !!               z_gain     (calibration gains, g = 1 + gain_sigma z_gain),
+    !!               z_cal      (log-scale calibrations, see below) ]
     !!
     !! and the whitened residual r(theta) stacks the magnetic measurements
     !! (whitened with a full covariance), the free-boundary consistency rows and
     !! parameter priors of tiago_reconstruction, the profile diagnostics
-    !! L^-1 (g y - d) with their full covariance, and the latent priors. The
+    !! L^-1 (g c y - d) with their full covariance, and the latent priors. The
     !! unnormalized log posterior is -|r|^2 / 2.
+    !!
+    !! Log-scale calibration of a diagnostic slot (cal_sigma > 0): signal i with
+    !! cal_group(i) = l > 0 is multiplied by c_i = exp(log C + b_l), signals
+    !! with cal_group(i) = 0 are not. The campaign scale is
+    !! log C = cal_mean + cal_sigma z_C with z_C ~ N(0, 1), or a unit Student-t
+    !! with cal_nu degrees of freedom (heavy tails, prior row
+    !! sign(z) sqrt(2 phi(z)) with phi = -log density, FortSym kernel
+    !! student_t_prior). With several groups (lasers) and laser_sigma > 0 the
+    !! per-group log offsets are b = laser_sigma H z_b, H the orthonormal
+    !! Helmert contrasts (L x (L - 1), columns orthogonal to ones), so that
+    !! sum_l b_l = 0, each b_l has prior sd laser_sigma sqrt(1 - 1/L), and log C
+    !! is the mean log scale of all groups. A slot whose groups are all 1 (e.g.
+    !! every interferometer chord) has one shared multiplicative systematic.
     !!
     !! The pressure given to VMEC++ is the kinetic pressure of z_prof on the
     !! half grid (tiago_equilibrium%set_pressure); the magnetic Jacobian with
@@ -32,6 +46,7 @@ module tiago_joint_model
     use tiago_vmecpp_state, only: vmecpp_state_t
     use tiago_real_space_state, only: located_t
     use tiago_state_sampler, only: sample_state, sample_state_vjp
+    use tiago_student_t_prior, only: student_t_prior
     implicit none
     private
 
@@ -46,7 +61,13 @@ module tiago_joint_model
         real(dp), allocatable :: chol(:, :)             !! of covariance + diag(model_sigma^2)
         real(dp), allocatable :: eta_sigma(:)           !! prior sd of the alignment nuisances
         real(dp) :: gain_sigma = 0.0_dp                 !! > 0: calibration gain latent
+        real(dp) :: cal_sigma = 0.0_dp                  !! > 0: log-scale calibration latent
+        real(dp) :: cal_mean = 0.0_dp                   !! prior mean of log C
+        real(dp) :: cal_nu = 0.0_dp                     !! > 0: Student-t prior on z_C
+        real(dp) :: laser_sigma = 0.0_dp                !! > 0: per-group log offsets
+        integer, allocatable :: cal_group(:)            !! per signal: 0 or group (laser) 1..L
         integer :: eta_offset = 0, gain_index = 0, row_offset = 0
+        integer :: cal_index = 0, laser_offset = 0, n_laser = 0
     end type diagnostic_slot_t
 
     type, public :: joint_model_t
@@ -55,7 +76,7 @@ module tiago_joint_model
         real(dp), allocatable :: mag_covariance(:, :)   !! of the magnetic signals (n_meas)
         real(dp), allocatable :: mag_model_sigma(:)
         real(dp), allocatable :: mag_chol(:, :)
-        integer :: n_rec = 0, n_prof = 0, n_eta = 0, n_gain = 0, n = 0
+        integer :: n_rec = 0, n_prof = 0, n_eta = 0, n_gain = 0, n_cal = 0, n = 0
         integer :: n_mag = 0, n_fb = 0, n_rec_prior = 0, n_diag_rows = 0
         ! evaluation state
         real(dp), allocatable :: s_half(:)
@@ -71,6 +92,8 @@ module tiago_joint_model
         procedure :: log_normalization => joint_log_normalization
         procedure :: proper_prior => joint_proper_prior
         procedure :: unpack => joint_unpack
+        procedure :: calibration => joint_calibration
+        procedure :: signal_scale => joint_signal_scale
         procedure :: predict_diagnostic => joint_predict_diagnostic
         procedure :: sample_at => joint_sample_at
     end type joint_model_t
@@ -110,7 +133,32 @@ contains
                 self%diags(d)%gain_index = self%n_rec + self%n_prof + self%n_eta + self%n_gain
             end if
         end do
-        self%n = self%n_rec + self%n_prof + self%n_eta + self%n_gain
+        self%n_cal = 0
+        do d = 1, size(self%diags)
+            associate (slot => self%diags(d))
+                slot%cal_index = 0
+                slot%laser_offset = 0
+                slot%n_laser = 0
+                if (slot%cal_sigma > 0.0_dp) then
+                    if (.not. allocated(slot%cal_group)) then
+                        allocate(slot%cal_group(slot%d%n_signals()))
+                        slot%cal_group = 1
+                    end if
+                    if (size(slot%cal_group) /= slot%d%n_signals()) error stop 'joint: cal_group size'
+                    if (any(slot%cal_group < 0)) error stop 'joint: negative cal_group'
+                    slot%n_laser = 0
+                    if (size(slot%cal_group) > 0) slot%n_laser = maxval(slot%cal_group)
+                    if (slot%n_laser == 0) error stop 'joint: calibration without calibrated signals'
+                    self%n_cal = self%n_cal + 1
+                    slot%cal_index = self%n_rec + self%n_prof + self%n_eta + self%n_gain + self%n_cal
+                    if (slot%laser_sigma > 0.0_dp .and. slot%n_laser > 1) then
+                        slot%laser_offset = slot%cal_index
+                        self%n_cal = self%n_cal + slot%n_laser - 1
+                    end if
+                end if
+            end associate
+        end do
+        self%n = self%n_rec + self%n_prof + self%n_eta + self%n_gain + self%n_cal
         self%n_mag = rec%n_meas
         self%n_fb = rec%n_fb
         self%n_rec_prior = rec%n_prior
@@ -161,8 +209,89 @@ contains
     integer function joint_n_residuals(self)
         class(joint_model_t), intent(in) :: self
         joint_n_residuals = self%n_mag + self%n_fb + self%n_rec_prior + self%n_diag_rows + &
-            self%n_prof + self%n_eta + self%n_gain
+            self%n_prof + self%n_eta + self%n_gain + self%n_cal
     end function joint_n_residuals
+
+    subroutine joint_calibration(self, theta, d, log_c, b)
+        !! Campaign log scale log C and per-group log offsets b(n_laser) of
+        !! diagnostic d (log C = 0, b = 0 without calibration latent).
+        class(joint_model_t), intent(in) :: self
+        real(dp), intent(in) :: theta(:)
+        integer, intent(in) :: d
+        real(dp), intent(out) :: log_c
+        real(dp), allocatable, intent(out) :: b(:)
+        integer :: l, m
+        associate (slot => self%diags(d))
+            allocate(b(slot%n_laser))
+            log_c = 0.0_dp
+            b = 0.0_dp
+            if (slot%cal_index == 0) return
+            log_c = slot%cal_mean + slot%cal_sigma * theta(slot%cal_index)
+            if (slot%laser_offset == 0) return
+            do l = 1, slot%n_laser
+                do m = 1, slot%n_laser - 1
+                    b(l) = b(l) + slot%laser_sigma * helmert(l, m) * theta(slot%laser_offset + m)
+                end do
+            end do
+        end associate
+    end subroutine joint_calibration
+
+    function joint_signal_scale(self, theta, d) result(c)
+        !! Calibration factor c_i = exp(log C + b_l) of each signal of
+        !! diagnostic d (1 for uncalibrated signals).
+        class(joint_model_t), intent(in) :: self
+        real(dp), intent(in) :: theta(:)
+        integer, intent(in) :: d
+        real(dp), allocatable :: c(:), b(:)
+        real(dp) :: log_c
+        integer :: i
+        allocate(c(self%diags(d)%d%n_signals()))
+        c = 1.0_dp
+        if (self%diags(d)%cal_index == 0) return
+        call self%calibration(theta, d, log_c, b)
+        do i = 1, size(c)
+            associate (l => self%diags(d)%cal_group(i))
+                if (l > 0) c(i) = exp(log_c + b(l))
+            end associate
+        end do
+    end function joint_signal_scale
+
+    pure real(dp) function helmert(l, m) result(h)
+        !! Entry (l, m) of the orthonormal Helmert contrasts: column m is
+        !! (1, .., 1, -m, 0, ..) / sqrt(m (m + 1)) with m ones.
+        integer, intent(in) :: l, m
+        h = 0.0_dp
+        if (l <= m) then
+            h = 1.0_dp / sqrt(real(m * (m + 1), dp))
+        else if (l == m + 1) then
+            h = -m / sqrt(real(m * (m + 1), dp))
+        end if
+    end function helmert
+
+    pure subroutine prior_row(z, nu, r, dr)
+        !! Whitened prior row of a latent z: z for N(0, 1) (nu <= 0), else
+        !! sign(z) sqrt(2 phi) for the unit Student-t with nu degrees of
+        !! freedom, so that r^2 / 2 = phi = -log density + const; near z = 0
+        !! the series r = z k (1 - x / 4), x = z^2 / nu, k^2 = (nu + 1) / nu,
+        !! replaces the cancellation in log(1 + x).
+        real(dp), intent(in) :: z, nu
+        real(dp), intent(out) :: r, dr
+        real(dp) :: phi, dphi, d2phi, x
+        if (nu <= 0.0_dp) then
+            r = z
+            dr = 1.0_dp
+            return
+        end if
+        x = z * z / nu
+        if (x < 1.0e-5_dp) then
+            r = z * sqrt((nu + 1.0_dp) / nu) * (1.0_dp - 0.25_dp * x)
+            dr = sqrt((nu + 1.0_dp) / nu) * (1.0_dp - 0.75_dp * x)
+            return
+        end if
+        call student_t_prior(z, nu, phi, dphi, d2phi)
+        r = sign(sqrt(2.0_dp * phi), z)
+        dr = dphi / r
+    end subroutine prior_row
 
     subroutine joint_unpack(self, theta, x, z, eta, gain, d)
         !! Physical reconstruction parameters x, profile latents z, and for
@@ -269,7 +398,7 @@ contains
         real(dp), allocatable :: r_rec(:), y(:), eta(:), dx(:, :, :)
         type(plasma_sample_t) :: sample
         type(located_t), allocatable :: loc(:)
-        real(dp) :: gain
+        real(dp) :: gain, dr
         integer :: d, row, nm
 
         self%evaluations = self%evaluations + 1
@@ -288,12 +417,18 @@ contains
                 allocate(y(slot%d%n_signals()))
                 call self%predict_diagnostic(theta, d, y, sample, loc, eta, dx)
                 call self%unpack(theta, gain=gain, d=d)
-                r(row + 1:row + size(y)) = whiten(slot%chol, gain * y - slot%data)
+                r(row + 1:row + size(y)) = whiten(slot%chol, &
+                    gain * self%signal_scale(theta, d) * y - slot%data)
                 row = row + size(y)
                 deallocate(y)
             end associate
         end do
         r(row + 1:) = theta(self%n_rec + 1:)
+        do d = 1, size(self%diags)
+            associate (k => self%diags(d)%cal_index)
+                if (k > 0) call prior_row(theta(k), self%diags(d)%cal_nu, r(row + k - self%n_rec), dr)
+            end associate
+        end do
         ok = all(ieee_is_finite(r))
     end subroutine joint_residual
 
@@ -305,10 +440,11 @@ contains
         real(dp), allocatable :: r_rec(:), jrec(:, :), z(:), zbar(:), y(:), eta(:), dx(:, :, :)
         real(dp), allocatable :: q_bar(:, :), eta_bar(:), f_bar(:, :), s_bar(:), p_bar(:), qs_bar(:, :)
         real(dp), allocatable :: coef_cot(:, :), bmnc_cot(:, :), cot(:, :), jeq(:, :), jd(:, :), e(:)
+        real(dp), allocatable :: f(:), c(:)
         type(plasma_sample_t) :: sample
         type(located_t), allocatable :: loc(:)
-        real(dp) :: gain
-        integer :: d, i, j, k, q, row, nm, nrec_rows, ndr, col, ng
+        real(dp) :: gain, rk, drk
+        integer :: d, i, j, k, q, row, nm, nrec_rows, ndr, col, ng, l, m
         logical :: ok
         integer, parameter :: rows(4) = [Q_NE, Q_TE, Q_TI, Q_ZEFF]
         integer, parameter :: profiles(4) = [P_NE, P_TE, P_TI, P_ZEFF]
@@ -351,6 +487,9 @@ contains
                     allocate(y(slot%d%n_signals()), e(slot%d%n_signals()))
                     call self%predict_diagnostic(theta, d, y, sample, loc, eta, dx)
                     call self%unpack(theta, gain=gain, d=d)
+                    ! total factor of each signal: gain times calibration scale
+                    c = self%signal_scale(theta, d)
+                    f = gain * c
                     allocate(jd(size(y), self%n), q_bar(N_QUANTITIES, sample%n), &
                         eta_bar(size(eta)), f_bar(N_PROFILES, sample%n), s_bar(sample%n), &
                         qs_bar(N_QUANTITIES, sample%n))
@@ -366,7 +505,7 @@ contains
                         end do
                         zbar = 0.0_dp
                         call self%prof%vjp(z, sample%q(Q_S, :), f_bar, zbar, s_bar)
-                        jd(i, self%n_rec + 1:self%n_rec + self%n_prof) = gain * zbar
+                        jd(i, self%n_rec + 1:self%n_rec + self%n_prof) = f(i) * zbar
                         s_bar = s_bar + q_bar(Q_S, :)
                         ! alignment: direct part plus motion of the points
                         do k = 1, size(eta)
@@ -378,13 +517,25 @@ contains
                             end do
                         end do
                         jd(i, slot%eta_offset + 1:slot%eta_offset + size(eta)) = &
-                            gain * eta_bar * slot%eta_sigma
-                        if (slot%gain_index > 0) jd(i, slot%gain_index) = slot%gain_sigma * y(i)
+                            f(i) * eta_bar * slot%eta_sigma
+                        if (slot%gain_index > 0) jd(i, slot%gain_index) = &
+                            slot%gain_sigma * c(i) * y(i)
+                        l = 0
+                        if (slot%cal_index > 0) l = slot%cal_group(i)
+                        if (l > 0) then
+                            jd(i, slot%cal_index) = slot%cal_sigma * f(i) * y(i)
+                            if (slot%laser_offset > 0) then
+                                do m = 1, slot%n_laser - 1
+                                    jd(i, slot%laser_offset + m) = &
+                                        slot%laser_sigma * helmert(l, m) * f(i) * y(i)
+                                end do
+                            end if
+                        end if
                         ! geometry and |B| (bmnc nodes) at fixed points through
                         ! the state's VJP, then the equilibrium adjoint
                         qs_bar = 0.0_dp
-                        qs_bar(Q_S, :) = gain * s_bar
-                        qs_bar(Q_B, :) = gain * q_bar(Q_B, :)
+                        qs_bar(Q_S, :) = f(i) * s_bar
+                        qs_bar(Q_B, :) = f(i) * q_bar(Q_B, :)
                         p_bar = 0.0_dp
                         call sample_state_vjp(self%state, loc, qs_bar, p_bar)
                         coef_cot(:, row + i) = p_bar(1:ng)
@@ -426,6 +577,12 @@ contains
         do k = self%n_rec + 1, self%n
             jac(row + k - self%n_rec, k) = 1.0_dp
         end do
+        do d = 1, size(self%diags)
+            k = self%diags(d)%cal_index
+            if (k == 0) cycle
+            call prior_row(theta(k), self%diags(d)%cal_nu, rk, drk)
+            jac(row + k - self%n_rec, k) = drk
+        end do
     end subroutine joint_jacobian
 
     real(dp) function joint_log_normalization(self) result(c)
@@ -447,6 +604,12 @@ contains
             do i = 1, size(self%diags(d)%chol, 1)
                 c = c - log(self%diags(d)%chol(i, i))
             end do
+            ! Student-t calibration prior instead of the N(0, 1) normalization
+            associate (nu => self%diags(d)%cal_nu)
+                if (self%diags(d)%cal_index > 0 .and. nu > 0.0_dp) c = c + 0.5_dp * log_2pi + &
+                    log_gamma(0.5_dp * (nu + 1.0_dp)) - log_gamma(0.5_dp * nu) - &
+                    0.5_dp * log(nu * acos(-1.0_dp))
+            end associate
         end do
     end function joint_log_normalization
 

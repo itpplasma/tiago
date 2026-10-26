@@ -4,12 +4,23 @@ program tiago_infer
     !! and profile probes with noise -> MAP -> Laplace covariance and evidence
     !! -> optional PSIS check and NUTS -> CSV outputs for coverage statistics
     !! and figures (tools/inference_plots.py, tools/inference_coverage.py).
+    !! calibration_case > 0 runs the Thomson density-calibration study instead
+    !! of the profile probes (docs/inference.md, "Thomson calibration"):
+    !!   1  Thomson only (no magnetics),     2  + interferometer,
+    !!   3  + diamagnetic loops,              4  + all magnetics and Ti probes.
+    !! The truth has the fixed calibration ts_cal_truth (multiplicative) and
+    !! laser log offsets ts_laser_truth (mean removed); all other latents,
+    !! including the interferometer systematic, are drawn from the prior.
+    !! ts_cal_sigma = 0 fits the same data without the calibration latent.
+    !! ne_sigma_f (default sigma_f) is the prior sd of log ne: it also informs
+    !! the absolute density scale, so Thomson alone constrains log C unless
+    !! it is wide.
     !! Usage: tiago_infer input.nml
     use, intrinsic :: iso_fortran_env, only: dp => real64, int64
     use tiago_reconstruction, only: rec
     use tiago_joint_model, only: joint_model_t
-    use tiago_synthetic_case, only: setup_magnetics, place_probes, synthesize_magnetics, &
-        synthesize_profiles
+    use tiago_synthetic_case, only: setup_magnetics, place_probes, place_instruments, &
+        synthesize_magnetics, synthesize_profiles
     use tiago_kinetic_profiles, only: P_NE, P_TE, P_TI, P_ZEFF, N_PROFILES
     use tiago_inference_engines, only: map_fit, laplace, laplace_t, sample_nuts, psis_validate, &
         psis_result_t
@@ -29,10 +40,17 @@ program tiago_infer
     real(dp) :: probe_rho(maxk) = -1.0_dp, probe_theta = 0.3_dp, align_sigma = 0.005_dp
     real(dp) :: sigma_profile_rel = 0.05_dp, vmec_ftol = 1.0e-14_dp
     real(dp) :: curtor_prior(2) = [-174250.0_dp, 2.0e4_dp], phiedge_prior(2) = [0.514386_dp, 0.02_dp]
+    ! Thomson calibration study
+    integer :: calibration_case = 0, ts_lasers = 2, interf_chords = 3
+    real(dp) :: ts_cal_mean = 0.0_dp, ts_cal_sigma = 0.5_dp, ts_cal_nu = 0.0_dp
+    real(dp) :: ts_laser_sigma = 0.15_dp, ts_cal_truth = 1.8_dp, ts_laser_truth(maxk) = 0.0_dp
+    real(dp) :: interf_sys_sigma = 0.03_dp, sigma_interf_rel = 0.01_dp, ne_sigma_f = -1.0_dp
     namelist /infer/ vmec_input, sensors_awk, output_dir, seed, max_iterations, n_warmup, n_samples, &
         max_depth, psis_draws, posterior_solves, laplace_draws, noise, truth_from_prior, breakpoints, &
         sigma_f, l_core, l_edge, s0, sw, ne0, te0, ti0, zeff, probe_rho, probe_theta, align_sigma, &
-        sigma_profile_rel, vmec_ftol, curtor_prior, phiedge_prior
+        sigma_profile_rel, vmec_ftol, curtor_prior, phiedge_prior, calibration_case, ts_lasers, &
+        interf_chords, ts_cal_mean, ts_cal_sigma, ts_cal_nu, ts_laser_sigma, ts_cal_truth, &
+        ts_laser_truth, interf_sys_sigma, sigma_interf_rel, ne_sigma_f
 
     type(joint_model_t), target :: model
     type(laplace_t) :: lap
@@ -45,6 +63,8 @@ program tiago_infer
     character(len=:), allocatable :: message, out
     character(len=32), allocatable :: names(:)
     real(dp), allocatable :: theta0(:), theta_true(:), theta(:), r(:), s_out(:), zeta(:)
+    real(dp), allocatable :: sigma_floor(:)
+    character(len=16) :: keep
     real(dp) :: t0, t1, t_map, t_lap, t_psis, t_nuts, chi2_start
     integer :: unit, ios, i, k, steps, tries
     logical :: ok
@@ -59,13 +79,25 @@ program tiago_infer
     call execute_command_line('mkdir -p "'//out//'/sensors"')
     call execute_command_line('awk -v R0=1.42 -v rs=0.85 -v nphi=4 -v nth=4 -v nprobe=12 -v dir="'// &
         out//'/sensors" -f "'//trim(sensors_awk)//'"')
+    select case (calibration_case)
+    case (0, 4)
+        keep = 'all'
+    case (1, 2)
+        keep = 'none'
+    case (3)
+        keep = 'diamagnetic'
+    case default
+        error stop 'calibration_case must be 0 to 4'
+    end select
     call setup_magnetics(trim(vmec_input), out//'/work', out//'/sensors', &
         [character(len=64) :: 'CURTOR', 'PHIEDGE'], [curtor_prior(1), phiedge_prior(1)], &
-        [curtor_prior(2), phiedge_prior(2)], vmec_ftol)
+        [curtor_prior(2), phiedge_prior(2)], vmec_ftol, trim(keep))
     if (count(breakpoints >= 0.0_dp) < 2) breakpoints(1:5) = [0.0_dp, 0.2_dp, 0.45_dp, 0.7_dp, 1.0_dp]
     call model%prof%init(pack(breakpoints, breakpoints >= 0.0_dp))
     associate (g => model%prof%greville)
-        call model%prof%set_profile(P_NE, ne0 * (1.0_dp - 0.6_dp * g), .true., sigma_f, l_core, l_edge, s0, sw)
+        if (ne_sigma_f <= 0.0_dp) ne_sigma_f = sigma_f
+        call model%prof%set_profile(P_NE, ne0 * (1.0_dp - 0.6_dp * g), .true., ne_sigma_f, l_core, &
+            l_edge, s0, sw)
         call model%prof%set_profile(P_TE, te0 * (1.0_dp - g) + 50.0_dp, .true., sigma_f, l_core, l_edge, s0, sw)
         call model%prof%set_profile(P_TI, ti0 * (1.0_dp - g) + 50.0_dp, .true., sigma_f, l_core, l_edge, s0, sw)
         call model%prof%set_profile(P_ZEFF, zeff + 0.0_dp * g, .false.)
@@ -77,8 +109,17 @@ program tiago_infer
     call model%residual(theta0, r, ok)
     if (.not. ok) error stop 'no equilibrium at the prior mean'
     if (count(probe_rho > 0.0_dp) == 0) probe_rho(1:4) = [0.25_dp, 0.45_dp, 0.65_dp, 0.85_dp]
-    call place_probes(model, pack(probe_rho, probe_rho > 0.0_dp), probe_theta, 0.0_dp, &
-        acos(-1.0_dp) / 6.0_dp, align_sigma)
+    if (calibration_case == 0) then
+        call place_probes(model, pack(probe_rho, probe_rho > 0.0_dp), probe_theta, 0.0_dp, &
+            acos(-1.0_dp) / 6.0_dp, align_sigma)
+        sigma_floor = [0.0_dp, 0.0_dp]
+    else
+        call place_instruments(model, pack(probe_rho, probe_rho > 0.0_dp), probe_theta, 0.0_dp, &
+            ts_lasers, ts_cal_mean, ts_cal_sigma, ts_cal_nu, ts_laser_sigma, &
+            merge(interf_chords, 0, calibration_case >= 2), interf_sys_sigma, &
+            calibration_case == 4, acos(-1.0_dp) / 6.0_dp)
+        sigma_floor = [(0.0_dp, i = 1, size(model%diags))]
+    end if
     call model%setup()
     deallocate(r)
     allocate(r(model%n_residuals()), zeta(model%n))
@@ -102,13 +143,18 @@ program tiago_infer
             end do
             theta_true(model%n_rec + 1:) = zeta(model%n_rec + 1:)
         end if
+        if (calibration_case > 0) call inject_calibration(theta_true)
         call model%residual(theta_true, r, ok)
         if (ok) exit
     end do
     if (.not. ok) error stop 'no equilibrium for 20 prior draws'
     call synthesize_magnetics(model, theta_true(1:rec%n) * rec%scale, 0.01_dp, 1.0e-4_dp, 1.0e-8_dp, &
         1.0e-7_dp, rng_noise, noise)
-    call synthesize_profiles(model, theta_true, sigma_profile_rel, [0.0_dp, 0.0_dp], rng_noise, noise)
+    if (calibration_case > 0) then
+        call synthesize_calibration_case()
+    else
+        call synthesize_profiles(model, theta_true, sigma_profile_rel, sigma_floor, rng_noise, noise)
+    end if
     call rec%eq%write_wout(out//'/wout_truth.nc')
     s_out = [((i - 1.0_dp) / (ns_out - 1), i = 1, ns_out)]
     call write_profile_truth(out//'/truth_profiles.csv')
@@ -177,7 +223,73 @@ contains
         do j = model%n_rec + model%n_prof + 1, model%n
             write(nm(j), '("align_",I0)') j - model%n_rec - model%n_prof
         end do
+        do q = 1, size(model%diags)
+            associate (slot => model%diags(q))
+                if (slot%cal_index == 0) cycle
+                if (q == 1 .and. calibration_case > 0) then
+                    nm(slot%cal_index) = 'logC_TS'
+                else
+                    write(nm(slot%cal_index), '("logC_",I0)') q
+                end if
+                if (calibration_case > 0 .and. q == 2) nm(slot%cal_index) = 'interf_sys'
+                do j = 1, max(slot%n_laser - 1, 0)
+                    if (slot%laser_offset > 0) write(nm(slot%laser_offset + j), '("laser_c",I0)') j
+                end do
+            end associate
+        end do
     end function parameter_names
+
+    subroutine inject_calibration(th)
+        !! Fixed Thomson calibration of the truth: log C = log ts_cal_truth,
+        !! laser offsets ts_laser_truth(1:ts_lasers) minus their mean, mapped
+        !! to the Helmert contrast latents (their prior sd is ts_laser_sigma).
+        real(dp), intent(inout) :: th(:)
+        real(dp), allocatable :: b(:)
+        real(dp) :: h
+        integer :: l, m
+        associate (slot => model%diags(1))
+            if (slot%cal_index == 0) return
+            th(slot%cal_index) = (log(ts_cal_truth) - slot%cal_mean) / slot%cal_sigma
+            if (slot%laser_offset == 0) return
+            b = ts_laser_truth(1:slot%n_laser)
+            b = b - sum(b) / size(b)
+            do m = 1, slot%n_laser - 1
+                th(slot%laser_offset + m) = 0.0_dp
+                do l = 1, slot%n_laser
+                    h = 0.0_dp
+                    if (l <= m) h = 1.0_dp / sqrt(real(m * (m + 1), dp))
+                    if (l == m + 1) h = -m / sqrt(real(m * (m + 1), dp))
+                    th(slot%laser_offset + m) = th(slot%laser_offset + m) + h * b(l) / slot%laser_sigma
+                end do
+            end do
+        end associate
+    end subroutine inject_calibration
+
+    subroutine synthesize_calibration_case()
+        !! Data with the true calibration, interferometer noise
+        !! sigma_interf_rel. With ts_cal_sigma = 0 (no latent in the fit) the
+        !! Thomson ne data still carry ts_cal_truth and the laser offsets, as
+        !! in an analysis that ignores the calibration.
+        real(dp), allocatable :: b(:), rel(:)
+        real(dp) :: f
+        integer :: j
+        rel = [(sigma_profile_rel, j = 1, size(model%diags))]
+        if (calibration_case >= 2 .and. interf_chords > 0) rel(2) = sigma_interf_rel
+        call synthesize_profiles(model, theta_true, sigma_profile_rel, sigma_floor, rng_noise, &
+            noise, rel)
+        associate (slot => model%diags(1))
+            if (slot%cal_index > 0) return
+            b = ts_laser_truth(1:ts_lasers)
+            b = b - sum(b) / size(b)
+            do j = 1, size(slot%data)
+                if (slot%cal_group(j) == 0) cycle
+                f = ts_cal_truth * exp(b(slot%cal_group(j)))
+                slot%data(j) = f * slot%data(j)
+                slot%covariance(j, j) = f**2 * slot%covariance(j, j)
+            end do
+        end associate
+        call model%update_covariances()
+    end subroutine synthesize_calibration_case
 
     subroutine profiles_of(th, f)
         !! ne, Te, Ti (rows 1-3) and p (row 4) on s_out for latent vector th.
@@ -387,6 +499,14 @@ contains
             write(u, '(A,ES15.7)') 'nuts_mean_accept = ', sum(chain%accept_stat) / n_samples
             write(u, '(A,ES15.7)') 'nuts_mean_depth = ', real(sum(chain%depth), dp) / n_samples
             write(u, '(A,ES15.7)') 'nuts_ebfmi = ', ebfmi(chain%energy)
+        end if
+        write(u, '(A,I0)') 'calibration_case = ', calibration_case
+        if (calibration_case > 0) then
+            write(u, '(A,ES15.7)') 'ts_cal_truth = ', ts_cal_truth
+            write(u, '(A,ES15.7)') 'ts_cal_mean = ', model%diags(1)%cal_mean
+            write(u, '(A,ES15.7)') 'ts_cal_sigma = ', model%diags(1)%cal_sigma
+            write(u, '(A,ES15.7)') 'ts_cal_nu = ', model%diags(1)%cal_nu
+            write(u, '(A,I0)') 'ts_lasers = ', ts_lasers
         end if
         write(u, '(A,I0)') 'equilibrium_solves = ', rec%eq%solves
         write(u, '(A,ES15.7)') 'time_map_s = ', t_map
