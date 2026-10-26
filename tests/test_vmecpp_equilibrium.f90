@@ -12,6 +12,8 @@ program test_vmecpp_equilibrium
     !!  3. The full Jacobian cot (dy/dx) (edge VJP + VMEC++ adjoint + profile
     !!     chain + PHIEDGE scaling) matches central differences of re-solved
     !!     equilibria for every parameter kind.
+    !!  The same three checks for |B| on all half surfaces (vmec_edge%modb vs
+    !!  wout bmnc, its VJP, and the Jacobian with a bmnc cotangent).
     use, intrinsic :: iso_fortran_env, only: dp => real64, error_unit
     use, intrinsic :: ieee_arithmetic, only: ieee_is_finite
     use tiago_equilibrium, only: equilibrium_t
@@ -27,7 +29,8 @@ program test_vmecpp_equilibrium
     real(dp), allocatable :: iota_bar(:), current_bar(:), ybar(:), cp(:, :, :, :), cm(:, :, :, :)
     real(dp) :: h, err, t0, t1, eps, step
     integer :: ios
-    real(dp), allocatable :: xp(:), yhot(:)
+    real(dp), allocatable :: xp(:), yhot(:), bm(:, :), bmp(:, :), bmm(:, :), bcot(:, :), bbar(:, :)
+    real(dp), allocatable :: jacb(:, :), fdb(:)
     integer :: failures, k, ns, nb, ng, mnq, mnmax
     logical :: ok
 
@@ -102,6 +105,13 @@ program test_vmecpp_equilibrium
     b = reshape(eq%vmec%wout('zmns', ns * mnmax), [mnmax, ns])
     call check_vector('edge zmns vs VMEC++ wout', eq%y(2 * nb + ng + 1:), b(:, ns), 1.0e-12_dp)
 
+    ! 1b. |B| on the half surfaces vs VMEC++'s wout bmnc
+    allocate(bm(nb, ns - 1), bmp(nb, ns - 1), bmm(nb, ns - 1))
+    call eq%edge%modb(eq%coef, eq%phip_full, eq%phip_half, eq%iota_half, eq%current_half, bm)
+    b = reshape(eq%vmec%wout('bmnc', ns * mnq), [mnq, ns])
+    call check_vector('|B| (bmnc, all half surfaces) vs VMEC++ wout', &
+        reshape(bm, [size(bm)]), reshape(b(:, 2:), [size(bm)]), 1.0e-9_dp)
+
     ! 2. edge VJP vs finite differences along a random geometry direction
     allocate(ybar(size(eq%y)))
     allocate(coef_bar, dcoef, mold=eq%coef)
@@ -138,6 +148,47 @@ program test_vmecpp_equilibrium
             1.0e-7_dp)
     end block
 
+    ! 2b. |B| VJP vs finite differences (geometry on all surfaces, current)
+    allocate(bbar(nb, ns - 1))
+    call random_number(bbar)
+    bbar = bbar - 0.5_dp
+    call random_number(dcoef)
+    dcoef = (dcoef - 0.5_dp) * max(abs(eq%coef), 1.0e-3_dp * maxval(abs(eq%coef)))
+    coef_bar = 0.0_dp
+    iota_bar = 0.0_dp
+    current_bar = 0.0_dp
+    call eq%edge%modb_vjp(eq%coef, eq%phip_full, eq%phip_half, eq%iota_half, eq%current_half, &
+        bbar, coef_bar, iota_bar, current_bar)
+    cp = eq%coef + eps * dcoef
+    cm = eq%coef - eps * dcoef
+    call eq%edge%modb(cp, eq%phip_full, eq%phip_half, eq%iota_half, eq%current_half, bmp)
+    call eq%edge%modb(cm, eq%phip_full, eq%phip_half, eq%iota_half, eq%current_half, bmm)
+    call check_close('|B| VJP vs FD (geometry)', sum(coef_bar * dcoef), &
+        sum(bbar * (bmp - bmm)) / (2.0_dp * eps), 1.0e-7_dp * sum(abs(coef_bar * dcoef)))
+    block
+        real(dp), allocatable :: dv(:), vp(:), vm(:)
+        allocate(dv(ns - 1))
+        call random_number(dv)
+        dv = dv - 0.5_dp
+        if (eq%ncurr == 1) then
+            vp = eq%current_half * (1.0_dp + eps * dv)
+            vm = eq%current_half * (1.0_dp - eps * dv)
+            call eq%edge%modb(eq%coef, eq%phip_full, eq%phip_half, eq%iota_half, vp, bmp)
+            call eq%edge%modb(eq%coef, eq%phip_full, eq%phip_half, eq%iota_half, vm, bmm)
+            call check_equal('|B| VJP vs FD (current)', &
+                sum(current_bar * eq%current_half * dv), sum(bbar * (bmp - bmm)) / (2.0_dp * eps), &
+                1.0e-7_dp)
+        else
+            vp = eq%iota_half * (1.0_dp + eps * dv)
+            vm = eq%iota_half * (1.0_dp - eps * dv)
+            call eq%edge%modb(eq%coef, eq%phip_full, eq%phip_half, vp, eq%current_half, bmp)
+            call eq%edge%modb(eq%coef, eq%phip_full, eq%phip_half, vm, eq%current_half, bmm)
+            call check_equal('|B| VJP vs FD (iota)', &
+                sum(iota_bar * eq%iota_half * dv), sum(bbar * (bmp - bmm)) / (2.0_dp * eps), &
+                1.0e-7_dp)
+        end if
+    end block
+
     ! 3. a hot-restarted solve (from the last equilibrium) agrees with a cold one
     if (trim(mode) /= 'adjoint-only') then
         xp = x0 * (1.0_dp + 1.0e-3_dp)
@@ -166,6 +217,14 @@ program test_vmecpp_equilibrium
     if (.not. all(ieee_is_finite(jac))) error stop 'nonfinite physical Jacobian'
     t1 = wall()
     print '(A,F7.2,A)', 'Jacobian (4 cotangents, incl. factorization): ', t1 - t0, ' s'
+    ! |B| rows: zero edge cotangent, random bmnc cotangent scaled like wout bmnc
+    allocate(bcot(nb * (ns - 1), 2))
+    call random_number(bcot)
+    b = reshape(eq%vmec%wout('bmnc', ns * mnq), [mnq, ns])
+    bcot = (bcot - 0.5_dp) / spread(max(abs(reshape(b(:, 2:), [nb * (ns - 1)])), &
+        1.0e-3_dp * maxval(abs(b))), 2, 2)
+    call eq%jacobian(x0, 0.0_dp * cot(1:2, :), jacb, bmnc_cot=bcot)
+    if (.not. all(ieee_is_finite(jacb))) error stop 'nonfinite |B| Jacobian'
     if (trim(mode) == 'adjoint-only') then
         t0 = wall()
         call eq%jacobian(x0, cot, jac)
@@ -183,11 +242,15 @@ program test_vmecpp_equilibrium
         if (.not. ok) error stop 'positive FD equilibrium failed'
         yp = eq%y
         if (.not. all(ieee_is_finite(yp))) error stop 'nonfinite positive FD edge'
+        b = reshape(eq%vmec%wout('bmnc', ns * mnq), [mnq, ns])
+        bmp = b(:, 2:)
         x(k) = x0(k) - h
         call eq%solve(x, ok)
         if (.not. ok) error stop 'negative FD equilibrium failed'
         ym = eq%y
         if (.not. all(ieee_is_finite(ym))) error stop 'nonfinite negative FD edge'
+        b = reshape(eq%vmec%wout('bmnc', ns * mnq), [mnq, ns])
+        bmm = b(:, 2:)
         fd = matmul(cot, yp - ym) / (2.0_dp * h)
         if (.not. all(ieee_is_finite(fd))) error stop 'nonfinite physical FD oracle'
         if (maxval(abs(fd)) <= tiny(1.0_dp)) error stop 'zero physical FD oracle'
@@ -198,6 +261,17 @@ program test_vmecpp_equilibrium
             failures = failures + 1
         else
             print '(A,A12,A,ES10.3)', 'ok   Jacobian ', trim(names(k)), &
+                ': max |adjoint - FD| / max |FD| = ', err
+        end if
+        fdb = matmul(transpose(bcot), reshape(bmp - bmm, [nb * (ns - 1)])) / (2.0_dp * h)
+        if (maxval(abs(fdb)) <= tiny(1.0_dp)) error stop 'zero |B| FD oracle'
+        err = maxval(abs(jacb(:, k) - fdb)) / maxval(abs(fdb))
+        if (err > 2.0e-3_dp) then
+            write(error_unit, '(A,A12,A,ES10.3)') 'FAIL |B| Jacobian ', trim(names(k)), &
+                ': max |adjoint - FD| / max |FD| = ', err
+            failures = failures + 1
+        else
+            print '(A,A12,A,ES10.3)', 'ok   |B| Jacobian ', trim(names(k)), &
                 ': max |adjoint - FD| / max |FD| = ', err
         end if
     end do

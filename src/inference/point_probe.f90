@@ -1,17 +1,17 @@
 module tiago_point_probe
-    !! Reference profile diagnostic: ideal local measurements of ne, Te or Ti
-    !! at fixed points, with a rigid alignment shift (dR, dZ) of all points as
+    !! Reference profile diagnostic: ideal local measurements of ne, Te, Ti or
+    !! |B| at fixed points, with a rigid alignment shift (dR, dZ) of all points as
     !! nuisance parameters. It exercises the profile-diagnostic contract in
     !! synthetic tests; physical instruments (Thomson scattering volumes and
     !! spectral response, ECE, line integrals) are separate implementations.
     use, intrinsic :: iso_fortran_env, only: dp => real64
-    use tiago_profile_diagnostic, only: profile_diagnostic_t, plasma_sample_t, Q_NE, Q_TE, Q_TI
+    use tiago_profile_diagnostic, only: profile_diagnostic_t, plasma_sample_t, N_QUANTITIES
     implicit none
     private
 
     type, public, extends(profile_diagnostic_t) :: point_probe_t
         real(dp), allocatable :: x0(:, :)        !! (3, n) nominal points R, phi, Z
-        integer, allocatable :: quantity(:)      !! Q_NE, Q_TE or Q_TI per signal
+        integer, allocatable :: quantity(:)      !! Q_NE, Q_TE, Q_TI or Q_B per signal
         logical :: aligned = .true.              !! .false.: eta = (dR, dZ) nuisance
     contains
         procedure :: n_signals => probe_n_signals
@@ -40,8 +40,8 @@ contains
         integer, intent(in) :: i
         character(len=:), allocatable :: text
         character(len=48) :: buffer
-        character(len=2), parameter :: names(3) = ['ne', 'Te', 'Ti']
-        write(buffer, '(A,"(R=",F6.3,",Z=",F6.3,")")') names(self%quantity(i) - Q_NE + 1), &
+        character(len=2), parameter :: names(N_QUANTITIES) = ['s ', 'B ', 'ne', 'Te', 'Ti', 'Zf']
+        write(buffer, '(A,"(R=",F6.3,",Z=",F6.3,")")') trim(names(self%quantity(i))), &
             self%x0(1, i), self%x0(3, i)
         text = trim(buffer)
     end function probe_label
