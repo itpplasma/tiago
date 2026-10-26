@@ -16,7 +16,9 @@ git diff --exit-code -- src/generated
 `gen_profile_kernels` (FortSym `48dda45a34c0da0db1c78cd4130b3a97375e3c8e`)
 emits the cubic Hermite basis jets, the shifted-circle test state with its
 label and parameter derivatives, the electron-cyclotron resonance field and
-the coronal XICS line emissivity with its partial derivatives.
+the coronal XICS line emissivity with its partial derivatives, and the
+negative log density of the unit Student-t calibration prior with its first
+two derivatives.
 At that FortSym revision `gen_mse` reproduces the checked-in MSE kernels.
 
 Run the executable from the TIAGO repository root. FortSym must have its
