@@ -150,6 +150,17 @@ def profiles(out, fig_dir):
             q = {k: column(sel, k) * scale for k in ("q025", "q16", "q50", "q84", "q975")}
             bands(ax, s, q, method, BLUE)
             ax.plot(st, column(truth, name) * scale, color=VERMILION, ls="--", lw=1.2, label="truth")
+        if name == "current":
+            ax.text(0.96, 0.96, "shape fixed (truth buco),\nonly CURTOR varies", transform=ax.transAxes, ha="right", va="top",
+                    fontsize=7, bbox=dict(fc="white", ec="0.7", alpha=0.85))
+            ins = ax.inset_axes([0.14, 0.12, 0.45, 0.28])
+            ins.fill_between(s, q["q025"] - tv, q["q975"] - tv, color=BLUE, alpha=0.25, lw=0)
+            ins.fill_between(s, q["q16"] - tv, q["q84"] - tv, color=BLUE, alpha=0.5, lw=0)
+            ins.plot(s, q["q50"] - tv, color=BLUE, lw=1.0)
+            ins.axhline(0.0, color=VERMILION, ls="--", lw=0.8)
+            ins.set_title("posterior - truth [kA]", fontsize=7, pad=2)
+            ins.tick_params(labelsize=6)
+            ins.set_xlim(0.0, 1.0)
         ax.set_xlim(0.0, 1.0)
         ax.set_ylabel(ylabel)
         ax.grid(alpha=0.3)
@@ -166,12 +177,7 @@ def normal_shift(tr, pts):
     """Signed distance of the closed contour pts from the closed truth
     contour tr, measured at each truth vertex along the outward normal of
     the truth (nearest point of the densified contour pts)."""
-    t = np.gradient(tr, axis=0)
-    n = np.stack([t[:, 1], -t[:, 0]], 1)
-    n /= np.hypot(n[:, 0], n[:, 1])[:, None]
-    c = tr.mean(0)
-    if np.sum(n * (tr - c)) < 0:
-        n = -n
+    n = outward_normals(tr)
     k = np.arange(len(pts))
     fine = np.linspace(0, len(pts) - 1, 12 * len(pts))
     dense = np.stack([np.interp(fine, k, pts[:, 0]), np.interp(fine, k, pts[:, 1])], 1)
@@ -180,26 +186,37 @@ def normal_shift(tr, pts):
     return np.sum((dense[j] - tr) * n, 1)
 
 
-def polar_radius(pts, centre, alpha):
-    """Radius of a closed contour about centre on the angle grid alpha
-    (star-shaped about centre; periodic interpolation)."""
-    dR, dZ = pts[:, 0] - centre[0], pts[:, 1] - centre[1]
-    a, r = np.arctan2(dZ, dR), np.hypot(dR, dZ)
-    o = np.argsort(a)
-    return np.interp(alpha, a[o], r[o], period=2 * np.pi)
+def outward_normals(tr):
+    """Unit outward normals at the vertices of the closed contour tr (first
+    and last point coincide)."""
+    p = tr[:-1]
+    t = np.roll(p, -1, axis=0) - np.roll(p, 1, axis=0)
+    n = np.stack([t[:, 1], -t[:, 0]], 1)
+    n /= np.hypot(n[:, 0], n[:, 1])[:, None]
+    n = np.vstack([n, n[:1]])
+    if np.sum(n * (tr - tr.mean(0))) < 0:
+        n = -n
+    return n
+
+
+def smooth_closed(pts, factor=8):
+    """Periodic cubic spline through a closed contour (first point repeated
+    last) on a factor-times finer parameter grid, for plotting."""
+    from scipy.interpolate import CubicSpline
+    k = np.arange(len(pts))
+    cs = CubicSpline(k, pts, bc_type="periodic")
+    return cs(np.linspace(0, len(pts) - 1, factor * (len(pts) - 1) + 1))
 
 
 def surface_bands(out, fig_dir):
     """Cross sections at three toroidal angles: truth, posterior median and
-    68/95 % bands of the re-solved posterior draws (radial extent about the truth
-    centre), plus the band of the displacement
+    68/95 % bands of the re-solved posterior draws plus the band of the displacement
     from the truth along the truth normal in mm."""
     path = os.path.join(out, "surfaces_draws.csv")
     if not os.path.exists(path):
         return
     truth, draws = read_csv(os.path.join(out, "surfaces_truth.csv")), read_csv(path)
     ids = sorted({int(r["draw"]) for r in draws})
-    alpha = np.linspace(-np.pi, np.pi, 181)
 
     def contour(rows, draw, cut, rho):
         sel = [r for r in rows if int(r["draw"]) == draw and int(r["cut"]) == cut
@@ -213,19 +230,22 @@ def surface_bands(out, fig_dir):
                              gridspec_kw={"height_ratios": [3, 2]}, squeeze=False)
     for ic, cut in enumerate(cuts):
         ax, bx = axes[0, ic], axes[1, ic]
-        centre = contour(truth, 0, cut, rhos[0]).mean(0)
         for rho in rhos:
             tr = contour(truth, 0, cut, rho)
-            rt = polar_radius(tr, centre, alpha)
-            mat = np.array([polar_radius(contour(draws, d, cut, rho), centre, alpha) for d in ids])
-            q = np.quantile(mat, [0.025, 0.16, 0.5, 0.84, 0.975], axis=0)
-            xy = lambda r: (centre[0] + r * np.cos(alpha), centre[1] + r * np.sin(alpha))
+            # The draws share the theta labels of the truth, so every draw is
+            # compared with the truth at the same label: the band is the truth
+            # plus quantiles of the signed normal shift, not a polar resampling
+            # (the bean is not star-shaped about any centre).
+            n = outward_normals(tr)
+            nm0 = np.array([np.sum((contour(draws, d, cut, rho) - tr) * n, 1) for d in ids])
+            q = np.quantile(nm0, [0.025, 0.16, 0.5, 0.84, 0.975], axis=0)
+            med = np.median(np.array([contour(draws, d, cut, rho) for d in ids]), axis=0)
             for lo, hi, al in ((0, 4, 0.30), (1, 3, 0.55)):
-                x1, y1 = xy(q[lo])
-                x2, y2 = xy(q[hi])
+                x1, y1 = smooth_closed(tr + q[lo][:, None] * n).T
+                x2, y2 = smooth_closed(tr + q[hi][:, None] * n).T
                 ax.fill(np.r_[x2, x1[::-1]], np.r_[y2, y1[::-1]], color=BLUE, alpha=al, lw=0)
-            ax.plot(*xy(q[2]), color=BLUE, lw=1.0)
-            ax.plot(*xy(rt), color=VERMILION, lw=1.0, ls="--")
+            ax.plot(*smooth_closed(med).T, color=BLUE, lw=1.0)
+            ax.plot(*smooth_closed(tr).T, color=VERMILION, lw=1.0, ls="--")
             if rho in (0.5, 0.75):
                 col = BLUE if rho == 0.5 else ORANGE
                 nm = np.array([normal_shift(tr, contour(draws, d, cut, rho)) for d in ids]) * 1e3
@@ -309,6 +329,17 @@ def profile_figure(out, fig_dir):
         ax.plot(s, q["q50"], color=BLUE, lw=1.2, label="posterior median")
         ax.plot(s if name in ("iota", "current") else st, tv, color=VERMILION, ls="--", lw=1.2,
                 label="truth")
+        if name == "current":
+            ax.text(0.96, 0.96, "shape fixed (truth buco),\nonly CURTOR varies", transform=ax.transAxes, ha="right", va="top",
+                    fontsize=7, bbox=dict(fc="white", ec="0.7", alpha=0.85))
+            ins = ax.inset_axes([0.14, 0.12, 0.45, 0.28])
+            ins.fill_between(s, q["q025"] - tv, q["q975"] - tv, color=BLUE, alpha=0.25, lw=0)
+            ins.fill_between(s, q["q16"] - tv, q["q84"] - tv, color=BLUE, alpha=0.5, lw=0)
+            ins.plot(s, q["q50"] - tv, color=BLUE, lw=1.0)
+            ins.axhline(0.0, color=VERMILION, ls="--", lw=0.8)
+            ins.set_title("posterior - truth [kA]", fontsize=7, pad=2)
+            ins.tick_params(labelsize=6)
+            ins.set_xlim(0.0, 1.0)
         ax.set_xlim(0.0, 1.0)
         ax.set_ylabel(ylabel)
         ax.grid(alpha=0.3)
