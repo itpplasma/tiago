@@ -139,8 +139,8 @@ under-coverage is sampling noise or a bias has not been established.
 ## References and reference implementations
 
 - Profile prior kernel: the non-stationary Gibbs kernel with a tanh
-  core/edge length scale used in Minerva and in Köberl's surroBIER
-  (`src/surrobier/prior/GaussianProcessPrior.py`, `minerva_kernel`). TIAGO
+  core/edge length scale (Gibbs 1997; Paciorek and Schervish 2004, NIPS 16),
+  as used in Minerva and in Köberl's surroBIER. TIAGO
   applies it to the log-profile values directly instead of to the log of the
   gradient, so plateaus (flattening) remain in the support of the prior.
 - surroBIER (R. Köberl, MPCDF, MIT) and vmecnn (A. Merlo, MPCDF; Merlo et al.
