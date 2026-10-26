@@ -20,8 +20,8 @@ module tiago_joint_model
     !! profile diagnostics' dependence on the equilibrium from the implicit VJP
     !! of point location in the VMEC++ state (tiago_vmecpp_state, a
     !! real_space_state_t) composed with the same adjoint. The |B| cotangent on
-    !! the state's bmnc nodes is not propagated (no adjoint of VMEC++'s output
-    !! stage); b_cotangent_dropped records its size. Covariances include
+    !! the state's bmnc nodes enters the same adjoint through Tiago's
+    !! differentiable copy of VMEC++'s |B| output (vmec_edge%modb). Covariances include
     !! an additive model-error term (emulator or convergence error).
     use, intrinsic :: iso_fortran_env, only: dp => real64
     use, intrinsic :: ieee_arithmetic, only: ieee_is_finite
@@ -61,7 +61,6 @@ module tiago_joint_model
         real(dp), allocatable :: s_half(:)
         type(vmecpp_state_t) :: state
         integer :: state_solve = -1
-        real(dp) :: b_cotangent_dropped = 0.0_dp
         integer :: evaluations = 0, jacobians = 0
     contains
         procedure :: setup => joint_setup
@@ -305,7 +304,7 @@ contains
         real(dp), allocatable, intent(out) :: jac(:, :)
         real(dp), allocatable :: r_rec(:), jrec(:, :), z(:), zbar(:), y(:), eta(:), dx(:, :, :)
         real(dp), allocatable :: q_bar(:, :), eta_bar(:), f_bar(:, :), s_bar(:), p_bar(:), qs_bar(:, :)
-        real(dp), allocatable :: coef_cot(:, :), cot(:, :), jeq(:, :), jd(:, :), e(:)
+        real(dp), allocatable :: coef_cot(:, :), bmnc_cot(:, :), cot(:, :), jeq(:, :), jd(:, :), e(:)
         type(plasma_sample_t) :: sample
         type(located_t), allocatable :: loc(:)
         real(dp) :: gain
@@ -345,6 +344,7 @@ contains
         if (ndr > 0) then
             ng = self%state%n_geometry()
             allocate(coef_cot(ng, ndr), p_bar(self%state%n_params()))
+            allocate(bmnc_cot(self%state%n_params() - ng, ndr))
             row = 0
             do d = 1, size(self%diags)
                 associate (slot => self%diags(d))
@@ -380,16 +380,15 @@ contains
                         jd(i, slot%eta_offset + 1:slot%eta_offset + size(eta)) = &
                             gain * eta_bar * slot%eta_sigma
                         if (slot%gain_index > 0) jd(i, slot%gain_index) = slot%gain_sigma * y(i)
-                        ! geometry: s and |B| at fixed points through the state's
-                        ! implicit VJP; the bmnc part has no solver adjoint
+                        ! geometry and |B| (bmnc nodes) at fixed points through
+                        ! the state's VJP, then the equilibrium adjoint
                         qs_bar = 0.0_dp
                         qs_bar(Q_S, :) = gain * s_bar
                         qs_bar(Q_B, :) = gain * q_bar(Q_B, :)
                         p_bar = 0.0_dp
                         call sample_state_vjp(self%state, loc, qs_bar, p_bar)
                         coef_cot(:, row + i) = p_bar(1:ng)
-                        self%b_cotangent_dropped = max(self%b_cotangent_dropped, &
-                            maxval(abs(p_bar(ng + 1:)), mask=.true.))
+                        bmnc_cot(:, row + i) = p_bar(ng + 1:)
                     end do
                     jac(nrec_rows + row + 1:nrec_rows + row + size(y), :) = jd
                     row = row + size(y)
@@ -399,7 +398,7 @@ contains
             ! equilibrium adjoint for all diagnostic rows at once
             allocate(cot(ndr, rec%eq%n_y()))
             cot = 0.0_dp
-            call rec%eq%jacobian(rec%eq_x, cot, jeq, coef_cot)
+            call rec%eq%jacobian(rec%eq_x, cot, jeq, coef_cot, bmnc_cot)
             do k = 1, self%n_rec
                 if (rec%is_coil(k)) cycle
                 jac(nrec_rows + 1:nrec_rows + ndr, k) = jac(nrec_rows + 1:nrec_rows + ndr, k) + &

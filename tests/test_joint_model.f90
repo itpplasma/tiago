@@ -3,19 +3,22 @@ program test_joint_model
     !!  1. a line-segment kinetic pressure equal to the input's power-series
     !!     pressure on the half grid reproduces the power-series equilibrium;
     !!  2. the flux map inverts the geometry (round trip of (s, theta, phi));
-    !!  3. the joint Jacobian (magnetics, profile probes, alignment; implicit
-    !!     VMEC++ adjoint, kinetic pressure, flux-map VJP) agrees with central
+    !!  3. the joint Jacobian (magnetics, profile probes, |B| probes at fixed
+    !!     points, alignment; implicit VMEC++ adjoint including |B|, kinetic
+    !!     pressure, flux-map VJP) agrees with central
     !!     differences of re-solved equilibria for every latent kind;
     !!  4. MAP and Laplace run on noise-free synthetic data and the evidence is
     !!     finite.
     !! Usage: test_joint_model <VMEC input> <sensors.awk> <workdir>
     use, intrinsic :: iso_fortran_env, only: dp => real64, int64, error_unit
     use tiago_reconstruction, only: rec, jacobian_at
-    use tiago_joint_model, only: joint_model_t
+    use tiago_joint_model, only: joint_model_t, diagnostic_slot_t
     use tiago_synthetic_case, only: setup_magnetics, place_probes, synthesize_magnetics, &
         synthesize_profiles
     use tiago_kinetic_profiles, only: P_NE, P_TE, P_TI, P_ZEFF
     use tiago_real_space_state, only: located_t, locate_ok
+    use tiago_point_probe, only: point_probe_t
+    use tiago_profile_diagnostic, only: Q_B
     use tiago_inference_engines, only: map_fit, laplace, laplace_t
     use fortnum_rng, only: rng_t, rng_seed
     use fortnum_status, only: fortnum_status_t
@@ -117,6 +120,7 @@ program test_joint_model
     ! --- probes and noise-free synthetic data at a perturbed truth
     call place_probes(model, [0.25_dp, 0.45_dp, 0.65_dp, 0.85_dp], 0.3_dp, 0.0_dp, &
         acos(-1.0_dp) / 6.0_dp, 0.005_dp)
+    call add_b_probes()
     call model%setup()
     deallocate(r)
     allocate(r(model%n_residuals()), rp(model%n_residuals()), rm(model%n_residuals()))
@@ -127,7 +131,7 @@ program test_joint_model
     call model%residual(theta_true, r, ok)
     call synthesize_magnetics(model, theta_true(1:2) * rec%scale, 0.01_dp, 1.0e-4_dp, 1.0e-8_dp, &
         1.0e-7_dp, rng, .false.)
-    call synthesize_profiles(model, theta_true, 0.05_dp, [0.0_dp, 0.0_dp], rng, .false.)
+    call synthesize_profiles(model, theta_true, 0.05_dp, [0.0_dp, 0.0_dp, 0.0_dp], rng, .false.)
 
     ! --- 3. Jacobian against central differences of re-solved equilibria;
     !     cold solves, since hot restarts from different start states leave
@@ -202,6 +206,32 @@ program test_joint_model
     if (fails > 0) error stop 1
     print '(A)', 'joint model: all checks passed'
 contains
+    subroutine add_b_probes()
+        !! Third diagnostic: |B| at the Ti points (fixed in space), so the
+        !! Jacobian check covers |B| at fixed points through the equilibrium.
+        type(point_probe_t) :: bp
+        type(point_probe_t), allocatable :: ti
+        type(diagnostic_slot_t), allocatable :: old(:)
+        integer :: j
+        select type (q => model%diags(2)%d)
+        type is (point_probe_t)
+            allocate(ti, source=q)
+        end select
+        bp%x0 = ti%x0
+        bp%quantity = [(Q_B, j = 1, size(ti%quantity))]
+        bp%aligned = .true.
+        call move_alloc(model%diags, old)
+        allocate(model%diags(3))
+        model%diags(1:2) = old
+        allocate(model%diags(3)%d, source=bp)
+        allocate(model%diags(3)%eta_sigma(0))
+        model%diags(3)%gain_sigma = 0.0_dp
+        model%diags(3)%data = [(0.0_dp, j = 1, size(bp%quantity))]
+        model%diags(3)%covariance = reshape([(merge(1.0_dp, 0.0_dp, mod(j, size(bp%quantity) + 1) == 0), &
+            j = 0, size(bp%quantity)**2 - 1)], [size(bp%quantity), size(bp%quantity)])
+        model%diags(3)%model_sigma = [(0.0_dp, j = 1, size(bp%quantity))]
+    end subroutine add_b_probes
+
     real(dp) function blockerr(a, b)
         integer, intent(in) :: a, b
         blockerr = maxval(abs(colfd(a:b) - jac(a:b, col))) / max(maxval(abs(colfd(a:b))), 1.0e-12_dp)
