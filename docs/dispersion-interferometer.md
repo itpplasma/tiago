@@ -41,7 +41,7 @@ A reference-baseline subtraction must use differences of these same inputs.
 ## Calibration and the profile chain
 
 `init(chords, prior, neutral, environment, status)` takes existing `chord_t`
-objects, one W0 `calibration_prior_t` with eight physical parameters, and
+objects, one `calibration_prior_t` with eight physical parameters, and
 one `neutral` and `environment` value per chord. Zero status means success.
 One object shares a calibration across its chords. Use separate objects for
 separately calibrated groups. Repeat a chord with different runtime inputs to
