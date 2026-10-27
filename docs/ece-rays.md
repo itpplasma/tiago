@@ -3,8 +3,10 @@
 `tiago_ece_ray` supplies a device-independent cold-plasma ray primitive with
 forward and reverse sensitivities. It does not yet predict a radiometer signal.
 The existing `tiago_ece_radiometer::ece_t` remains the cold-resonance profile
-diagnostic. Relativistic emission/absorption, frequency and antenna response,
-wall transport, calibration and a posterior validation of the combined model
+diagnostic. Standalone [thermal transfer and receiver components](ece-transfer.md) now
+supply prescribed-opacity transport, reciprocal walls, frequency/antenna
+averaging and calibrated voltage/noise. Relativistic emission/absorption,
+their coupling to the rays and profile sampler, and posterior validation
 are still needed for a complete electron cyclotron emission (ECE) diagnostic.
 
 ## Medium and coordinates

@@ -192,6 +192,14 @@ add_library(tiago_inference STATIC
     src/generated/ece_hamiltonian_x.f90
     src/generated/ece_hamiltonian_unmagnetized.f90
     src/inference/ece_ray.f90
+    src/generated/ece_loss.f90
+    src/generated/ece_loss_small.f90
+    src/generated/ece_thermal_cell.f90
+    src/generated/ece_reflection_loss.f90
+    src/generated/ece_two_stream_wall.f90
+    src/generated/ece_radiometer_noise.f90
+    src/inference/ece_transfer.f90
+    src/inference/ece_receiver.f90
     src/inference/ece_radiometer.f90
     src/inference/line_integrals.f90
     src/generated/dispersion_phase.f90
@@ -649,6 +657,10 @@ if(TIAGO_FORTSYM_BUILD)
 endif()
 if(FORTSYM_BUILD)
     add_subdirectory(gen codegen)
+    add_test(NAME tiago_ece_transfer_codegen COMMAND ${CMAKE_COMMAND}
+        -DGENERATOR=$<TARGET_FILE:gen_ece_transfer> -DSOURCE=${CMAKE_SOURCE_DIR}
+        -DOUTPUT=${CMAKE_BINARY_DIR}/tests/ece-transfer-codegen
+        -P ${CMAKE_SOURCE_DIR}/tests/check_ece_transfer_codegen.cmake)
     add_test(NAME tiago_thomson_regeneration COMMAND ${CMAKE_COMMAND}
         -DGENERATOR=$<TARGET_FILE:gen_thomson>
         -DSOURCE=${CMAKE_SOURCE_DIR} -DOUTPUT=${CMAKE_BINARY_DIR}/thomson-regeneration
@@ -744,3 +756,11 @@ set_tests_properties(tiago_online_example PROPERTIES FIXTURES_REQUIRED "archive_
 add_executable(benchmark_archive EXCLUDE_FROM_ALL
     benchmarks/signals/benchmark_archive.f90)
 target_link_libraries(benchmark_archive PRIVATE tiago_signals)
+
+add_executable(test_ece_transfer tests/test_ece_transfer.f90)
+target_link_libraries(test_ece_transfer PRIVATE tiago_inference)
+add_test(NAME tiago_ece_transfer COMMAND test_ece_transfer)
+add_executable(benchmark_ece_transfer EXCLUDE_FROM_ALL benchmarks/ece/benchmark_transfer.f90)
+target_link_libraries(benchmark_ece_transfer PRIVATE tiago_inference)
+add_executable(benchmark_ece_receiver EXCLUDE_FROM_ALL benchmarks/ece/benchmark_receiver.f90)
+target_link_libraries(benchmark_ece_receiver PRIVATE tiago_inference)
