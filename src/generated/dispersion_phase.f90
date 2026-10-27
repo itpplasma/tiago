@@ -10,11 +10,11 @@ module tiago_dispersion_phase
 contains
 
     pure subroutine dispersion_phase(column, wavelength, neutral, neutral_scale, environment, env_gain, &
-            phase0, path, value, jac)
+            phase0, value, jac)
         use, intrinsic :: iso_fortran_env, only: dp => real64
         implicit none
         real(dp), intent(in) :: column, wavelength, neutral, neutral_scale, environment, env_gain, &
-            phase0, path
+            phase0
         real(dp), intent(out) :: value(1), jac(1,8)
 
         value(1) = phase0 + column*wavelength*4.2269104807499998E-015_dp + env_gain*environment - &
