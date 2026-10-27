@@ -432,6 +432,12 @@ A manual, reproducible accuracy and performance comparison with the reference
 code lives in [`benchmarks/xdiagno/`](benchmarks/xdiagno/README.md). It is not
 part of `ctest`.
 
+## Recorded Thomson signals
+
+[Recorded Thomson scattering](docs/thomson.md) maps real-space kinetic profiles
+to polychromator photoelectrons and voltage integrals, with optical calibration
+priors, an absolute Rayleigh calibration record, noise and trace reduction.
+
 ## Directory layout
 ```
 cmake/                     # Toolchain helpers
