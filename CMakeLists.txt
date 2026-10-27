@@ -49,7 +49,7 @@ option(TIAGO_ENABLE_OPENMP "Enable OpenMP parallelism inside Tiago loops" ON)
 
 # fortnum: B-spline profile bases, NUTS and PSIS for the inference core. Declared
 # before libneo, whose numerics reuse an existing fortnum target.
-set(TIAGO_FORTNUM_TAG "f72a16b18437474f625a5975b61efb487e633cfe" CACHE STRING "fortnum commit used by Tiago")
+set(TIAGO_FORTNUM_TAG "a66afdc936e38b8e6ad2c6cea2a0e1125ed88cb9" CACHE STRING "fortnum commit used by Tiago")
 if(NOT TARGET fortnum)
     FetchContent_Declare(fortnum
         GIT_REPOSITORY https://github.com/lazy-fortran/fortnum.git
@@ -809,6 +809,7 @@ add_test(NAME tiago_ece_geometry_limits COMMAND $<TARGET_FILE:test_ece_geometry_
 
 add_executable(benchmark_ece_geometry EXCLUDE_FROM_ALL benchmarks/ece/benchmark_geometry.f90)
 target_link_libraries(benchmark_ece_geometry PRIVATE tiago_ece_geometry_fixture)
+
 add_executable(test_ece_opacity tests/test_ece_opacity.f90)
 target_link_libraries(test_ece_opacity PRIVATE tiago_inference)
 add_test(NAME tiago_ece_opacity COMMAND test_ece_opacity

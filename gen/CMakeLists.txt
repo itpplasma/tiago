@@ -39,6 +39,7 @@ target_link_libraries(gen_ece_transfer PRIVATE "${FORTSYM_LIBRARY}")
 add_executable(gen_ece_geometry gen_ece_geometry.f90)
 target_include_directories(gen_ece_geometry PRIVATE "${FORTSYM_BUILD}/include")
 target_link_libraries(gen_ece_geometry PRIVATE "${FORTSYM_LIBRARY}")
+
 add_executable(gen_ece_opacity gen_ece_opacity.f90)
 target_include_directories(gen_ece_opacity PRIVATE "${FORTSYM_BUILD}/include")
 target_link_libraries(gen_ece_opacity PRIVATE "${FORTSYM_LIBRARY}")
