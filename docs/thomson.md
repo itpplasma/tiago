@@ -5,7 +5,7 @@ voltage integrals from the existing real-space kinetic-profile sample contract.
 It extends `recorded_diagnostic_t`, reuses `thomson_t` for spatial quadrature and
 alignment, and uses `calibration_prior_t` for correlated calibration parameters.
 It can therefore be composed with the existing kinetic-profile latents, field
-providers and generic signal sources without a device-specific adapter.
+providers and generic signal sources through a device-specific adapter.
 
 ## Spectrum and polarization
 
@@ -62,7 +62,7 @@ calibration vector has `3+2*n_channels` entries in this order:
 | 4, 6, ... | Channel spectral-response scale | 1 |
 | 5, 7, ... | Channel integral gain | V s / photoelectron |
 
-Every entry is mapped from a standard Gaussian latent through the supplied W0
+Every entry is mapped from a standard Gaussian latent through the supplied calibration
 prior, including correlations. Alignment parameters precede these latents.
 The map is affine; callers must keep the physical parameters positive. Shared
 scale factors are degenerate without informative calibration records or priors.
@@ -105,7 +105,7 @@ endpoint indices and optional extra variance (V^2 s^2). It uses trapezoidal
 weights and subtracts a time-averaged baseline. Gates cannot share an interval.
 The existing reduction propagates full input covariance, derivatives and
 provenance from a `signal_window_t`; output units are V s. Windows may come from
-any W0 source and can be reduced before the next window is read.
+any signal source and can be reduced before the next window is read.
 
 `thomson_noise(photons,bg,gain,digitvar,excess,bgscale,variance,row)` returns the
 pulse variance and its six partial derivatives in argument order. `bg` is the
