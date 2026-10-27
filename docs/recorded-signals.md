@@ -36,8 +36,9 @@ An adapter owns incremental decoder state; one instance handles one request
 at a time. A transport feeds chunks, consumes successful windows immediately,
 and never concatenates the entire response. It must reject an incomplete final
 chunk, enforce the requested version and time interval, and record response
-provenance. Header/version negotiation and HTTP transport belong to the online
-source, which is not implemented here. A private device module (for example
+provenance. Header/version negotiation and HTTP transport belong to the
+[online source](online-archives.md), which uses libcurl and a configurable
+REST/JSON adapter. A private device module (for example
 W7-X or LHD) implements this interface and configures its own logical-channel
 mapping; no private endpoint, stream name or measurement belongs in TIAGO.
 
