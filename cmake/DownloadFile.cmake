@@ -12,6 +12,9 @@ if(_dest_dir STREQUAL "")
 endif()
 file(MAKE_DIRECTORY "${_dest_dir}")
 
+# Independent test fixtures can share the same download destination.
+file(LOCK "${DEST}.lock" GUARD PROCESS TIMEOUT 120)
+
 if(EXISTS "${DEST}")
     file(SIZE "${DEST}" _existing_size)
     if(_existing_size GREATER 0)

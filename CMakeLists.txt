@@ -175,6 +175,10 @@ add_library(tiago_inference STATIC
     src/inference/thomson_spectrum.f90
     src/inference/thomson_polychromator.f90
     src/signals/thomson_reduction.f90
+    src/generated/ece_hamiltonian_o.f90
+    src/generated/ece_hamiltonian_x.f90
+    src/generated/ece_hamiltonian_unmagnetized.f90
+    src/inference/ece_ray.f90
     src/inference/ece_radiometer.f90
     src/inference/line_integrals.f90)
 set_target_properties(tiago_inference PROPERTIES
@@ -637,3 +641,16 @@ if(TIAGO_ENABLE_OPENMP AND OpenMP_Fortran_FOUND)
         benchmarks/signals/benchmark_magnetics.f90)
     target_link_libraries(benchmark_magnetics PRIVATE tiago_inference)
 endif()
+
+add_executable(test_ece_ray tests/test_ece_ray.f90 tests/ece_ray_fixture.f90
+    src/generated/ece_test_medium.f90)
+target_link_libraries(test_ece_ray PRIVATE tiago_inference)
+add_test(NAME tiago_ece_ray COMMAND $<TARGET_FILE:test_ece_ray>)
+
+add_executable(benchmark_ece_ray EXCLUDE_FROM_ALL benchmarks/ece/benchmark_ray.f90
+    tests/ece_ray_fixture.f90 src/generated/ece_test_medium.f90)
+target_link_libraries(benchmark_ece_ray PRIVATE tiago_inference)
+
+add_test(NAME tiago_ece_codegen COMMAND sh ${CMAKE_SOURCE_DIR}/tests/ece_codegen.sh
+    ${CMAKE_SOURCE_DIR} "${TIAGO_FORTSYM_BUILD}" ${CMAKE_Fortran_COMPILER})
+set_tests_properties(tiago_ece_codegen PROPERTIES SKIP_RETURN_CODE 77 LABELS codegen)

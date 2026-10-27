@@ -93,3 +93,22 @@ git diff --exit-code -- src/generated
 With `-DTIAGO_FORTSYM_BUILD=/path/to/fortsym/build` in the native TIAGO build,
 `ctest -R tiago_magnetic_codegen` regenerates these files in the build tree and
 checks exact equality. Ordinary builds consume the committed kernels.
+
+# Regenerate the cold ECE ray kernels
+
+`gen_ece` uses FortSym `21d157b394e775a999a8d9ed0be409eac1eb9574` to emit
+Appleton-Hartree O/X Hamiltonians, their gradients and Hessians, the regular
+unmagnetized limit and a synthetic divergence-free polynomial test medium.
+The value, gradient and Hessian share generated subexpressions.
+
+```sh
+cmake --build build-codegen --target gen_ece
+build-codegen/gen_ece
+cmake -S . -B build -DTIAGO_FORTSYM_BUILD=/path/to/fortsym/build
+ctest --test-dir build -R '^tiago_ece' --output-on-failure
+```
+
+The regeneration test runs in a temporary directory and compares all four
+outputs without changing the checkout. Ordinary library builds need no
+computer algebra system.
+The physical scope and derivative domain are in [docs/ece-rays.md](../docs/ece-rays.md).
