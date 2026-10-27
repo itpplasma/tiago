@@ -78,9 +78,12 @@ layer. A TRAVIS-like model (relativistic and Doppler-broadened absorption and
 emission, finite optical depth, refraction) replaces the single resonance by
 the ray integral `T_rad = int Te alpha exp(-tau) ds`, with the absorption
 coefficient `alpha(ne, Te, |B|)` and the optical depth `tau`. It is a function
-of the same sampled rows along the ray, so it fits the contract unchanged and
-adds the derivatives of `alpha` with respect to ne, Te and |B|. It is not
-implemented.
+of the same sampled rows along a prescribed ray, with derivatives of `alpha`
+with respect to ne, Te and |B|. A ray that depends on these quantities also
+needs its path sensitivity. The complete transport model is not implemented.
+[Cold-ray primitives](ece-rays.md) now supply adaptive Appleton-Hartree rays
+and their endpoint derivatives through a medium callback; they are not yet
+connected to this sampled-profile contract or to an absorption model.
 
 ## Verification
 
