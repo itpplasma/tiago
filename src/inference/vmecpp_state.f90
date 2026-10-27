@@ -11,10 +11,8 @@ module tiago_vmecpp_state
     !! in rho of its node values (tiago_radial_interp, as tiago_vmec_state for
     !! wout files), extended beyond the last node. The geometry cotangent of
     !! param_vjp is the cotangent VMEC++'s implicit adjoint accepts
-    !! (tiago_equilibrium%jacobian, coef_cot). The bmnc cotangent has no adjoint
-    !! to the solver inputs yet: |B| is exact in the labels and in bmnc, but its
-    !! dependence on the equilibrium inputs through bmnc is not propagated (see
-    !! docs/inference.md).
+    !! (tiago_equilibrium%jacobian, coef_cot); the bmnc cotangent is its
+    !! bmnc_cot (see docs/inference.md).
     use, intrinsic :: iso_fortran_env, only: dp => real64
     use tiago_real_space_state, only: real_space_state_t
     use tiago_radial_interp, only: hermite_weights, max_weights

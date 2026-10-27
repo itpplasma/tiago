@@ -1,0 +1,11 @@
+tiago-sensors 1
+# Synthetic sensor set for tests/test_sensor_set.f90. The geometry files are
+# written by the test into ${TIAGO_TEST_SENSOR_GEOMETRY}, exactly as private
+# machine geometry is read from a directory named by an environment variable.
+root ${TIAGO_TEST_SENSOR_GEOMETRY}
+group saddle_coil        loops.diagno  select=SADDLE
+group flux_loop          loops.diagno  select=FLUX
+group diamagnetic_loop   loops.diagno  select=DIA turns=2
+group compensation_loop  loops.diagno  select=COMP
+group bprobe             probes.txt
+combine DIA_COMPENSATED  1.0 DIA  -0.5 COMP
