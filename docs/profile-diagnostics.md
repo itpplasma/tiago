@@ -84,6 +84,9 @@ needs its path sensitivity. The complete transport model is not implemented.
 [Cold-ray primitives](ece-rays.md) now supply adaptive Appleton-Hartree rays
 and their endpoint derivatives through a medium callback; they are not yet
 connected to this sampled-profile contract or to an absorption model.
+Standalone [thermal transfer and calibrated receiver components](ece-transfer.md)
+accept prescribed absorption and ray cells, with derivatives of both transfer
+and voltage/noise. Their integration with this profile contract remains open.
 
 ## Verification
 

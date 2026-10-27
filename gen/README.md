@@ -132,3 +132,22 @@ with `-DFORTSYM_BUILD=/path/to/fortsym/build`, build, then run
 FortSym and TIAGO must use compatible Fortran compilers for this option.
 Ordinary builds retain no CAS dependency. Independent physical and derivative
 oracles are described in [the instrument documentation](../docs/dispersion-interferometer.md).
+
+# Regenerate thermal ECE transfer and receiver kernels
+
+`gen_ece_transfer` uses FortSym
+`21d157b394e775a999a8d9ed0be409eac1eb9574` and emits six kernels:
+`ece_loss`, `ece_loss_small`, `ece_thermal_cell`, `ece_reflection_loss`,
+`ece_two_stream_wall`, and `ece_radiometer_noise`, including every partial row.
+The small-depth alternating polynomial and its derivatives share one source.
+
+```sh
+cmake --build build-codegen --target gen_ece_transfer
+build-codegen/gen_ece_transfer
+ctest --test-dir build -R tiago_ece_transfer --output-on-failure
+```
+
+Configure the ordinary build with `TIAGO_FORTSYM_BUILD` to include the exact
+regeneration comparison. These are thermal transfer and receiver kernels;
+they do not generate an ECE absorption coefficient. See
+[the component contract and limits](../docs/ece-transfer.md).
