@@ -2,7 +2,7 @@
 
 `tiago_dispersion_interferometer::dispersion_interferometer_t` predicts
 interleaved lock-in signals `(I_1,Q_1,I_2,Q_2,...)` from the existing
-line-integral diagnostic and the W0 recorded-diagnostic calibration prior.
+line-integral diagnostic and the existing [recorded-diagnostic calibration prior](recorded-signals.md).
 It links with `tiago_inference`; no device geometry or archive is built in.
 
 For electron column `N = integral ne dl` in m^-2 and fundamental vacuum
@@ -61,7 +61,7 @@ The physical parameter order is fixed; the public `DI_*` constants name it:
 | 8 | `DI_ENV` | environmental correction, rad per proxy unit |
 
 All eight standard-normal calibration latents are `eta`. Correlated physical
-priors use `prior%mean + matmul(prior%factor,eta)`, exactly as W0 specifies.
+priors use `prior%mean + matmul(prior%factor,eta)`, as the recorded-signal contract specifies.
 Set the joint-model slot's `eta_sigma=1` and leave its separate `gain_sigma=0`.
 Wavelength and both amplitudes must remain positive; invalid evaluations stop
 with an error. Use Gaussian priors narrow enough for the intended local fit.
@@ -101,7 +101,7 @@ resolution throughout it. Channel sums and point adjoints use OpenMP.
 
 ## Reduction and noise
 
-`tiago_iq_phase_reduction::iq_phase_reduction_t` implements W0's
+`tiago_iq_phase_reduction::iq_phase_reduction_t` implements the existing
 `reduction_step_t`. Input samples are interleaved I/Q pairs with identical
 time stamps within each pair and nondecreasing time across pairs.
 Set `id` to a versioned reduction identity, `amplitude(2)`, `offset(2)`, and

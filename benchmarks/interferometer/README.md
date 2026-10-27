@@ -2,7 +2,8 @@
 
 Build `benchmark_interferometer` in an OpenMP-enabled Release build, then run
 with `OMP_NUM_THREADS=1` and `4` (and `OPENBLAS_NUM_THREADS=1`). The benchmark
-reports wall seconds per prediction, JVP and VJP for 1024 synthetic chords,
+reports wall seconds per prediction, Jacobian-vector product (JVP) and
+transposed Jacobian-vector product (VJP) for 1024 synthetic chords,
 196608 quadrature points, 100 calls per observation and three observations
 after warm-up. Mode numbers 1, 2 and 3 mean prediction, JVP and VJP.
 
