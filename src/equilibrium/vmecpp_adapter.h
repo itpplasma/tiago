@@ -28,7 +28,7 @@ void tiago_vmecpp_destroy(tiago_vmecpp* handle);
 
 /* Input values by name: scalars (pres_scale, curtor, phiedge, bloat,
  * spres_ped, gamma), 1-based index i into arrays (am, ai, ac, aphi: i = k + 1
- * for coefficient k), (i, j) = (m + 1, n + ntor + 1) for rbc and zbs. Setting
+ * for coefficient k; am_aux_s, am_aux_f: knot i of a spline/line-segment pressure), (i, j) = (m + 1, n + ntor + 1) for rbc and zbs. Setting
  * an array element beyond its length extends the array with zeros. Setting
  * "ftol" or "niter" sets every entry of ftol_array or niter_array;
  * "hot_restart" = 0 disables starting solves from the last equilibrium. */
@@ -47,6 +47,13 @@ int tiago_vmecpp_get_int(const tiago_vmecpp* handle, const char* name,
 /* Profile types (pmass_type, piota_type, pcurr_type) into buffer. */
 int tiago_vmecpp_get_string(const tiago_vmecpp* handle, const char* name,
                             char* buffer, int length);
+
+/* Set the pressure profile type ("pmass_type", e.g. "line_segment"). */
+int tiago_vmecpp_set_string(tiago_vmecpp* handle, const char* name,
+                            const char* value);
+/* Resize an input array (am, ai, ac, aphi, am_aux_s, am_aux_f), padding with 0. */
+int tiago_vmecpp_resize_input(tiago_vmecpp* handle, const char* name,
+                              int length);
 
 /* Solve with the current input values; *converged = 1 on success. A failure to
  * converge is not an error (returns 0 with *converged = 0). After a first

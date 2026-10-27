@@ -111,7 +111,8 @@ contains
         character(len=:), allocatable :: trimmed
         real(dp) :: px, py, pz, icurrent
         integer :: group_id, max_group
-        logical :: has_group
+        logical :: has_group, title_allowed
+        real(dp) :: probe(4)
         real(dp), allocatable :: ref_current(:)
         real(dp), allocatable :: target_extcur(:)
         logical, allocatable :: given(:)
@@ -126,6 +127,11 @@ contains
             stop 1
         end if
 
+        ! MAKEGRID header: "periods N", "begin filament" and a third line that
+        ! MAKEGRID reads without interpreting ("mirror NIL" by convention, but
+        ! files such as W7-X coils.w7x carry a free title there). The line
+        ! after "begin" is skipped unless it already holds coordinates.
+        title_allowed = .false.
         do
             read(unit, '(A)', iostat=ios) line
             if (ios /= 0) exit
@@ -133,7 +139,15 @@ contains
             if (len_trim(trimmed) == 0) cycle
             call to_lower_inplace(trimmed)
             if (index(trimmed, 'periods') == 1) cycle
-            if (index(trimmed, 'begin') == 1) cycle
+            if (index(trimmed, 'begin') == 1) then
+                title_allowed = .true.
+                cycle
+            end if
+            if (title_allowed) then
+                title_allowed = .false.
+                read(line, *, iostat=ios) probe
+                if (ios /= 0) cycle
+            end if
             if (index(trimmed, 'mirror') == 1) cycle
             if (index(trimmed, 'end') == 1) exit
             call parse_coil_line(line, px, py, pz, icurrent, has_group, group_id)

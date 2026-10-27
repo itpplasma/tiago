@@ -56,6 +56,7 @@ module tiago_reconstruction
         real(dp), allocatable :: flux_m(:, :), seg_m(:, :), probe_m(:, :)
         type(equilibrium_t) :: eq
         ! bookkeeping
+        logical :: quiet = .false.                       !! no per-evaluation log or history
         integer :: evaluations = 0
         real(dp), allocatable :: history(:)              !! chi^2 of every evaluation
         real(dp), allocatable :: eq_x(:)                 !! its equilibrium parameters
@@ -74,7 +75,7 @@ module tiago_reconstruction
     real(dp), allocatable, save :: cache_rx(:), cache_r(:), cache_jx(:), cache_j(:, :)
 
     public :: n_rows, parameters_of, model_signals, residual_at, jacobian_at
-    public :: fit, covariance, synthesize, signal_value
+    public :: fit, covariance, synthesize, signal_value, invalidate_caches
 
 contains
 
@@ -221,7 +222,8 @@ contains
         if (.not. ok) then
             ! the fit rejects a step to non-finite residuals
             r = ieee_value(1.0_dp, ieee_quiet_nan)
-            write(*, '(A,I4,A)') 'evaluation ', rec%evaluations, ': no equilibrium, step rejected'
+            if (.not. rec%quiet) write(*, '(A,I4,A)') 'evaluation ', rec%evaluations, &
+                ': no equilibrium, step rejected'
             return
         end if
         do i = 1, rec%n_meas
@@ -235,12 +237,22 @@ contains
             k = rec%prior_param(i)
             r(rec%n_meas + rec%n_fb + i) = (x(k) - rec%prior(k)) / rec%prior_sigma(k)
         end do
-        rec%history = [rec%history, sum(r**2)]
         cache_rx = x
         cache_r = r
+        if (rec%quiet) return
+        rec%history = [rec%history, sum(r**2)]
         write(*, '(A,I4,A,ES12.4,A,*(1X,A,"=",ES13.6))') 'evaluation ', rec%evaluations, &
             ': chi^2 = ', sum(r**2), ' ', (trim(rec%names(k)), x(k), k = 1, rec%n)
     end subroutine residual_at
+
+    subroutine invalidate_caches()
+        !! Forget the cached residual, Jacobian and solved parameters, for
+        !! callers that change equilibrium inputs other than the parameters
+        !! (e.g. a prescribed kinetic pressure).
+        if (allocated(cache_rx)) deallocate(cache_rx)
+        if (allocated(cache_jx)) deallocate(cache_jx)
+        if (allocated(rec%eq_x)) deallocate(rec%eq_x)
+    end subroutine invalidate_caches
 
     logical function responses_current(with_shape)
         !! Field responses depend on geometry; shape responses also need the

@@ -16,7 +16,7 @@ endif()
 include(FetchContent)
 
 set(TIAGO_LIBNEO_GIT "https://github.com/itpplasma/libneo.git" CACHE STRING "libneo upstream to fetch")
-set(TIAGO_LIBNEO_TAG "dd692e80d269b819029bf8c025465616bb9527ab" CACHE STRING "libneo commit/branch/tag used by Tiago")
+set(TIAGO_LIBNEO_TAG "42b04688a2fa2805bb84273c68dc35e78b50f72e" CACHE STRING "libneo commit/branch/tag used by Tiago")
 option(TIAGO_ENABLE_SPECTRE "Build the libneo SPECTRE plasma source (HDF5, fortnum)" OFF)
 option(TIAGO_MATCH_LIBNEO_BRANCH "Use the matching libneo branch when available" OFF)
 # Use a local effective ref so removing an override restores the pinned default.
@@ -47,6 +47,16 @@ set(LIBNEO_BUILD_NUMERICS ${TIAGO_ENABLE_SPECTRE} CACHE BOOL "Build libneo field
 
 option(TIAGO_ENABLE_OPENMP "Enable OpenMP parallelism inside Tiago loops" ON)
 
+# fortnum: B-spline profile bases, NUTS and PSIS for the inference core. Declared
+# before libneo, whose numerics reuse an existing fortnum target.
+set(TIAGO_FORTNUM_TAG "f72a16b18437474f625a5975b61efb487e633cfe" CACHE STRING "fortnum commit used by Tiago")
+if(NOT TARGET fortnum)
+    FetchContent_Declare(fortnum
+        GIT_REPOSITORY https://github.com/lazy-fortran/fortnum.git
+        GIT_TAG        ${TIAGO_FORTNUM_TAG})
+    FetchContent_MakeAvailable(fortnum)
+endif()
+
 FetchContent_Declare(libneo
     GIT_REPOSITORY ${TIAGO_LIBNEO_GIT}
     GIT_TAG        ${_tiago_libneo_ref}
@@ -60,7 +70,10 @@ add_library(tiago_diagnostics STATIC
     src/diagnostics/bprobes.f90
     src/generated/mse_rows.f90
     src/generated/mse_local.f90
-    src/diagnostics/mse.f90)
+    src/diagnostics/mse.f90
+    src/generated/hermite_basis.f90
+    src/diagnostics/radial_interp.f90
+    src/diagnostics/real_space_state.f90)
 set_target_properties(tiago_diagnostics PROPERTIES
     Fortran_STANDARD 2018
     Fortran_STANDARD_REQUIRED YES)
@@ -106,7 +119,25 @@ if(TIAGO_ENABLE_OPENMP)
     find_package(OpenMP COMPONENTS Fortran)
     if(OpenMP_Fortran_FOUND)
         target_link_libraries(tiago_solver PUBLIC OpenMP::OpenMP_Fortran)
+        target_link_libraries(tiago_diagnostics PUBLIC OpenMP::OpenMP_Fortran)
     endif()
+endif()
+
+# Inference core without a provider: kinetic profiles and their prior, the
+# profile-diagnostic contract and the reference point probe.
+add_library(tiago_inference STATIC
+    src/generated/kinetic_pressure.f90
+    src/inference/kinetic_profiles.f90
+    src/inference/profile_diagnostic.f90
+    src/inference/point_probe.f90
+    src/inference/state_sampler.f90
+    src/inference/vmecpp_state.f90)
+set_target_properties(tiago_inference PROPERTIES
+    Fortran_STANDARD 2018
+    Fortran_STANDARD_REQUIRED YES)
+target_link_libraries(tiago_inference PUBLIC fortnum tiago_diagnostics)
+if(TIAGO_ENABLE_OPENMP AND OpenMP_Fortran_FOUND)
+    target_link_libraries(tiago_inference PUBLIC OpenMP::OpenMP_Fortran)
 endif()
 
 add_executable(tiago_cli src/cli/tiago_cli.f90)
@@ -200,6 +231,15 @@ if(TIAGO_ENABLE_RECONSTRUCTION)
             -DNETCDF_URL=${TIAGO_VMECPP_NETCDF_URL} -P ${CMAKE_SOURCE_DIR}/cmake/PatchVmecpp.cmake
         EXCLUDE_FROM_ALL)
     FetchContent_MakeAvailable(vmecpp)
+    # VMEC++ builds Release with ThinLTO. Enzyme >= 0.0.303 with Clang 23 then
+    # defers its pass to link time and leaves __enzyme_* unresolved unless lld
+    # loads LLDEnzyme; compiling the two Enzyme translation units without LTO
+    # runs the pass at compile time with every toolchain.
+    set_source_files_properties(
+        ${vmecpp_SOURCE_DIR}/src/vmecpp/cpp/vmecpp/vmec/ideal_mhd_model/exact_force_jvp.cc
+        ${vmecpp_SOURCE_DIR}/src/vmecpp/cpp/vmecpp/vmec/ideal_mhd_model/exact_force_vjp.cc
+        DIRECTORY ${vmecpp_SOURCE_DIR}
+        PROPERTIES COMPILE_OPTIONS "-march=x86-64;-O2;-fno-lto;-fplugin=${TIAGO_ENZYME_PLUGIN}")
     FetchContent_GetProperties(eigen)
     FetchContent_GetProperties(abseil-cpp)
     FetchContent_GetProperties(abscab-cpp)
@@ -228,11 +268,14 @@ end module tiago_vmecpp_paths
         src/equilibrium/vmec_edge.f90
         src/equilibrium/equilibrium.f90
         src/reconstruct/reconstruction.f90
-        src/reconstruct/reconstruction_plots.f90)
+        src/reconstruct/reconstruction_plots.f90
+        src/inference/joint_model.f90
+        src/inference/inference_engines.f90
+        src/inference/synthetic_case.f90)
     set_target_properties(tiago_reconstruction PROPERTIES
         Fortran_STANDARD 2018
         Fortran_STANDARD_REQUIRED YES)
-    target_link_libraries(tiago_reconstruction PUBLIC ${TIAGO_LIBOMP} tiago_solver
+    target_link_libraries(tiago_reconstruction PUBLIC ${TIAGO_LIBOMP} tiago_solver tiago_inference
         fortplot::fortplot tiago_vmecpp_adapter ${LAPACK_LIBRARIES})
     # Dependency sorting can place libneo's libgomp before libomp. Force libomp
     # into DT_NEEDED first, so generic omp_* and Clang's __kmpc_* calls use the
@@ -243,8 +286,12 @@ end module tiago_vmecpp_paths
     add_dependencies(tiago_reconstruction indata2json)
     add_executable(test_vmecpp_equilibrium tests/test_vmecpp_equilibrium.f90)
     target_link_libraries(test_vmecpp_equilibrium PRIVATE tiago_reconstruction)
+    add_executable(test_joint_model tests/test_joint_model.f90)
+    target_link_libraries(test_joint_model PRIVATE tiago_reconstruction)
     add_executable(test_reconstruction_shape_cache tests/test_reconstruction_shape_cache.f90)
     target_link_libraries(test_reconstruction_shape_cache PRIVATE tiago_reconstruction)
+    add_executable(tiago_infer src/cli/tiago_infer.f90)
+    target_link_libraries(tiago_infer PRIVATE tiago_reconstruction)
     add_executable(tiago_reconstruct src/cli/tiago_reconstruct.f90)
     target_link_libraries(tiago_reconstruct PRIVATE tiago_reconstruction tiago_build_config)
     add_executable(tiago_plot_pulls benchmarks/reconstruction/plot_pulls.f90)
@@ -401,6 +448,13 @@ foreach(bad IN ITEMS
         PASS_REGULAR_EXPRESSION "${regex}" WILL_FAIL FALSE)
 endforeach()
 
+add_executable(test_profile_diagnostic tests/test_profile_diagnostic.f90)
+target_link_libraries(test_profile_diagnostic PRIVATE tiago_inference)
+add_test(NAME tiago_profile_diagnostic COMMAND $<TARGET_FILE:test_profile_diagnostic>)
+add_executable(test_kinetic_profiles tests/test_kinetic_profiles.f90)
+target_link_libraries(test_kinetic_profiles PRIVATE tiago_inference)
+add_test(NAME tiago_kinetic_profiles COMMAND $<TARGET_FILE:test_kinetic_profiles>)
+
 add_test(NAME tiago_diag_lint_flux
     COMMAND $<TARGET_FILE:tiago_cli> diag lint
             ${CMAKE_SOURCE_DIR}/tests/data/fluxloop_sample.diagno
@@ -445,6 +499,18 @@ if(TIAGO_ENABLE_RECONSTRUCTION)
     set_tests_properties(tiago_vmecpp_equilibrium tiago_reconstruct_exact
         tiago_reconstruct_conservative PROPERTIES
         FIXTURES_REQUIRED input_li383 TIMEOUT 600)
+    add_test(NAME tiago_joint_model
+        COMMAND $<TARGET_FILE:test_joint_model> ${TIAGO_INPUT_LI383}
+                ${CMAKE_SOURCE_DIR}/benchmarks/reconstruction/sensors.awk
+                ${CMAKE_BINARY_DIR}/tests/joint_model)
+    set_tests_properties(tiago_joint_model PROPERTIES
+        FIXTURES_REQUIRED input_li383 TIMEOUT 900 ENVIRONMENT "OMP_NUM_THREADS=4;OPENBLAS_NUM_THREADS=1")
+    add_test(NAME tiago_infer_smoke
+        COMMAND ${CMAKE_SOURCE_DIR}/tests/infer_smoke.sh $<TARGET_FILE:tiago_infer> ${TIAGO_INPUT_LI383}
+                ${CMAKE_SOURCE_DIR}/benchmarks/reconstruction/sensors.awk
+                ${CMAKE_BINARY_DIR}/tests/infer_smoke)
+    set_tests_properties(tiago_infer_smoke PROPERTIES
+        FIXTURES_REQUIRED input_li383 TIMEOUT 900 ENVIRONMENT "OMP_NUM_THREADS=4;OPENBLAS_NUM_THREADS=1")
     add_test(NAME tiago_reconstruction_shape_cache
         COMMAND $<TARGET_FILE:test_reconstruction_shape_cache> ${TIAGO_INPUT_LI383}
                 ${CMAKE_BINARY_DIR}/tests/reconstruction_shape_cache)

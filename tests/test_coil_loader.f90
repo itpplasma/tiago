@@ -15,6 +15,7 @@ program test_coil_loader
 
     call test_neo_input(field, data_dir)
     call test_stellopt_input(field, data_dir)
+    call test_stellopt_title_line(field, data_dir)
     call test_stellopt_with_extcur(field, data_dir)
     call test_more_points(field, data_dir)
     call test_extcur_forms(field)
@@ -56,6 +57,25 @@ subroutine test_stellopt_input(field, data_dir)
     call assert_close(field%coils%current(5), 0.0_dp, tol, 'stellopt: closing current zero')
     call coils_deinit(field%coils)
 end subroutine test_stellopt_input
+
+subroutine test_stellopt_title_line(field, data_dir)
+    ! A free title instead of "mirror NIL" (MAKEGRID ignores the third header
+    ! line; W7-X coils.w7x has "W7X Coils" there) loads the same filament.
+    use, intrinsic :: iso_fortran_env, only: dp => real64
+    use neo_biotsavart_field, only: biotsavart_field_t
+    use neo_biotsavart, only: coils_deinit
+    use tiago_coil_loader, only: load_coils_into_field
+    implicit none
+    type(biotsavart_field_t), intent(inout) :: field
+    character(len=*), intent(in) :: data_dir
+    real(dp), parameter :: tol = 1.0e-12_dp
+
+    call load_coils_into_field(field, data_dir//'/coils_title.coils')
+    call assert_equal(size(field%coils%x), 5, 'title line: point count')
+    call assert_close(field%coils%x(2), 1.0_dp, tol, 'title line: first segment end')
+    call assert_close(field%coils%current(1), 1.0_dp, tol, 'title line: current(1)')
+    call coils_deinit(field%coils)
+end subroutine test_stellopt_title_line
 
 subroutine test_stellopt_with_extcur(field, data_dir)
     use, intrinsic :: iso_fortran_env, only: dp => real64
