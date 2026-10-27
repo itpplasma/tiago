@@ -21,7 +21,7 @@ module tiago_real_space_state
     real(dp), parameter :: pi = acos(-1.0_dp)
 
     integer, parameter, public :: locate_ok = 0, locate_outside = 1, &
-        locate_no_convergence = 2, locate_singular = 3
+        locate_no_convergence = 2, locate_singular = 3, locate_unsupported = 4
 
     type, abstract, public :: real_space_state_t
         !> Newton iterates beyond this rho count as outside the state's chart.
@@ -35,6 +35,7 @@ module tiago_real_space_state
         procedure(param_vjp_i), deferred :: param_vjp
         procedure :: initial_guess => default_initial_guess
         procedure :: locate => state_locate
+        procedure :: vector_jets => unsupported_vector_jets
     end type real_space_state_t
 
     type, public :: located_t
@@ -45,6 +46,12 @@ module tiago_real_space_state
         real(dp) :: b = 0.0_dp, dbdu(3) = 0.0_dp
         integer :: status = locate_outside
     end type located_t
+
+    type, public :: vector_jets_t
+        real(dp) :: x(3), xu(3, 3), xuu(3, 3, 3)
+        real(dp) :: b(3), bu(3, 3), buu(3, 3, 3)
+        real(dp), allocatable :: xp(:, :), xup(:, :, :), bp(:, :), bup(:, :, :)
+    end type
 
     abstract interface
         pure integer function n_params_i(self)
@@ -91,6 +98,15 @@ module tiago_real_space_state
     public :: located_jvp, located_vjp, invert3
 
 contains
+
+    subroutine unsupported_vector_jets(self, u, jet, status)
+        class(real_space_state_t), intent(in) :: self
+        real(dp), intent(in) :: u(3)
+        type(vector_jets_t), intent(out) :: jet
+        integer, intent(out) :: status
+        status = locate_unsupported
+        call self%eval(u, jet%x, jet%xu, jet%b(1), jet%bu(1, :))
+    end subroutine
 
     pure subroutine default_initial_guess(self, x, u)
         !! Closest point of a coarse label grid at phi = atan2(y, x).

@@ -75,6 +75,7 @@ add_library(tiago_diagnostics STATIC
     src/generated/hermite_basis.f90
     src/generated/circular_state.f90
     src/generated/cold_resonance.f90
+    src/generated/hermite_higher.f90
     src/diagnostics/radial_interp.f90
     src/diagnostics/real_space_state.f90
     src/diagnostics/analytic_state.f90)
@@ -90,6 +91,11 @@ add_library(tiago_solver STATIC
     src/solver/plasma_field_source.f90
     src/solver/plasma_support.f90
     src/solver/sensor_signals.f90
+    src/generated/vmec_r_x.f90
+    src/generated/vmec_r_y.f90
+    src/generated/vmec_z.f90
+    src/generated/vmec_cos.f90
+    src/generated/vmec_vector_component.f90
     src/solver/vmec_state.f90)
 if(TIAGO_ENABLE_SPECTRE)
     if(NOT TARGET LIBNEO::spectre_field)
@@ -175,7 +181,10 @@ add_library(tiago_inference STATIC
     src/inference/energy_consistency.f90
     src/generated/xics_emissivity.f90
     src/inference/sight_geometry.f90
+    src/generated/medium_pullback.f90
+    src/generated/density_label_jet.f90
     src/inference/state_sampler.f90
+    src/generated/vmec_product_pair.f90
     src/inference/vmecpp_state.f90
     src/inference/thomson_scattering.f90
     src/generated/ts_depolarization.f90
@@ -192,6 +201,7 @@ add_library(tiago_inference STATIC
     src/generated/ece_hamiltonian_x.f90
     src/generated/ece_hamiltonian_unmagnetized.f90
     src/inference/ece_ray.f90
+    src/inference/ece_state_medium.f90
     src/generated/ece_loss.f90
     src/generated/ece_loss_small.f90
     src/generated/ece_thermal_cell.f90
@@ -764,3 +774,26 @@ add_executable(benchmark_ece_transfer EXCLUDE_FROM_ALL benchmarks/ece/benchmark_
 target_link_libraries(benchmark_ece_transfer PRIVATE tiago_inference)
 add_executable(benchmark_ece_receiver EXCLUDE_FROM_ALL benchmarks/ece/benchmark_receiver.f90)
 target_link_libraries(benchmark_ece_receiver PRIVATE tiago_inference)
+
+add_library(tiago_ece_geometry_fixture STATIC tests/ece_geometry_fixture.f90)
+target_link_libraries(tiago_ece_geometry_fixture PUBLIC tiago_inference)
+add_executable(test_ece_geometry tests/test_ece_geometry.f90)
+target_link_libraries(test_ece_geometry PRIVATE tiago_ece_geometry_fixture)
+add_test(NAME tiago_ece_geometry COMMAND $<TARGET_FILE:test_ece_geometry>)
+add_test(NAME tiago_ece_geometry_vmecpp COMMAND $<TARGET_FILE:test_ece_geometry> vmecpp)
+add_test(NAME tiago_ece_geometry_vmec COMMAND $<TARGET_FILE:test_ece_geometry>
+    ${TIAGO_WOUT_SIMSOPT_SMALL})
+set_tests_properties(tiago_ece_geometry_vmec PROPERTIES FIXTURES_REQUIRED wout_li383)
+if(FORTSYM_BUILD)
+    add_test(NAME tiago_ece_geometry_codegen COMMAND ${CMAKE_COMMAND}
+        -DGENERATOR=$<TARGET_FILE:gen_ece_geometry> -DSOURCE=${CMAKE_SOURCE_DIR}
+        -DOUTPUT=${CMAKE_BINARY_DIR}/tests/ece-geometry-codegen
+        -P ${CMAKE_SOURCE_DIR}/tests/check_ece_geometry_codegen.cmake)
+endif()
+
+add_executable(test_ece_geometry_limits tests/test_ece_geometry_limits.f90)
+target_link_libraries(test_ece_geometry_limits PRIVATE tiago_ece_geometry_fixture)
+add_test(NAME tiago_ece_geometry_limits COMMAND $<TARGET_FILE:test_ece_geometry_limits>)
+
+add_executable(benchmark_ece_geometry EXCLUDE_FROM_ALL benchmarks/ece/benchmark_geometry.f90)
+target_link_libraries(benchmark_ece_geometry PRIVATE tiago_ece_geometry_fixture)

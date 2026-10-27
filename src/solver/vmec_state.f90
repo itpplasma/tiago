@@ -13,8 +13,13 @@ module tiago_vmec_state
     use, intrinsic :: iso_fortran_env, only: dp => real64
     use netcdf, only: nf90_open, nf90_close, nf90_inq_varid, nf90_get_var, &
         nf90_noerr, nf90_nowrite
-    use tiago_real_space_state, only: real_space_state_t
+    use tiago_real_space_state, only: real_space_state_t, vector_jets_t, locate_ok, locate_singular
     use tiago_radial_interp, only: hermite_weights, max_weights
+    use tiago_vmec_r_x, only: vmec_r_x
+    use tiago_vmec_r_y, only: vmec_r_y
+    use tiago_vmec_z, only: vmec_z
+    use tiago_vmec_cos, only: vmec_cos
+    use tiago_vmec_vector_component, only: vmec_vector_component
     implicit none
     private
 
@@ -23,7 +28,9 @@ module tiago_vmec_state
         real(dp), allocatable :: xm(:), xn(:), xm_nyq(:), xn_nyq(:)
         real(dp), allocatable :: rho_full(:), rho_half(:)
         real(dp), allocatable :: rmnc(:, :), zmns(:, :), bmnc(:, :) !! bmnc(:, 1:ns-1) = half grid
+        real(dp), allocatable :: bsupumnc(:,:), bsupvmnc(:,:)
     contains
+        procedure :: vector_jets => vmec_vector_jets
         procedure :: load => vmec_load
         procedure :: n_params => vmec_n_params
         procedure :: get_params => vmec_get_params
@@ -35,11 +42,12 @@ module tiago_vmec_state
 
 contains
 
-    subroutine vmec_load(self, path, ierr, message)
+    subroutine vmec_load(self, path, ierr, message, vector)
         class(vmec_state_t), intent(inout) :: self
         character(len=*), intent(in) :: path
         integer, intent(out) :: ierr
         character(len=:), allocatable, intent(out) :: message
+        logical, intent(in), optional :: vector
         integer :: ncid, lasym, j
         real(dp), allocatable :: buf(:, :)
 
@@ -71,9 +79,18 @@ contains
         call get_var2('rmnc', self%rmnc)
         call get_var2('zmns', self%zmns)
         call get_var2('bmnc', buf)
+        if (present(vector)) then
+            if (vector) then
+                self%bmnc = buf(:, 2:self%ns)
+                call get_var2('bsupumnc', buf)
+                self%bsupumnc = buf(:, 2:self%ns)
+                call get_var2('bsupvmnc', buf)
+                self%bsupvmnc = buf(:, 2:self%ns)
+            end if
+        end if
         if (nf90_close(ncid) /= nf90_noerr .and. ierr == 0) ierr = 1
         if (ierr /= 0) return
-        self%bmnc = buf(:, 2:self%ns)
+        if (.not. allocated(self%bmnc)) self%bmnc = buf(:, 2:self%ns)
         self%rho_full = [(sqrt(real(j - 1, dp) / real(self%ns - 1, dp)), j = 1, self%ns)]
         self%rho_half = [(sqrt((real(j, dp) - 1.5_dp) / real(self%ns - 1, dp)), &
             j = 2, self%ns)]
@@ -125,6 +142,7 @@ contains
     pure integer function vmec_n_params(self)
         class(vmec_state_t), intent(in) :: self
         vmec_n_params = 2 * self%mnmax * self%ns + self%mnmax_nyq * (self%ns - 1)
+        if (allocated(self%bsupumnc)) vmec_n_params = vmec_n_params + 2*size(self%bsupumnc)
     end function vmec_n_params
 
     pure subroutine vmec_get_params(self, p)
@@ -137,6 +155,10 @@ contains
         p(1:nr) = reshape(self%rmnc, [nr])
         p(nr + 1:2 * nr) = reshape(self%zmns, [nr])
         p(2 * nr + 1:2 * nr + nb) = reshape(self%bmnc, [nb])
+        if (allocated(self%bsupumnc)) then
+            p(2*nr+nb+1:2*nr+2*nb) = reshape(self%bsupumnc, [nb])
+            p(2*nr+2*nb+1:2*nr+3*nb) = reshape(self%bsupvmnc, [nb])
+        end if
     end subroutine vmec_get_params
 
     subroutine vmec_set_params(self, p)
@@ -149,6 +171,10 @@ contains
         self%rmnc = reshape(p(1:nr), [self%mnmax, self%ns])
         self%zmns = reshape(p(nr + 1:2 * nr), [self%mnmax, self%ns])
         self%bmnc = reshape(p(2 * nr + 1:2 * nr + nb), [self%mnmax_nyq, self%ns - 1])
+        if (allocated(self%bsupumnc)) then
+            self%bsupumnc = reshape(p(2*nr+nb+1:2*nr+2*nb), shape(self%bmnc))
+            self%bsupvmnc = reshape(p(2*nr+2*nb+1:2*nr+3*nb), shape(self%bmnc))
+        end if
     end subroutine vmec_set_params
 
     pure subroutine vmec_eval(self, u, x, dxdu, b, dbdu)
@@ -257,4 +283,121 @@ contains
             end do
         end do
     end subroutine vmec_param_vjp
+
+    subroutine vmec_vector_jets(self, u, jet, status)
+        class(vmec_state_t), intent(in) :: self
+        real(dp), intent(in) :: u(3)
+        type(vector_jets_t), intent(out) :: jet
+        integer, intent(out) :: status
+        real(dp) :: wf(max_weights, 4), wh(max_weights, 4), radial(4)
+        real(dp) :: val, d(3), d2(3, 3), d3(3, 3, 3), x3(3, 3, 3, 3)
+        real(dp) :: v(2), vu(3, 2), vuu(3, 3, 2), vp(2), vup(3, 2)
+        real(dp) :: junk2(3, 3), zero3(3, 3, 3), zero2(3, 3, 2)
+        real(dp), allocatable :: x2p(:, :, :, :), cp(:, :), cup(:, :, :)
+        integer :: ff, nf, fh, nh, mn, k, i, j, nr, nb, np, col
+        status = locate_singular
+        if (.not. allocated(self%bsupumnc)) return
+        if (.not. allocated(self%bsupvmnc)) return
+        np = self%n_params()
+        nr = self%mnmax*self%ns
+        nb = self%mnmax_nyq*(self%ns - 1)
+        allocate (jet%xp(3, np), jet%xup(3, 3, np), jet%bp(3, np), jet%bup(3, 3, np), &
+                  x2p(3, 3, 3, np), cp(2, np), cup(3, 2, np))
+        jet%x = 0
+        jet%xu = 0
+        jet%xuu = 0
+        jet%xp = 0
+        jet%xup = 0
+        jet%bp = 0
+        jet%bup = 0
+        x2p = 0
+        x3 = 0
+        v = 0
+        vu = 0
+        vuu = 0
+        cp = 0
+        cup = 0
+        zero3 = 0
+        zero2 = 0
+        call hermite_weights(self%rho_full, u(1), .true., ff, nf, &
+                             wf(:, 1), wf(:, 2), wf(:, 3), wf(:, 4))
+        call hermite_weights(self%rho_half, u(1), .true., fh, nh, &
+                             wh(:, 1), wh(:, 2), wh(:, 3), wh(:, 4))
+        do mn = 1, self%mnmax
+            do k = 1, nf
+                col = mn + (ff + k - 2)*self%mnmax
+                do i = 1, 3
+                    select case (i)
+                    case (1)
+                        call vmec_r_x(wf(k, :), self%xm(mn), self%xn(mn), u(2), u(3), &
+                                      val, d, d2, d3)
+                    case (2)
+                        call vmec_r_y(wf(k, :), self%xm(mn), self%xn(mn), u(2), u(3), &
+                                      val, d, d2, d3)
+                    case (3)
+                        call vmec_z(wf(k, :), self%xm(mn), self%xn(mn), u(2), u(3), &
+                                    val, d, d2, d3)
+                    end select
+                    j = col
+                    if (i == 3) j = nr + col
+                    jet%xp(i, j) = val
+                    jet%xup(i, :, j) = d
+                    x2p(i, :, :, j) = d2
+                    if (i == 3) then
+                        val = self%zmns(mn, ff + k - 1)
+                    else
+                        val = self%rmnc(mn, ff + k - 1)
+                    end if
+                    jet%x(i) = jet%x(i) + jet%xp(i, j)*val
+                    jet%xu(i, :) = jet%xu(i, :) + d*val
+                    jet%xuu(i, :, :) = jet%xuu(i, :, :) + d2*val
+                    x3(i, :, :, :) = x3(i, :, :, :) + d3*val
+                end do
+            end do
+        end do
+        do mn = 1, self%mnmax_nyq
+            do k = 1, nh
+                call vmec_cos(wh(k, :), self%xm_nyq(mn), self%xn_nyq(mn), &
+                              u(2), u(3), val, d, d2, d3)
+                do i = 1, 2
+                    col = 2*nr + i*nb + mn + (fh + k - 2)*self%mnmax_nyq
+                    cp(i, col) = val
+                    cup(:, i, col) = d
+                    if (i == 1) then
+                        radial(1) = self%bsupumnc(mn, fh + k - 1)
+                    else
+                        radial(1) = self%bsupvmnc(mn, fh + k - 1)
+                    end if
+                    v(i) = v(i) + radial(1)*val
+                    vu(:, i) = vu(:, i) + radial(1)*d
+                    vuu(:, :, i) = vuu(:, :, i) + radial(1)*d2
+                end do
+            end do
+        end do
+        do i = 1, 3
+            call vmec_vector_component(jet%xu(i, :), jet%xuu(i, :, :), x3(i, :, :, :), &
+                                       v, vu, vuu, jet%b(i), jet%bu(i, :), jet%buu(i, &
+                                                                                   :, &
+                                                                                       :))
+            do j = 1, np
+                if (any(jet%xp(:, j) /= 0) .or. any(jet%xup(:, :, j) /= 0)) then
+                    call vmec_vector_component(jet%xup(i, :, j), x2p(i, :, :, j), &
+                                               zero3, &
+                                               v, vu, zero2, jet%bp(i, j), jet%bup(i, &
+                                                                                   :, &
+                                                                                       j), junk2)
+                end if
+                if (any(cp(:, j) /= 0) .or. any(cup(:, :, j) /= 0)) then
+                    vp = cp(:, j)
+                    vup = cup(:, :, j)
+                    call vmec_vector_component(jet%xu(i, :), jet%xuu(i, :, :), zero3, &
+                                               vp, vup, zero2, val, d, junk2)
+                    jet%bp(i, j) = jet%bp(i, j) + val
+                    jet%bup(i, :, j) = jet%bup(i, :, j) + d
+                end if
+            end do
+        end do
+        status = locate_ok
+    end subroutine vmec_vector_jets
+
 end module tiago_vmec_state

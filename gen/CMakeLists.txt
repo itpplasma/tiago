@@ -35,3 +35,7 @@ target_link_libraries(gen_interferometer PRIVATE "${FORTSYM_LIBRARY}")
 add_executable(gen_ece_transfer gen_ece_transfer.f90)
 target_include_directories(gen_ece_transfer PRIVATE "${FORTSYM_BUILD}/include")
 target_link_libraries(gen_ece_transfer PRIVATE "${FORTSYM_LIBRARY}")
+
+add_executable(gen_ece_geometry gen_ece_geometry.f90)
+target_include_directories(gen_ece_geometry PRIVATE "${FORTSYM_BUILD}/include")
+target_link_libraries(gen_ece_geometry PRIVATE "${FORTSYM_LIBRARY}")
