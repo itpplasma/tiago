@@ -62,6 +62,7 @@ program test_recorded_magnetics
     use tiago_profile_diagnostic, only: plasma_sample_t, check_diagnostic_derivatives, &
                                         N_QUANTITIES, Q_NE, Q_TE, Q_TI, Q_ZEFF
     use tiago_calibration, only: calibration_prior_t
+    use tiago_point_probe, only: point_probe_t
     use tiago_magnetic_response, only: magnetic_response_t
     use tiago_integrator_diagnostic, only: integrator_diagnostic_t
     use tiago_energy_consistency, only: energy_consistency_t
@@ -138,6 +139,7 @@ program test_recorded_magnetics
     call check(adj < 1.0e-12_dp, 'recorded magnetic adjoint')
     print '(A,2ES14.6)', 'recorded magnetic FD / transpose relative errors: ', err, adj
     call recover_calibration()
+    call check_sample_chain()
     ! A different real solver is the consumer oracle for the coil response.
     call coil_solver%init(trim(coilfile))
     call magnetic%init(coil_solver, sensors, rule)
@@ -225,26 +227,75 @@ contains
         print '(A)', 'FAIL: '//text
         error stop 1
     end subroutine
+    subroutine check_sample_chain()
+        type(point_probe_t) :: probe
+        type(integrator_diagnostic_t) :: instrument
+        type(calibration_prior_t) :: calibration
+        type(plasma_sample_t) :: local
+        real(dp) :: fd, transpose_error
+        probe%x0 = reshape([2.0_dp, 0.0_dp, 0.1_dp, 2.1_dp, 0.0_dp, 0.2_dp], [3, 2])
+        probe%quantity = [Q_TE, Q_NE]
+        local%n = 2
+        allocate (local%q(N_QUANTITIES, 2))
+        local%q = 1.0_dp
+        local%q(Q_TE, :) = 500.0_dp
+        local%q(Q_NE, :) = 1.0e19_dp
+        calibration = prior
+        calibration%valid_to = 1.0_dp
+        call instrument%init(probe, calibration, [0.0_dp, 2.0_dp], 0.0_dp, status)
+        call check(status /= 0, 'reject calibration outside record validity')
+        call instrument%init(probe, calibration, [0.0_dp, 1.0_dp], 0.0_dp, status)
+        call check(status == 0, 'sampled-field calibration setup')
+       call check_diagnostic_derivatives(instrument, local, [0.1_dp, -0.2_dp, 0.3_dp], &
+                                          1.0e-5_dp, fd, transpose_error)
+        call check(fd < 1.0e-8_dp, 'sampled-field / drift finite differences')
+        call check(transpose_error < 1.0e-12_dp, 'sampled-field / drift transpose')
+        print '(A,2ES14.6)', 'sampled-field / calibration FD and transpose errors: ', &
+            fd, transpose_error
+    end subroutine
     subroutine recover_calibration()
-        real(dp) :: truth(4), prediction(4), zero(4), direction(4), derivative(4)
+        type(sensor_set_t) :: channel
+        type(vacuum_solver_t) :: snapshots(4)
+        type(analytic_source_t) :: field_source
+        type(magnetic_response_t) :: trace
+        type(integrator_diagnostic_t) :: instrument
+        real(dp) :: truth(7), prediction(4), zero(7), direction(7), derivative(4)
         real(dp) :: design(4, 3), rhs(4, 1), work(128), recovered(3), physical(3)
         real(dp) :: qdot(N_QUANTITIES, 0)
         integer :: j, info
-        truth = [0.0_dp, 0.7_dp, -0.4_dp, 0.3_dp]
+        channel = sensors
+        channel%labels = sensors%labels(2:2)
+        channel%row_start = [1, 2]
+        channel%col = [2]
+        channel%val = [1.0_dp]
+        field_source = source
+        do j = 1, 4
+            call snapshots(j)%init('')
+            field_source%field = b0*(1 + 0.2_dp*j*j)
+            call snapshots(j)%set_plasma_source(field_source)
+        end do
+        call trace%init(snapshots, channel, rule)
+        call instrument%init(trace, prior, [0.0_dp, 0.4_dp, 1.3_dp, 2.0_dp], &
+                             0.4_dp, status)
+        call check(status == 0, 'single-channel recorded time series')
+        call check_diagnostic_derivatives(instrument, empty, &
+                                          spread(0.1_dp, 1, 7), 1.0e-4_dp, err, adj)
+        call check(err < 1.0e-8_dp .and. adj < 1.0e-12_dp, 'trace derivatives')
+        truth = [0.0_dp, 0.0_dp, 0.0_dp, 0.0_dp, 0.7_dp, -0.4_dp, 0.3_dp]
         zero = 0.0_dp
-        call recorded%predict(empty, truth, prediction)
-        call recorded%predict(empty, zero, y)
+        call instrument%predict(empty, truth, prediction)
+        call instrument%predict(empty, zero, y)
         rhs(:, 1) = prediction - y
         do j = 1, 3
             direction = 0.0_dp
-            direction(j + 1) = 1.0_dp
-            call recorded%jvp(empty, zero, qdot, direction, derivative)
+            direction(j + 4) = 1.0_dp
+            call instrument%jvp(empty, zero, qdot, direction, derivative)
             design(:, j) = derivative
         end do
         call dgels('N', 4, 3, 1, design, 4, rhs, 4, work, size(work), info)
         call check(info == 0, 'synthetic calibration solve')
         recovered = prior%physical(rhs(:3, 1))
-        physical = prior%physical(truth(2:))
+        physical = prior%physical(truth(5:))
         err = maxval(abs(recovered - physical))
         call check(err < 1.0e-12_dp, 'recover gain, offset, drift')
 print '(A,ES14.6)', 'synthetic gain / offset / drift max absolute recovery error: ', err

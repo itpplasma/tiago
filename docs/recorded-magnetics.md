@@ -23,6 +23,14 @@ field-coefficient columns. The JVP (Jacobian-vector product) and VJP (its
 transpose action) use the existing exact response matrices. The zero increment
 returns the solver's signals, including its existing linked flux.
 
+For an integrated trace, `init(solvers,sensors,rule)` also accepts an array of
+solver snapshots at successive sample times. Outputs are ordered sensors within
+each time, and the physical parameter increments are concatenated in time order.
+Pass the corresponding repeated timestamps to the integrator wrapper. A single
+channel therefore produces a scalar recorded time series; multiple channels
+share a calibration only when their units and calibration record agree.
+This is a bounded trace adapter; it does not store a full archive response.
+
 Reinitialize after changing geometry. This block does not approximate shape
 changes by an affine response; use the existing shape-response/provider chain
 when fitting geometry. An external source without derivative support cannot
@@ -32,7 +40,8 @@ prior if these coefficients are already outputs of an equilibrium provider.
 `tiago_integrator_diagnostic::integrator_diagnostic_t%init(model,prior,time,origin,status)`
 wraps this response, or another profile diagnostic, as a
 `recorded_diagnostic_t`. `time` has one timestamp in seconds per output;
-`origin` is the time reference in the same convention. The map is
+`origin` is the time reference in the same convention. Timestamps outside the
+calibration record's validity interval are rejected. The map is
 
 ```text
 recorded(i) = gain * model(i) + offset + drift * (time(i) - origin).

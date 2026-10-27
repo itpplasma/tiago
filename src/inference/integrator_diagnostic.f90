@@ -35,6 +35,8 @@ contains
         if (size(time) /= model%n_signals()) return
         if (.not. all(ieee_is_finite(time))) return
         if (.not. ieee_is_finite(origin)) return
+        if (any(time < prior%valid_from)) return
+        if (any(time > prior%valid_to)) return
         if (.not. allocated(prior%factor)) return
         if (allocated(self%model)) deallocate (self%model)
         allocate (self%model, source=model)
