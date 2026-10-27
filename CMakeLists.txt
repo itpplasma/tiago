@@ -209,6 +209,18 @@ add_library(tiago_inference STATIC
     src/generated/ece_two_stream_wall.f90
     src/generated/ece_radiometer_noise.f90
     src/inference/ece_transfer.f90
+    src/generated/ece_opacity_coordinates.f90
+    src/generated/ece_opacity_coordinates2.f90
+    src/generated/ece_opacity_emission.f90
+    src/generated/ece_opacity_o1.f90
+    src/generated/ece_opacity_o2.f90
+    src/generated/ece_opacity_o2_blue.f90
+    src/generated/ece_opacity_x1_finite.f90
+    src/generated/ece_opacity_x1_flr.f90
+    src/generated/ece_opacity_x1_tenuous.f90
+    src/generated/ece_opacity_x2.f90
+    src/inference/ece_opacity.f90
+    src/inference/ece_opacity_transfer.f90
     src/inference/ece_receiver.f90
     src/inference/ece_radiometer.f90
     src/inference/line_integrals.f90
@@ -797,3 +809,15 @@ add_test(NAME tiago_ece_geometry_limits COMMAND $<TARGET_FILE:test_ece_geometry_
 
 add_executable(benchmark_ece_geometry EXCLUDE_FROM_ALL benchmarks/ece/benchmark_geometry.f90)
 target_link_libraries(benchmark_ece_geometry PRIVATE tiago_ece_geometry_fixture)
+add_executable(test_ece_opacity tests/test_ece_opacity.f90)
+target_link_libraries(test_ece_opacity PRIVATE tiago_inference)
+add_test(NAME tiago_ece_opacity COMMAND test_ece_opacity
+    ${CMAKE_CURRENT_SOURCE_DIR}/tests/data/ece_x1_flr.dat)
+if(FORTSYM_BUILD)
+    add_test(NAME tiago_ece_opacity_codegen COMMAND ${CMAKE_COMMAND}
+        -DGENERATOR=$<TARGET_FILE:gen_ece_opacity> -DSOURCE=${CMAKE_SOURCE_DIR}
+        -DOUTPUT=${CMAKE_BINARY_DIR}/tests/ece-opacity-codegen
+        -P ${CMAKE_SOURCE_DIR}/tests/check_ece_opacity_codegen.cmake)
+endif()
+add_executable(benchmark_ece_opacity EXCLUDE_FROM_ALL benchmarks/ece/benchmark_opacity.f90)
+target_link_libraries(benchmark_ece_opacity PRIVATE tiago_inference)

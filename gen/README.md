@@ -169,3 +169,19 @@ With `TIAGO_FORTSYM_BUILD` set, `tiago_ece_geometry_codegen` regenerates all
 nine outputs in an isolated build directory and compares the committed files.
 The [medium contract](../docs/ece-geometry.md) records the knot, axis and
 provider-adjoint limitations.
+# Regenerate perpendicular ECE opacity kernels
+
+`gen_ece_opacity` uses the same FortSym revision and emits ten kernels for
+resonance coordinates, O1/O2/X1/X2 absorption, the X1 finite-Larmor-radius
+correction, and single-polarization emissivity, with complete derivative rows.
+
+```sh
+cmake --build build-codegen --target gen_ece_opacity
+build-codegen/gen_ece_opacity
+ctest --test-dir build -R tiago_ece_opacity --output-on-failure
+```
+
+Configure `TIAGO_FORTSYM_BUILD` to enable the exact regeneration comparison.
+`reference_ece_opacity.py` independently reproduces the committed X1 reference
+values with 90-digit principal-value quadrature; it requires mpmath only when
+reproducing those fixtures. See [the model and verification limits](../docs/ece-opacity.md).
