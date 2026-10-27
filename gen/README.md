@@ -112,3 +112,23 @@ The regeneration test runs in a temporary directory and compares all four
 outputs without changing the checkout. Ordinary library builds need no
 computer algebra system.
 The physical scope and derivative domain are in [docs/ece-rays.md](../docs/ece-rays.md).
+
+# Regenerate the dispersion-interferometer kernels
+
+`gen_interferometer` emits phase, calibrated I/Q, calibrated atan2 and
+phase-to-column maps with complete partial-derivative rows, using FortSym
+`21d157b394e775a999a8d9ed0be409eac1eb9574`. It uses the same build as above:
+
+```sh
+cmake --build build-codegen --target gen_interferometer
+build-codegen/gen_interferometer
+git diff --exit-code -- src/generated/dispersion_*.f90
+```
+
+The optional native regeneration test runs the generator in an isolated build
+directory and byte-compares all four files. Configure the normal TIAGO build
+with `-DFORTSYM_BUILD=/path/to/fortsym/build`, build, then run
+`ctest --test-dir build -R tiago_interferometer_generated --output-on-failure`.
+FortSym and TIAGO must use compatible Fortran compilers for this option.
+Ordinary builds retain no CAS dependency. Independent physical and derivative
+oracles are described in [the instrument documentation](../docs/dispersion-interferometer.md).

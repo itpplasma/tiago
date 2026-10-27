@@ -13,12 +13,14 @@ program test_profile_instruments
     use tiago_analytic_state, only: circular_state_t
     use tiago_vmec_state, only: vmec_state_t
     use tiago_state_sampler, only: sample_state, sample_state_jvp, sample_state_vjp
-    use tiago_profile_diagnostic, only: profile_diagnostic_t, plasma_sample_t, Q_S, Q_B, &
+    use tiago_profile_diagnostic, only: profile_diagnostic_t, plasma_sample_t, Q_S, &
         Q_NE, Q_TE, Q_TI, Q_ZEFF, N_QUANTITIES, check_diagnostic_derivatives
     use tiago_sight_geometry, only: chord_t
     use tiago_thomson_scattering, only: thomson_t, thomson_volume_t
     use tiago_ece_radiometer, only: ece_t, ece_channel_t
     use tiago_line_integrals, only: interferometer_t, xics_t
+    use tiago_dispersion_interferometer, only: dispersion_interferometer_t
+    use tiago_calibration, only: calibration_prior_t
     implicit none
 
     real(dp), parameter :: pi = acos(-1.0_dp)
@@ -31,6 +33,7 @@ program test_profile_instruments
     type(ece_t) :: ece
     type(interferometer_t) :: interf
     type(xics_t) :: xics
+    type(dispersion_interferometer_t) :: dispersion
     real(dp), allocatable :: p0(:), vstate(:)
     real(dp) :: tol_fd
 
@@ -58,6 +61,7 @@ program test_profile_instruments
     call check_chain('ECE', ece, 1.0e-8_dp)
     call check_chain('interferometer', interf, 1.0e-6_dp)
     call check_chain('XICS', xics, 1.0e-6_dp)
+    call check_chain('dispersion I/Q', dispersion, 1.0e-4_dp)
     if (failures > 0) then
         write(error_unit, '(I0,A)') failures, ' check(s) failed'
         error stop 1
@@ -204,6 +208,9 @@ contains
         type(thomson_volume_t) :: vol(4)
         type(ece_channel_t) :: ch(3)
         type(chord_t) :: chords(3)
+        type(calibration_prior_t) :: prior
+        real(dp) :: cm(8), cov(8, 8), sd(8)
+        integer :: status
         real(dp) :: xa(3), xb(3), xm(3), jac(3, 3), b, bm, db(3), d(3), phi0, f, size0
         integer :: k
 
@@ -231,6 +238,19 @@ contains
             [0.0_dp, 1.0_dp, 0.0_dp], 4.0_dp * size0, 200, 4)
         call interf%init(chords)
         call xics%init(chords)
+        cm = [1.0e-5_dp, 1.0_dp, 1.2_dp, 0.1_dp, -0.2_dp, 0.3_dp, &
+            1.0_dp, 0.2_dp]
+        sd = [1.0e-8_dp, 0.1_dp, 0.1_dp, 0.1_dp, 0.1_dp, 0.1_dp, &
+            0.1_dp, 0.1_dp]
+        cov = 0.0_dp
+        do k = 1, 8
+            cov(k, k) = sd(k)**2
+        end do
+        call prior%init(cm, cov, status)
+        call check(status == 0, 'dispersion prior')
+        call dispersion%init(chords, prior, [1.0e-8_dp, 2.0e-8_dp, 0.0_dp], &
+            [0.2_dp, -0.3_dp, 0.5_dp], status)
+        call check(status == 0, 'dispersion init')
     end subroutine geometry_from_state
 
     subroutine check_chain(name, diag, step)

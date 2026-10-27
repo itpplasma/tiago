@@ -180,7 +180,13 @@ add_library(tiago_inference STATIC
     src/generated/ece_hamiltonian_unmagnetized.f90
     src/inference/ece_ray.f90
     src/inference/ece_radiometer.f90
-    src/inference/line_integrals.f90)
+    src/inference/line_integrals.f90
+    src/generated/dispersion_phase.f90
+    src/generated/dispersion_column.f90
+    src/generated/dispersion_iq.f90
+    src/generated/dispersion_atan.f90
+    src/inference/dispersion_interferometer.f90
+    src/signals/iq_phase_reduction.f90)
 set_target_properties(tiago_inference PROPERTIES
     Fortran_STANDARD 2018
     Fortran_STANDARD_REQUIRED YES)
@@ -624,8 +630,11 @@ target_link_libraries(test_integrated_drift PRIVATE tiago_signals)
 add_test(NAME tiago_integrated_drift COMMAND $<TARGET_FILE:test_integrated_drift>)
 
 set(TIAGO_FORTSYM_BUILD "" CACHE PATH "FortSym build for kernel regeneration checks")
+set(FORTSYM_BUILD "" CACHE PATH "FortSym build for optional kernel regeneration tests")
 if(TIAGO_FORTSYM_BUILD)
     set(FORTSYM_BUILD "${TIAGO_FORTSYM_BUILD}")
+endif()
+if(FORTSYM_BUILD)
     add_subdirectory(gen codegen)
     add_test(NAME tiago_thomson_regeneration COMMAND ${CMAKE_COMMAND}
         -DGENERATOR=$<TARGET_FILE:gen_thomson>
@@ -635,6 +644,11 @@ if(TIAGO_FORTSYM_BUILD)
         -DGENERATOR=$<TARGET_FILE:gen_magnetics> -DSOURCE=${CMAKE_SOURCE_DIR}
         -DOUTPUT=${CMAKE_BINARY_DIR}/tests/magnetic-codegen
         -P ${CMAKE_SOURCE_DIR}/tests/check_magnetic_codegen.cmake)
+    add_test(NAME tiago_interferometer_generated COMMAND ${CMAKE_COMMAND}
+        -DGENERATOR=$<TARGET_FILE:gen_interferometer>
+        -DSOURCE=${CMAKE_SOURCE_DIR}
+        -DOUTPUT=${CMAKE_BINARY_DIR}/tests/interferometer_codegen
+        -P ${CMAKE_SOURCE_DIR}/cmake/CheckInterferometerGenerated.cmake)
 endif()
 if(TIAGO_ENABLE_OPENMP AND OpenMP_Fortran_FOUND)
     add_executable(benchmark_magnetics EXCLUDE_FROM_ALL
@@ -654,3 +668,19 @@ target_link_libraries(benchmark_ece_ray PRIVATE tiago_inference)
 add_test(NAME tiago_ece_codegen COMMAND sh ${CMAKE_SOURCE_DIR}/tests/ece_codegen.sh
     ${CMAKE_SOURCE_DIR} "${TIAGO_FORTSYM_BUILD}" ${CMAKE_Fortran_COMPILER})
 set_tests_properties(tiago_ece_codegen PROPERTIES SKIP_RETURN_CODE 77 LABELS codegen)
+
+add_executable(test_dispersion_interferometer tests/test_dispersion_interferometer.f90)
+target_link_libraries(test_dispersion_interferometer PRIVATE tiago_inference)
+add_test(NAME tiago_dispersion_interferometer COMMAND test_dispersion_interferometer)
+add_executable(test_interferometer_coverage tests/test_interferometer_coverage.f90)
+target_link_libraries(test_interferometer_coverage PRIVATE tiago_inference)
+add_test(NAME tiago_interferometer_coverage COMMAND test_interferometer_coverage)
+
+if(TIAGO_ENABLE_OPENMP AND OpenMP_Fortran_FOUND)
+    add_executable(benchmark_interferometer EXCLUDE_FROM_ALL
+        benchmarks/interferometer/benchmark_interferometer.f90)
+    target_link_libraries(benchmark_interferometer PRIVATE tiago_inference)
+endif()
+add_executable(test_interferometer_profiles tests/test_interferometer_profiles.f90)
+target_link_libraries(test_interferometer_profiles PRIVATE tiago_inference)
+add_test(NAME tiago_interferometer_profiles COMMAND test_interferometer_profiles)

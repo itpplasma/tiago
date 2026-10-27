@@ -27,3 +27,7 @@ target_link_libraries(gen_magnetics PRIVATE "${FORTSYM_LIBRARY}")
 add_executable(gen_ece gen_ece.f90)
 target_include_directories(gen_ece PRIVATE "${FORTSYM_BUILD}/include")
 target_link_libraries(gen_ece PRIVATE "${FORTSYM_LIBRARY}")
+
+add_executable(gen_interferometer gen_interferometer.f90)
+target_include_directories(gen_interferometer PRIVATE "${FORTSYM_BUILD}/include")
+target_link_libraries(gen_interferometer PRIVATE "${FORTSYM_LIBRARY}")

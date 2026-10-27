@@ -112,6 +112,14 @@ DIAGNO's `-mutual`), so for other coil currents the vacuum signals are
 `sum_g M_g EXTCUR_g` without re-running Biot–Savart; this makes fitting coil
 currents a linear least-squares problem.
 
+## Dispersion interferometer
+
+The recorded dispersion-interferometer model composes the existing straight
+chord density integral with calibrated lock-in I/Q, neutral/environmental phase
+corrections and exact tangent/adjoint derivatives. An I/Q reduction propagates
+noise and unwraps bounded trace chunks. See the
+[model, calibration and verification contract](docs/dispersion-interferometer.md).
+
 ## MSE pitch angles
 `--mse file` evaluates point MSE pi-polarization angles at beam–sightline
 closest-approach midpoints and writes `tiago_mse.csv` in radians. Geometry,
