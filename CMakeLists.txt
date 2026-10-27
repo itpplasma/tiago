@@ -158,6 +158,16 @@ add_library(tiago_inference STATIC
     src/inference/state_sampler.f90
     src/inference/vmecpp_state.f90
     src/inference/thomson_scattering.f90
+    src/generated/ts_depolarization.f90
+    src/generated/ts_spectral.f90
+    src/generated/ts_bessel_chain.f90
+    src/generated/ts_photoelectrons.f90
+    src/generated/ts_recorded.f90
+    src/generated/ts_rayleigh.f90
+    src/generated/ts_noise.f90
+    src/inference/thomson_spectrum.f90
+    src/inference/thomson_polychromator.f90
+    src/signals/thomson_reduction.f90
     src/inference/ece_radiometer.f90
     src/inference/line_integrals.f90)
 set_target_properties(tiago_inference PROPERTIES
@@ -588,4 +598,17 @@ if(TIAGO_ENABLE_RECONSTRUCTION)
         FIXTURES_REQUIRED input_li383 TIMEOUT 600 ENVIRONMENT TIAGO_VMECPP_VERIFY=1)
     # check the extracted adjoint blocks against isolated Hessian-vector products
     set_tests_properties(tiago_vmecpp_equilibrium PROPERTIES ENVIRONMENT TIAGO_VMECPP_VERIFY=1)
+endif()
+
+add_executable(test_thomson tests/test_thomson.f90)
+target_link_libraries(test_thomson PRIVATE tiago_inference)
+add_test(NAME tiago_thomson COMMAND $<TARGET_FILE:test_thomson>)
+set(TIAGO_FORTSYM_BUILD "" CACHE PATH "FortSym build for kernel regeneration checks")
+if(TIAGO_FORTSYM_BUILD)
+    set(FORTSYM_BUILD "${TIAGO_FORTSYM_BUILD}")
+    add_subdirectory(gen codegen)
+    add_test(NAME tiago_thomson_regeneration COMMAND ${CMAKE_COMMAND}
+        -DGENERATOR=$<TARGET_FILE:gen_thomson>
+        -DSOURCE=${CMAKE_SOURCE_DIR} -DOUTPUT=${CMAKE_BINARY_DIR}/thomson-regeneration
+        -P ${CMAKE_SOURCE_DIR}/tests/thomson_regeneration.cmake)
 endif()

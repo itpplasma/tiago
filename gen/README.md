@@ -55,3 +55,23 @@ git diff --exit-code -- src/generated/recorded_affine.f90
 
 `tiago_recorded_diagnostic` independently checks analytic values, the zero-input
 limit and derivatives through the existing profile-diagnostic contract.
+
+# Regenerate the recorded Thomson kernels
+
+`gen_thomson` uses FortSym `21d157b394e775a999a8d9ed0be409eac1eb9574` and emits
+`ts_*.f90`: the relativistic photon spectrum, Naito depolarization integrand,
+scaled Bessel derivative chain, photoelectron and voltage maps, Rayleigh
+calibration and count-noise variance, with their required derivative rows.
+
+```sh
+cmake --build build-codegen --target gen_thomson
+build-codegen/gen_thomson
+git diff --exit-code -- src/generated/ts_*.f90
+```
+
+To run the exact regeneration comparison in CTest, configure the ordinary TIAGO
+build with `-DTIAGO_FORTSYM_BUILD=/path/to/fortsym/build`, then build and run
+`ctest --test-dir build -R thomson`. Without this optional path, the physical
+and derivative tests still run against the committed kernels. The generator
+uses FortSym's native expression differentiation and emitter; it needs no
+symbolic simplification backend.
