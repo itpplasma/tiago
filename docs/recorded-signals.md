@@ -150,3 +150,7 @@ existing point probe. They check the offset-only zero-input limit, finite
 differences, adjoint identities and point-motion composition. No archive,
 device measurement, instrument spectrum or radiation-transport model is
 validated by these interface tests.
+
+The [recorded magnetic models](recorded-magnetics.md) add integrator gain,
+offset and drift, covariance-aware baseline reduction and a diamagnetic/kinetic
+energy consistency diagnostic using the same contracts.

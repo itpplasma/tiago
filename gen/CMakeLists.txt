@@ -19,3 +19,7 @@ target_link_libraries(gen_recorded PRIVATE "${FORTSYM_LIBRARY}")
 add_executable(gen_thomson gen_thomson.f90)
 target_include_directories(gen_thomson PRIVATE "${FORTSYM_BUILD}/include")
 target_link_libraries(gen_thomson PRIVATE "${FORTSYM_LIBRARY}")
+
+add_executable(gen_magnetics gen_magnetics.f90)
+target_include_directories(gen_magnetics PRIVATE "${FORTSYM_BUILD}/include")
+target_link_libraries(gen_magnetics PRIVATE "${FORTSYM_LIBRARY}")
