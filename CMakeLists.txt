@@ -719,22 +719,26 @@ target_link_libraries(test_online_source PRIVATE tiago_signals)
 add_test(NAME tiago_online_source COMMAND test_online_source ${TIAGO_MOCK_DIR})
 set_tests_properties(tiago_http_client tiago_online_source PROPERTIES
     FIXTURES_REQUIRED archive_http TIMEOUT 60 RESOURCE_LOCK archive_http)
-set_tests_properties(tiago_online_source PROPERTIES DEPENDS tiago_http_client)
+set_tests_properties(tiago_http_client PROPERTIES FIXTURES_SETUP archive_client)
+set_tests_properties(tiago_online_source PROPERTIES
+    FIXTURES_REQUIRED "archive_http;archive_client" FIXTURES_SETUP archive_online)
 add_executable(test_http_parallel tests/test_http_parallel.f90)
 target_link_libraries(test_http_parallel PRIVATE tiago_signals)
 add_test(NAME tiago_http_parallel COMMAND test_http_parallel ${TIAGO_MOCK_DIR})
-set_tests_properties(tiago_http_parallel PROPERTIES FIXTURES_REQUIRED archive_http
+set_tests_properties(tiago_http_parallel PROPERTIES FIXTURES_REQUIRED "archive_http;archive_online"
+    FIXTURES_SETUP archive_parallel
     DEPENDS tiago_online_source TIMEOUT 30 RESOURCE_LOCK archive_http)
 add_test(NAME tiago_archive_events COMMAND ${Python3_EXECUTABLE}
     ${CMAKE_SOURCE_DIR}/tests/check_archive_events.py ${TIAGO_MOCK_DIR})
-set_tests_properties(tiago_archive_events PROPERTIES FIXTURES_REQUIRED archive_http
+set_tests_properties(tiago_archive_events PROPERTIES FIXTURES_REQUIRED "archive_http;archive_parallel"
+    FIXTURES_SETUP archive_checked
     DEPENDS "tiago_http_client;tiago_online_source;tiago_http_parallel")
 
 add_executable(tiago_online_example examples/online_signals.f90)
 target_link_libraries(tiago_online_example PRIVATE tiago_inference)
 add_test(NAME tiago_online_example COMMAND tiago_online_example
     ${TIAGO_MOCK_DIR}/adapter.json)
-set_tests_properties(tiago_online_example PROPERTIES FIXTURES_REQUIRED archive_http
+set_tests_properties(tiago_online_example PROPERTIES FIXTURES_REQUIRED "archive_http;archive_checked"
     DEPENDS tiago_archive_events TIMEOUT 30 RESOURCE_LOCK archive_http)
 
 add_executable(benchmark_archive EXCLUDE_FROM_ALL
