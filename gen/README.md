@@ -40,3 +40,18 @@ git diff --exit-code -- src/generated/kinetic_pressure.f90
 
 `tiago_kinetic_profiles` checks the kernel against quasi-neutrality solved
 independently.
+
+# Regenerate the recorded-signal reference kernel
+
+`gen_recorded` emits shared gain/offset signals and their partial derivatives.
+It was run with FortSym commit
+`21d157b394e775a999a8d9ed0be409eac1eb9574`:
+
+```sh
+cmake --build build-codegen --target gen_recorded
+build-codegen/gen_recorded
+git diff --exit-code -- src/generated/recorded_affine.f90
+```
+
+`tiago_recorded_diagnostic` independently checks analytic values, the zero-input
+limit and derivatives through the existing profile-diagnostic contract.

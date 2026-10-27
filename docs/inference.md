@@ -69,6 +69,10 @@ Rules for diagnostic authors:
   diagnostic.
 - Private machine geometry is read at run time; it never enters the repository.
 
+Recorded-signal extensions, versioned sources, reductions and calibration priors
+are specified in [recorded-signals.md](recorded-signals.md). They use the same
+state vector and derivative contract.
+
 `tiago_point_probe` is the reference implementation (ideal local ne/Te/Ti
 values with a rigid (dR, dZ) alignment shift) used by the synthetic tests.
 

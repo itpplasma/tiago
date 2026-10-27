@@ -129,6 +129,21 @@ if(TIAGO_ENABLE_OPENMP)
     endif()
 endif()
 
+# Recorded windows use the standard netCDF C hyperslab API through ISO C.
+find_library(TIAGO_NETCDF_C_LIBRARY NAMES netcdf REQUIRED)
+add_library(tiago_signals STATIC
+    src/signals/signal_source.f90
+    src/signals/netcdf_source.f90
+    src/signals/signal_reduction.f90
+    src/signals/calibration.f90)
+set_target_properties(tiago_signals PROPERTIES
+    Fortran_STANDARD 2018 Fortran_STANDARD_REQUIRED YES)
+target_link_libraries(tiago_signals PUBLIC LIBNEO::nctools fortnum
+    PRIVATE ${TIAGO_NETCDF_C_LIBRARY})
+if(TIAGO_ENABLE_OPENMP AND OpenMP_Fortran_FOUND)
+    target_link_libraries(tiago_signals PUBLIC OpenMP::OpenMP_Fortran)
+endif()
+
 # Inference core without a provider: kinetic profiles and their prior, the
 # profile-diagnostic contract and the reference point probe.
 add_library(tiago_inference STATIC
@@ -136,6 +151,8 @@ add_library(tiago_inference STATIC
     src/inference/kinetic_profiles.f90
     src/inference/profile_diagnostic.f90
     src/inference/point_probe.f90
+    src/generated/recorded_affine.f90
+    src/inference/recorded_diagnostic.f90
     src/generated/xics_emissivity.f90
     src/inference/sight_geometry.f90
     src/inference/state_sampler.f90
@@ -146,7 +163,7 @@ add_library(tiago_inference STATIC
 set_target_properties(tiago_inference PROPERTIES
     Fortran_STANDARD 2018
     Fortran_STANDARD_REQUIRED YES)
-target_link_libraries(tiago_inference PUBLIC fortnum tiago_diagnostics)
+target_link_libraries(tiago_inference PUBLIC fortnum tiago_diagnostics tiago_signals)
 if(TIAGO_ENABLE_OPENMP AND OpenMP_Fortran_FOUND)
     target_link_libraries(tiago_inference PUBLIC OpenMP::OpenMP_Fortran)
 endif()
@@ -477,6 +494,17 @@ foreach(bad IN ITEMS
     set_tests_properties(tiago_cli_rejects_${name} PROPERTIES
         PASS_REGULAR_EXPRESSION "${regex}" WILL_FAIL FALSE)
 endforeach()
+
+add_executable(benchmark_recorded EXCLUDE_FROM_ALL
+    benchmarks/signals/benchmark_recorded.f90)
+target_link_libraries(benchmark_recorded PRIVATE tiago_inference)
+
+add_executable(test_signal_sources tests/test_signal_sources.f90)
+target_link_libraries(test_signal_sources PRIVATE tiago_signals)
+add_test(NAME tiago_signal_sources COMMAND $<TARGET_FILE:test_signal_sources>)
+add_executable(test_recorded_diagnostic tests/test_recorded_diagnostic.f90)
+target_link_libraries(test_recorded_diagnostic PRIVATE tiago_inference)
+add_test(NAME tiago_recorded_diagnostic COMMAND $<TARGET_FILE:test_recorded_diagnostic>)
 
 add_executable(test_profile_diagnostic tests/test_profile_diagnostic.f90)
 target_link_libraries(test_profile_diagnostic PRIVATE tiago_inference)
