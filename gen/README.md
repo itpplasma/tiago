@@ -75,3 +75,21 @@ build with `-DTIAGO_FORTSYM_BUILD=/path/to/fortsym/build`, then build and run
 and derivative tests still run against the committed kernels. The generator
 uses FortSym's native expression differentiation and emitter; it needs no
 symbolic simplification backend.
+
+# Regenerate recorded magnetics and energy kernels
+
+`gen_magnetics`, using FortSym `21d157b394e775a999a8d9ed0be409eac1eb9574`,
+emits `integrator_signal.f90`, `diamagnetic_energy.f90` and
+`thermal_energy_density.f90` under `src/generated/`. It derives every partial
+row from the forward expression; the energy diagnostic reuses the existing
+kinetic-pressure kernel rather than duplicating its ion closure.
+
+```sh
+cmake --build build-codegen --target gen_magnetics
+build-codegen/gen_magnetics
+git diff --exit-code -- src/generated
+```
+
+With `-DTIAGO_FORTSYM_BUILD=/path/to/fortsym/build` in the native TIAGO build,
+`ctest -R tiago_magnetic_codegen` regenerates these files in the build tree and
+checks exact equality. Ordinary builds consume the committed kernels.

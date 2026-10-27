@@ -134,6 +134,8 @@ find_library(TIAGO_NETCDF_C_LIBRARY NAMES netcdf REQUIRED)
 add_library(tiago_signals STATIC
     src/signals/signal_source.f90
     src/signals/netcdf_source.f90
+    src/generated/integrator_signal.f90
+    src/signals/integrated_drift.f90
     src/signals/signal_reduction.f90
     src/signals/calibration.f90)
 set_target_properties(tiago_signals PROPERTIES
@@ -153,6 +155,11 @@ add_library(tiago_inference STATIC
     src/inference/point_probe.f90
     src/generated/recorded_affine.f90
     src/inference/recorded_diagnostic.f90
+    src/inference/integrator_diagnostic.f90
+    src/inference/magnetic_response.f90
+    src/generated/diamagnetic_energy.f90
+    src/generated/thermal_energy_density.f90
+    src/inference/energy_consistency.f90
     src/generated/xics_emissivity.f90
     src/inference/sight_geometry.f90
     src/inference/state_sampler.f90
@@ -173,7 +180,7 @@ add_library(tiago_inference STATIC
 set_target_properties(tiago_inference PROPERTIES
     Fortran_STANDARD 2018
     Fortran_STANDARD_REQUIRED YES)
-target_link_libraries(tiago_inference PUBLIC fortnum tiago_diagnostics tiago_signals)
+target_link_libraries(tiago_inference PUBLIC fortnum tiago_diagnostics tiago_signals tiago_solver)
 if(TIAGO_ENABLE_OPENMP AND OpenMP_Fortran_FOUND)
     target_link_libraries(tiago_inference PUBLIC OpenMP::OpenMP_Fortran)
 endif()
@@ -603,6 +610,15 @@ endif()
 add_executable(test_thomson tests/test_thomson.f90)
 target_link_libraries(test_thomson PRIVATE tiago_inference)
 add_test(NAME tiago_thomson COMMAND $<TARGET_FILE:test_thomson>)
+add_executable(test_recorded_magnetics tests/test_recorded_magnetics.f90)
+target_link_libraries(test_recorded_magnetics PRIVATE tiago_inference)
+add_test(NAME tiago_recorded_magnetics COMMAND $<TARGET_FILE:test_recorded_magnetics>
+    ${CMAKE_SOURCE_DIR}/tests/data/mse_coils.coils ${TIAGO_WOUT_SIMSOPT_SMALL})
+set_tests_properties(tiago_recorded_magnetics PROPERTIES FIXTURES_REQUIRED wout_li383)
+add_executable(test_integrated_drift tests/test_integrated_drift.f90)
+target_link_libraries(test_integrated_drift PRIVATE tiago_signals)
+add_test(NAME tiago_integrated_drift COMMAND $<TARGET_FILE:test_integrated_drift>)
+
 set(TIAGO_FORTSYM_BUILD "" CACHE PATH "FortSym build for kernel regeneration checks")
 if(TIAGO_FORTSYM_BUILD)
     set(FORTSYM_BUILD "${TIAGO_FORTSYM_BUILD}")
@@ -611,4 +627,13 @@ if(TIAGO_FORTSYM_BUILD)
         -DGENERATOR=$<TARGET_FILE:gen_thomson>
         -DSOURCE=${CMAKE_SOURCE_DIR} -DOUTPUT=${CMAKE_BINARY_DIR}/thomson-regeneration
         -P ${CMAKE_SOURCE_DIR}/tests/thomson_regeneration.cmake)
+    add_test(NAME tiago_magnetic_codegen COMMAND ${CMAKE_COMMAND}
+        -DGENERATOR=$<TARGET_FILE:gen_magnetics> -DSOURCE=${CMAKE_SOURCE_DIR}
+        -DOUTPUT=${CMAKE_BINARY_DIR}/tests/magnetic-codegen
+        -P ${CMAKE_SOURCE_DIR}/tests/check_magnetic_codegen.cmake)
+endif()
+if(TIAGO_ENABLE_OPENMP AND OpenMP_Fortran_FOUND)
+    add_executable(benchmark_magnetics EXCLUDE_FROM_ALL
+        benchmarks/signals/benchmark_magnetics.f90)
+    target_link_libraries(benchmark_magnetics PRIVATE tiago_inference)
 endif()
