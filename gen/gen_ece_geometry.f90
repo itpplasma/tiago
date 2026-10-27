@@ -38,11 +38,11 @@ program gen_ece_geometry
         n = 0
         call mode_root([0, 0, 0], 'value')
         do i = 1, 3
-            call mode_root([i, 0, 0], index('d', i))
+            call mode_root([i, 0, 0], array_ref('d', i))
             do j = 1, 3
-                call mode_root([i, j, 0], index('d2', i, j))
+                call mode_root([i, j, 0], array_ref('d2', i, j))
                 do k = 1, 3
-                    call mode_root([i, j, k], index('d3', i, j, k))
+                    call mode_root([i, j, k], array_ref('d3', i, j, k))
                 end do
             end do
         end do
@@ -57,8 +57,8 @@ program gen_ece_geometry
     h = [2*f**3 - 3*f**2 + 1, f**3 - 2*f**2 + f, -2*f**3 + 3*f**2, f**3 - f**2]
     n = 0
     do i = 1, 4
-        call root(diff(diff(h(i), f), f), index('d2', i))
-        call root(diff(diff(diff(h(i), f), f), f), index('d3', i))
+        call root(diff(diff(h(i), f), f), array_ref('d2', i))
+        call root(diff(diff(diff(h(i), f), f), f), array_ref('d3', i))
     end do
     spec%outputs = [str('d2'), str('d3')]
     spec%output_shapes = [str('(4)'), str('(4)')]
@@ -92,9 +92,9 @@ program gen_ece_geometry
     n = 0
     call root(subs_many(f, t, zero), 'value')
     do i = 1, 3
-        call root(subs_many(diff(f, t(i)), t, zero), index('d', i))
+        call root(subs_many(diff(f, t(i)), t, zero), array_ref('d', i))
         do j = 1, 3
-            call root(subs_many(diff(diff(f, t(i)), t(j)), t, zero), index('d2', i, j))
+            call root(subs_many(diff(diff(f, t(i)), t(j)), t, zero), array_ref('d2', i, j))
         end do
     end do
     spec%outputs = [str('value'), str('d'), str('d2')]
@@ -146,13 +146,13 @@ program gen_ece_geometry
     n = 0
     call root(px, 'px')
     do i = 1, 3
-        call root(gx(i), index('gx', i))
+        call root(gx(i), array_ref('gx', i))
         g = num(arena, 0)
         do j = 1, 3
             g = g + at('a', j, i)*gp(j)
-            call root(hx(i, j), index('hx', i, j))
+            call root(hx(i, j), array_ref('hx', i, j))
         end do
-        call root(g, index('gpx', i))
+        call root(g, array_ref('gpx', i))
     end do
     spec%outputs = [str('gx'), str('hx'), str('px'), str('gpx')]
     spec%output_shapes = [str('(3)'), str('(3,3)'), str(''), str('(3)')]
@@ -175,15 +175,15 @@ program gen_ece_geometry
     call reset()
     spec%args = [str('rcc'), str('rss'), str('zsc'), str('zcs')]
     n = 0
-    call root((sym(arena, 'rcc') + sym(arena, 'rss'))/2, index('rc', 1))
-    call root((sym(arena, 'rcc') - sym(arena, 'rss'))/2, index('rc', 2))
-    call root((sym(arena, 'zsc') - sym(arena, 'zcs'))/2, index('zs', 1))
-    call root((sym(arena, 'zsc') + sym(arena, 'zcs'))/2, index('zs', 2))
+    call root((sym(arena, 'rcc') + sym(arena, 'rss'))/2, array_ref('rc', 1))
+    call root((sym(arena, 'rcc') - sym(arena, 'rss'))/2, array_ref('rc', 2))
+    call root((sym(arena, 'zsc') - sym(arena, 'zcs'))/2, array_ref('zs', 1))
+    call root((sym(arena, 'zsc') + sym(arena, 'zcs'))/2, array_ref('zs', 2))
     do j = 1, 4
         do i = 1, 2
-            call root(diff(roots(i), sym(arena, chars(spec%args(j)))), index('rr', i, &
+            call root(diff(roots(i), sym(arena, chars(spec%args(j)))), array_ref('rr', i, &
                 j))
-            call root(diff(roots(i + 2), sym(arena, chars(spec%args(j)))), index('zr', &
+            call root(diff(roots(i + 2), sym(arena, chars(spec%args(j)))), array_ref('zr', &
                 i, j))
         end do
     end do
@@ -199,7 +199,7 @@ contains
         write (b, '(I0)') i
         s = trim(b)
     end function
-    function index(name, i, j, k) result(s)
+    function array_ref(name, i, j, k) result(s)
         character(*), intent(in)::name
         integer, intent(in)::i
         integer, intent(in), optional::j, k
@@ -214,7 +214,7 @@ contains
         integer, intent(in)::i
         integer, intent(in), optional::j, k
         type(expr_t)::e
-        e = sym(arena, index(name, i, j, k))
+        e = sym(arena, array_ref(name, i, j, k))
     end function
     subroutine reset()
         type(kernel_spec_t)::fresh
