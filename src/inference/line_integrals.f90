@@ -27,7 +27,7 @@ module tiago_line_integrals
         !! Common chord sampling of interferometer_t and xics_t.
         type(chord_t), allocatable :: chords(:)
         real(dp), allocatable :: x0(:, :), w(:)
-        integer, allocatable :: owner(:)
+        integer, allocatable :: owner(:), first(:)
     contains
         procedure :: init => chords_init
         procedure :: n_nuisance => chords_n_nuisance
@@ -64,6 +64,12 @@ contains
         integer :: c
 
         self%chords = chords
+        if (allocated(self%first)) deallocate(self%first)
+        allocate(self%first(size(chords) + 1))
+        self%first(1) = 1
+        do c = 1, size(chords)
+            self%first(c + 1) = self%first(c) + chords(c)%npanel*chords(c)%ngauss
+        end do
         if (allocated(self%x0)) deallocate(self%x0, self%w, self%owner)
         allocate(self%x0(3, 0), self%w(0), self%owner(0))
         do c = 1, size(chords)
@@ -114,11 +120,15 @@ contains
         type(plasma_sample_t), intent(in) :: sample
         real(dp), intent(in) :: eta(:)
         real(dp), intent(out) :: y(:)
-        integer :: k
-        y(:size(self%chords)) = 0.0_dp
-        do k = 1, size(self%w)
-            y(self%owner(k)) = y(self%owner(k)) + self%w(k) * sample%q(Q_NE, k)
+        integer :: c, lo, hi
+        !$omp parallel do default(shared) private(c, lo, hi) &
+        !$omp if(size(self%w)>4096)
+        do c = 1, size(self%chords)
+            lo = self%first(c)
+            hi = self%first(c + 1) - 1
+            y(c) = dot_product(self%w(lo:hi), sample%q(Q_NE, lo:hi))
         end do
+        !$omp end parallel do
     end subroutine interferometer_predict
 
     subroutine interferometer_jvp(self, sample, eta, q_dot, eta_dot, y_dot)
@@ -126,11 +136,15 @@ contains
         type(plasma_sample_t), intent(in) :: sample
         real(dp), intent(in) :: eta(:), q_dot(:, :), eta_dot(:)
         real(dp), intent(out) :: y_dot(:)
-        integer :: k
-        y_dot(:size(self%chords)) = 0.0_dp
-        do k = 1, size(self%w)
-            y_dot(self%owner(k)) = y_dot(self%owner(k)) + self%w(k) * q_dot(Q_NE, k)
+        integer :: c, lo, hi
+        !$omp parallel do default(shared) private(c, lo, hi) &
+        !$omp if(size(self%w)>4096)
+        do c = 1, size(self%chords)
+            lo = self%first(c)
+            hi = self%first(c + 1) - 1
+            y_dot(c) = dot_product(self%w(lo:hi), q_dot(Q_NE, lo:hi))
         end do
+        !$omp end parallel do
     end subroutine interferometer_jvp
 
     subroutine interferometer_vjp(self, sample, eta, y_bar, q_bar, eta_bar)
@@ -139,11 +153,13 @@ contains
         real(dp), intent(in) :: eta(:), y_bar(:)
         real(dp), intent(out) :: q_bar(:, :), eta_bar(:)
         integer :: k
-        q_bar = 0.0_dp
         eta_bar = 0.0_dp
+        !$omp parallel do default(shared) private(k) if(size(self%w)>4096)
         do k = 1, size(self%w)
+            q_bar(:, k) = 0.0_dp
             q_bar(Q_NE, k) = self%w(k) * y_bar(self%owner(k))
         end do
+        !$omp end parallel do
     end subroutine interferometer_vjp
 
     integer function xics_n_signals(self)
