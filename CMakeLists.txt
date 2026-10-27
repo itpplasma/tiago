@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.24)
-project(TIAGO LANGUAGES Fortran)
+project(TIAGO LANGUAGES C Fortran)
 
 option(TIAGO_ENABLE_NATIVE_OPTIMIZATION "Optimize for the build machine CPU" OFF)
 if(TIAGO_ENABLE_NATIVE_OPTIMIZATION)
@@ -131,7 +131,21 @@ endif()
 
 # Recorded windows use the standard netCDF C hyperslab API through ISO C.
 find_library(TIAGO_NETCDF_C_LIBRARY NAMES netcdf REQUIRED)
+find_package(CURL 7.66 REQUIRED)
+find_package(Threads REQUIRED)
+set(JSONFORTRAN_ENABLE_TESTS OFF CACHE BOOL "" FORCE)
+set(JSONFORTRAN_STATIC_LIBRARY_ONLY ON CACHE BOOL "" FORCE)
+set(SKIP_DOC_GEN ON CACHE BOOL "" FORCE)
+FetchContent_Declare(jsonfortran
+    GIT_REPOSITORY https://github.com/jacobwilliams/json-fortran.git
+    GIT_TAG b7dc6b3227e16f69ec1061c7aa9eae4f1d2de943)
+FetchContent_MakeAvailable(jsonfortran)
 add_library(tiago_signals STATIC
+    src/generated/recorded_affine.f90
+    src/signals/http_curl.c
+    src/signals/http_client.f90
+    src/signals/rest_adapter.f90
+    src/signals/online_source.f90
     src/signals/signal_source.f90
     src/signals/netcdf_source.f90
     src/generated/integrator_signal.f90
@@ -141,7 +155,7 @@ add_library(tiago_signals STATIC
 set_target_properties(tiago_signals PROPERTIES
     Fortran_STANDARD 2018 Fortran_STANDARD_REQUIRED YES)
 target_link_libraries(tiago_signals PUBLIC LIBNEO::nctools fortnum
-    PRIVATE ${TIAGO_NETCDF_C_LIBRARY})
+    PRIVATE ${TIAGO_NETCDF_C_LIBRARY} CURL::libcurl Threads::Threads jsonfortran-static)
 if(TIAGO_ENABLE_OPENMP AND OpenMP_Fortran_FOUND)
     target_link_libraries(tiago_signals PUBLIC OpenMP::OpenMP_Fortran)
 endif()
@@ -153,7 +167,6 @@ add_library(tiago_inference STATIC
     src/inference/kinetic_profiles.f90
     src/inference/profile_diagnostic.f90
     src/inference/point_probe.f90
-    src/generated/recorded_affine.f90
     src/inference/recorded_diagnostic.f90
     src/inference/integrator_diagnostic.f90
     src/inference/magnetic_response.f90
@@ -649,6 +662,11 @@ if(FORTSYM_BUILD)
         -DSOURCE=${CMAKE_SOURCE_DIR}
         -DOUTPUT=${CMAKE_BINARY_DIR}/tests/interferometer_codegen
         -P ${CMAKE_SOURCE_DIR}/cmake/CheckInterferometerGenerated.cmake)
+    add_test(NAME tiago_recorded_codegen COMMAND ${CMAKE_COMMAND}
+        -DGENERATOR=$<TARGET_FILE:gen_recorded>
+        -DEXPECTED=${CMAKE_SOURCE_DIR}/src/generated/recorded_affine.f90
+        -DWORK=${CMAKE_BINARY_DIR}/tests/codegen -P
+        ${CMAKE_SOURCE_DIR}/tests/check_recorded_codegen.cmake)
 endif()
 if(TIAGO_ENABLE_OPENMP AND OpenMP_Fortran_FOUND)
     add_executable(benchmark_magnetics EXCLUDE_FROM_ALL
@@ -684,3 +702,41 @@ endif()
 add_executable(test_interferometer_profiles tests/test_interferometer_profiles.f90)
 target_link_libraries(test_interferometer_profiles PRIVATE tiago_inference)
 add_test(NAME tiago_interferometer_profiles COMMAND test_interferometer_profiles)
+# Synthetic loopback server; production code has no Python dependency.
+find_package(Python3 COMPONENTS Interpreter REQUIRED)
+set(TIAGO_MOCK_DIR ${CMAKE_BINARY_DIR}/tests/mock_archive)
+add_test(NAME tiago_mock_start COMMAND ${Python3_EXECUTABLE}
+    ${CMAKE_SOURCE_DIR}/tests/mock_archive.py start ${TIAGO_MOCK_DIR})
+set_tests_properties(tiago_mock_start PROPERTIES FIXTURES_SETUP archive_http)
+add_test(NAME tiago_mock_stop COMMAND ${Python3_EXECUTABLE}
+    ${CMAKE_SOURCE_DIR}/tests/mock_archive.py stop ${TIAGO_MOCK_DIR})
+set_tests_properties(tiago_mock_stop PROPERTIES FIXTURES_CLEANUP archive_http)
+add_executable(test_http_client tests/test_http_client.f90)
+target_link_libraries(test_http_client PRIVATE tiago_signals)
+add_test(NAME tiago_http_client COMMAND test_http_client ${TIAGO_MOCK_DIR})
+add_executable(test_online_source tests/test_online_source.f90)
+target_link_libraries(test_online_source PRIVATE tiago_signals)
+add_test(NAME tiago_online_source COMMAND test_online_source ${TIAGO_MOCK_DIR})
+set_tests_properties(tiago_http_client tiago_online_source PROPERTIES
+    FIXTURES_REQUIRED archive_http TIMEOUT 60 RESOURCE_LOCK archive_http)
+set_tests_properties(tiago_online_source PROPERTIES DEPENDS tiago_http_client)
+add_executable(test_http_parallel tests/test_http_parallel.f90)
+target_link_libraries(test_http_parallel PRIVATE tiago_signals)
+add_test(NAME tiago_http_parallel COMMAND test_http_parallel ${TIAGO_MOCK_DIR})
+set_tests_properties(tiago_http_parallel PROPERTIES FIXTURES_REQUIRED archive_http
+    DEPENDS tiago_online_source TIMEOUT 30 RESOURCE_LOCK archive_http)
+add_test(NAME tiago_archive_events COMMAND ${Python3_EXECUTABLE}
+    ${CMAKE_SOURCE_DIR}/tests/check_archive_events.py ${TIAGO_MOCK_DIR})
+set_tests_properties(tiago_archive_events PROPERTIES FIXTURES_REQUIRED archive_http
+    DEPENDS "tiago_http_client;tiago_online_source;tiago_http_parallel")
+
+add_executable(tiago_online_example examples/online_signals.f90)
+target_link_libraries(tiago_online_example PRIVATE tiago_inference)
+add_test(NAME tiago_online_example COMMAND tiago_online_example
+    ${TIAGO_MOCK_DIR}/adapter.json)
+set_tests_properties(tiago_online_example PROPERTIES FIXTURES_REQUIRED archive_http
+    DEPENDS tiago_archive_events TIMEOUT 30 RESOURCE_LOCK archive_http)
+
+add_executable(benchmark_archive EXCLUDE_FROM_ALL
+    benchmarks/signals/benchmark_archive.f90)
+target_link_libraries(benchmark_archive PRIVATE tiago_signals)
