@@ -16,7 +16,8 @@ module tiago_profile_diagnostic
     !! Diagnostics never see flux coordinates of the provider, its state layout
     !! or the latent parameterization. Calibration gains/offsets common to all
     !! diagnostics and the measurement covariance belong to the likelihood
-    !! (tiago_likelihood), not to the diagnostic.
+    !! (tiago_likelihood). Recorded-signal extensions may instead include
+    !! explicit calibration latents in eta (see docs/recorded-signals.md).
     use, intrinsic :: iso_fortran_env, only: dp => real64
     implicit none
     private
