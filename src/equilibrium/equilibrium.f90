@@ -293,16 +293,19 @@ contains
         vb%zmns = self%y(2 * nb + ng + 1:)
     end subroutine equilibrium_boundary
 
-    subroutine equilibrium_jacobian(self, x, cot, jac, coef_cot)
+    subroutine equilibrium_jacobian(self, x, cot, jac, coef_cot, bmnc_cot)
         !! jac = cot (dy/dx) at the last solve (which must be at x); cot(k, n_y).
         !! coef_cot(size(coef), k) adds cotangents on the geometry coefficients
-        !! (layout of tiago_vmecpp%geometry) to row k. The cotangents on the
+        !! (layout of tiago_vmecpp%geometry) to row k, bmnc_cot(mnmax_nyq *
+        !! (ns - 1), k) cotangents on |B| (wout bmnc, half surfaces 2 ... ns,
+        !! mode index fastest; vmec_edge%modb). The cotangents on the
         !! half-grid mu0 p_h are kept in pressure_bar(ns - 1, k).
         class(equilibrium_t), intent(inout) :: self
         real(dp), intent(in) :: x(:), cot(:, :)
         real(dp), allocatable, intent(out) :: jac(:, :)
-        real(dp), intent(in), optional :: coef_cot(:, :)
+        real(dp), intent(in), optional :: coef_cot(:, :), bmnc_cot(:, :)
         real(dp), allocatable :: coef_bar(:, :, :, :), gbar(:, :), bbar(:, :), pbar(:, :)
+        real(dp), allocatable :: bmnc(:, :), bmnc_dot(:)
         real(dp), allocatable :: iota_d(:, :), current_d(:, :), ps_col(:), cur_col(:), yb(:)
         real(dp), allocatable :: g_mass_ps(:), g_mass_am(:, :), g_iota_ai(:, :), g_cur(:, :)
         real(dp) :: pres_scale, curtor, phiedge
@@ -320,6 +323,23 @@ contains
             gbar(:, r) = reshape(coef_bar, [size(coef_bar)])
         end do
         if (present(coef_cot)) gbar = gbar + coef_cot
+        if (present(bmnc_cot)) then
+            if (size(bmnc_cot, 1) /= self%edge%mnmax_nyq * nh .or. size(bmnc_cot, 2) /= nrow) &
+                error stop 'equilibrium_jacobian: bmnc_cot shape'
+            do r = 1, nrow
+                coef_bar = 0.0_dp
+                call self%edge%modb_vjp(self%coef, self%phip_full, self%phip_half, &
+                    self%iota_half, self%current_half, &
+                    reshape(bmnc_cot(:, r), [self%edge%mnmax_nyq, nh]), coef_bar, &
+                    iota_d(:, r), current_d(:, r))
+                gbar(:, r) = gbar(:, r) + reshape(coef_bar, [size(coef_bar)])
+            end do
+            ! |B| is linear in phi' at fixed geometry, pressure / phi'^2 and current / phi'
+            allocate(bmnc(self%edge%mnmax_nyq, nh))
+            call self%edge%modb(self%coef, self%phip_full, self%phip_half, self%iota_half, &
+                self%current_half, bmnc)
+            bmnc_dot = matmul(reshape(bmnc, [size(bmnc)]), bmnc_cot)
+        end if
         call self%vmec%adjoint(gbar, bbar, pbar, self%max_block)
         call system_clock(finish)
         self%t_adjoint = self%t_adjoint + real(finish - start, dp) / rate
@@ -362,6 +382,7 @@ contains
                 yb = self%y
                 yb(2 * self%edge%mnmax_nyq + 1:) = 0.0_dp
                 jac(:, k) = matmul(cot, yb) - 2.0_dp * pres_scale * ps_col
+                if (present(bmnc_cot)) jac(:, k) = jac(:, k) + bmnc_dot
                 if (self%ncurr == 1) jac(:, k) = jac(:, k) - curtor * cur_col
                 jac(:, k) = jac(:, k) / phiedge
             end select

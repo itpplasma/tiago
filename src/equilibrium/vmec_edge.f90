@@ -16,6 +16,8 @@ module tiago_vmec_edge
     !! average of B_u equal the enclosed current. Both are Fourier-analysed to
     !! VMEC's Nyquist modes and extrapolated to s = 1 as 1.5 b(ns) - 0.5 b(ns-1),
     !! as in the wout file. The boundary R, Z come from the outermost surface.
+    !! modb / modb_vjp give |B| on all half surfaces (wout bmnc) from the same
+    !! half_field and its reverse, for |B| sensitivities at fixed labels.
     !! Stellarator-symmetric equilibria only (VMEC++'s adjoint has the same limit).
     use, intrinsic :: iso_fortran_env, only: dp => real64
     implicit none
@@ -40,6 +42,8 @@ module tiago_vmec_edge
         procedure :: n_y => edge_n_y
         procedure :: forward => edge_forward
         procedure :: vjp => edge_vjp
+        procedure :: modb => edge_modb
+        procedure :: modb_vjp => edge_modb_vjp
     end type vmec_edge_t
 
     ! real-space values of R, Z, lambda on one full surface, parity-split
@@ -502,7 +506,7 @@ contains
             allparts(:, :, :, q) = parts
         end do
         allocate(meshbar(self%nzeta, self%ntheta_r))
-        allocate(extra(self%nzeta, self%ntheta_r, 4))
+        allocate(extra(self%nzeta, self%ntheta_r, 5))
         meshbar = 0.0_dp
         if (self%covariant) then
             do mn = 1, nb
@@ -556,6 +560,156 @@ contains
         call edge_geometry_vjp(self, ybar(2 * nb + 1:), coef_bar)
     end subroutine edge_vjp
 
+    subroutine edge_modb(self, coef, phip_full, phip_half, iota_half, current_half, bmnc)
+        !! |B| on the half surfaces 2 ... ns as VMEC++ writes it (wout bmnc
+        !! without the axis column): |B|^2 = B^u B_u + B^v B_v from half_field
+        !! with the half-grid metric of VMEC's bcovar, Fourier-analysed to the
+        !! Nyquist cosine modes without the covariant output filter.
+        class(vmec_edge_t), intent(in) :: self
+        real(dp), intent(in) :: coef(0:, 0:, :, :), phip_full(:), phip_half(:)
+        real(dp), intent(in) :: iota_half(:), current_half(:)
+        real(dp), intent(out) :: bmnc(:, :)                  !! (mnmax_nyq, ns - 1)
+        type(vmec_edge_t) :: cov
+        type(surface_t) :: a, b
+        real(dp), allocatable :: bu(:, :), bv(:, :), parts(:, :, :), modb(:, :)
+        real(dp), allocatable :: axis_coef(:, :, :, :)
+        real(dp) :: chip
+        integer :: h, mn
+
+        cov = self
+        cov%covariant = .true.
+        allocate(bu(self%nzeta, self%ntheta_r), bv(self%nzeta, self%ntheta_r))
+        call axis_extrapolated(self, coef, axis_coef)
+        call synthesize(self, axis_coef, 1, phip_full(1), b)
+        do h = 1, self%ns - 1
+            call move_surface(b, a)
+            call synthesize(self, coef, h + 1, phip_full(h + 1), b)
+            call half_field(cov, a, b, h, phip_full(h), phip_full(h + 1), phip_half(h), &
+                iota_half(h), current_half(h), bu, bv, chip, parts)
+            modb = sqrt(parts(:, :, 13) * bu + parts(:, :, 12) * bv)
+            do mn = 1, self%mnmax_nyq
+                bmnc(mn, h) = sum(self%kernel(mn, :, :) * modb)
+            end do
+        end do
+    end subroutine edge_modb
+
+    subroutine edge_modb_vjp(self, coef, phip_full, phip_half, iota_half, current_half, &
+            bmnc_bar, coef_bar, iota_bar, current_bar)
+        !! Reverse of edge_modb (direct dependence on the geometry blocks and
+        !! on the half-grid iota and current). Accumulates into coef_bar,
+        !! iota_bar and current_bar. With |B|^2 = B^i g_ij B^j, the cotangent
+        !! f of |B|^2 enters half_field_vjp as f B^i on the covariant outputs
+        !! (which yields f B^i B^j on g_ij and f B_i on B^i) plus another f B_i
+        !! on B^i through the extra slots.
+        class(vmec_edge_t), intent(in) :: self
+        real(dp), intent(in) :: coef(0:, 0:, :, :), phip_full(:), phip_half(:)
+        real(dp), intent(in) :: iota_half(:), current_half(:), bmnc_bar(:, :)
+        real(dp), intent(inout) :: coef_bar(0:, 0:, :, :), iota_bar(:), current_bar(:)
+        type(vmec_edge_t) :: cov
+        type(surface_t), allocatable :: s(:), sb(:)
+        real(dp), allocatable :: bu(:, :), bv(:, :), parts(:, :, :), modb(:, :), fb(:, :)
+        real(dp), allocatable :: bub(:, :), bvb(:, :), extra(:, :, :), axis_bar(:, :, :, :)
+        real(dp), allocatable :: axis_coef(:, :, :, :)
+        real(dp) :: chip
+        integer :: h, mn, j
+
+        cov = self
+        cov%covariant = .true.
+        allocate(s(self%ns), sb(self%ns))
+        do j = 1, self%ns
+            if (j == 1) then
+                call axis_extrapolated(self, coef, axis_coef)
+                call synthesize(self, axis_coef, j, phip_full(j), s(j))
+            else
+                call synthesize(self, coef, j, phip_full(j), s(j))
+            end if
+            allocate(sb(j)%r, sb(j)%z, sb(j)%l, mold=s(j)%r)
+            sb(j)%r = 0.0_dp
+            sb(j)%z = 0.0_dp
+            sb(j)%l = 0.0_dp
+        end do
+        allocate(bu(self%nzeta, self%ntheta_r), bv(self%nzeta, self%ntheta_r))
+        allocate(fb(self%nzeta, self%ntheta_r), extra(self%nzeta, self%ntheta_r, 5))
+        do h = 1, self%ns - 1
+            call half_field(cov, s(h), s(h + 1), h, phip_full(h), phip_full(h + 1), &
+                phip_half(h), iota_half(h), current_half(h), bu, bv, chip, parts)
+            modb = sqrt(parts(:, :, 13) * bu + parts(:, :, 12) * bv)
+            fb = 0.0_dp
+            do mn = 1, self%mnmax_nyq
+                fb = fb + bmnc_bar(mn, h) * self%kernel(mn, :, :)
+            end do
+            fb = 0.5_dp * fb / modb
+            bub = fb * parts(:, :, 13)
+            bvb = fb * parts(:, :, 12)
+            extra = 0.0_dp
+            extra(:, :, 1) = fb * bu
+            extra(:, :, 5) = fb * bv
+            call half_field_vjp(cov, s(h), s(h + 1), sb(h), sb(h + 1), h, parts(:, :, 12), &
+                chip, parts, bub, bvb, iota_bar(h), current_bar(h), phip_half(h), extra)
+        end do
+        allocate(axis_bar, mold=coef_bar)
+        axis_bar = 0.0_dp
+        call synthesize_vjp(self, axis_bar, 1, phip_full(1), sb(1))
+        call axis_extrapolated_vjp(self, axis_bar, coef_bar)
+        do j = 2, self%ns
+            call synthesize_vjp(self, coef_bar, j, phip_full(j), sb(j))
+        end do
+    end subroutine edge_modb_vjp
+
+    subroutine axis_extrapolated(self, coef, c)
+        !! c: geometry with VMEC++'s axis extrapolation (FourierGeometry::
+        !! extrapolateTowardsAxis): on the axis the scaled m = 1 coefficients
+        !! (physical / sqrt(s)) and the m = 0 lambda (cos m t sin n z) block
+        !! equal those of the first surface off the axis.
+        class(vmec_edge_t), intent(in) :: self
+        real(dp), intent(in) :: coef(0:, 0:, :, :)
+        real(dp), allocatable, intent(out) :: c(:, :, :, :)
+        integer :: k
+        integer, parameter :: blocks(6) = [R_CC, R_SS, Z_SC, Z_CS, L_SC, L_CS]
+
+        allocate(c(0:self%ntor, 0:self%mpol - 1, size(coef, 3), size(coef, 4)))
+        c = coef
+        if (self%mpol > 1) then
+            do k = 1, size(blocks)
+                c(:, 1, 1, blocks(k)) = coef(:, 1, 2, blocks(k)) * self%odd_scale(2) / self%odd_scale(1)
+            end do
+        end if
+        if (self%ntor > 0) c(:, 0, 1, L_CS) = coef(:, 0, 2, L_CS)
+    end subroutine axis_extrapolated
+
+    subroutine axis_extrapolated_vjp(self, axis_bar, coef_bar)
+        !! Transpose of axis_extrapolated: adds axis_bar (cotangent of its
+        !! result) to coef_bar.
+        class(vmec_edge_t), intent(in) :: self
+        real(dp), intent(in) :: axis_bar(0:, 0:, :, :)
+        real(dp), intent(inout) :: coef_bar(0:, 0:, :, :)
+        real(dp), allocatable :: d(:, :, :, :)
+        integer :: k
+        integer, parameter :: blocks(6) = [R_CC, R_SS, Z_SC, Z_CS, L_SC, L_CS]
+
+        d = axis_bar
+        if (self%mpol > 1) then
+            do k = 1, size(blocks)
+                coef_bar(:, 1, 2, blocks(k)) = coef_bar(:, 1, 2, blocks(k)) &
+                    + axis_bar(:, 1, 1, blocks(k)) * self%odd_scale(2) / self%odd_scale(1)
+                d(:, 1, 1, blocks(k)) = 0.0_dp
+            end do
+        end if
+        if (self%ntor > 0) then
+            coef_bar(:, 0, 2, L_CS) = coef_bar(:, 0, 2, L_CS) + axis_bar(:, 0, 1, L_CS)
+            d(:, 0, 1, L_CS) = 0.0_dp
+        end if
+        coef_bar = coef_bar + d
+    end subroutine axis_extrapolated_vjp
+
+    subroutine move_surface(from, to)
+        type(surface_t), intent(inout) :: from
+        type(surface_t), intent(out) :: to
+        call move_alloc(from%r, to%r)
+        call move_alloc(from%z, to%z)
+        call move_alloc(from%l, to%l)
+    end subroutine move_surface
+
     subroutine half_field_vjp(self, a, b, ab, bb, h, bv, chip, parts, bub, bvb, iota_bar, &
             current_bar, phip_h, extra)
         !! Reverse of half_field: accumulates into the surface cotangents ab, bb.
@@ -604,6 +758,7 @@ contains
             bu_bar = bub * guu + bvb * guv
             bvb = bub * guv + bvb * gvv
             bub = bu_bar + extra(:, :, 1)
+            bvb = bvb + extra(:, :, 5)
             guvb = guvb + extra(:, :, 2)
             gvvb = gvvb + extra(:, :, 3)
         end if

@@ -85,11 +85,17 @@ location path. `tiago_state_sampler` fills the rows Q_S and Q_B of a
 equilibrium. Its parameters are the solver's geometry coefficients (the
 cotangent the implicit adjoint accepts) followed by the |B| spectrum bmnc,
 each a C1 Hermite interpolant in rho. The joint model passes the geometry
-cotangent to `tiago_equilibrium%jacobian` (`coef_cot`). The bmnc cotangent
-has no adjoint to the VMEC++ inputs yet, so |B| is exact in position and
-labels but its change with the equilibrium inputs at a fixed label is not
-propagated; `joint_model_t%b_cotangent_dropped` records the size of the
-dropped cotangent. This matters for diagnostics that read |B| (ECE).
+cotangent to `tiago_equilibrium%jacobian` (`coef_cot`) and the bmnc
+cotangent as `bmnc_cot`. VMEC++ has no adjoint of its output stage, so Tiago
+recomputes |B| on the half grid from the geometry coefficients, phi', iota and
+the enclosed current as VMEC's bcovar does (|B|^2 = B^u B_u + B^v B_v,
+`vmec_edge%modb`, equal to the wout bmnc to round-off) and differentiates that
+by hand (`vmec_edge%modb_vjp`). The geometry part of its cotangent goes
+through the VMEC++ implicit adjoint, the direct iota and current parts join
+the profile cotangents, and PHIEDGE uses the same scaling argument as the
+edge field. |B| at a fixed label therefore has complete derivatives with
+respect to the equilibrium inputs, which diagnostics that read |B| (ECE)
+need.
 
 ## Likelihood and engines
 
