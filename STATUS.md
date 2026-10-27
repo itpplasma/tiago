@@ -5,6 +5,15 @@ work is committed and pushed to `main`. The tested production snapshot is
 [`e14b45a`](https://github.com/itpplasma/tiago/commit/e14b45a0b0877163175b6180e01dfe47069576da).
 This status file adds the handoff record without changing production code.
 
+## Perpendicular ECE opacity — October 28, 2026
+
+The [thermal opacity component](docs/ece-opacity.md) provides generated
+weakly relativistic first/second-harmonic O/X absorption and emission with
+local derivatives, and composes with the existing transport tape. Published
+perpendicular slab limits, independent defining-integral references and finite
+differences are tested. General oblique opacity and the recorded ECE profile
+diagnostic remain outside this component.
+
 ## Completed work
 
 The original open PR and fetched branch histories are integrated into main.

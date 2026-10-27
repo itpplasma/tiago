@@ -109,7 +109,9 @@ and calibration latents, including shared ray indices and correlated priors.
 These names mean Jacobian-vector and transposed Jacobian-vector products.
 All adjoint outputs are overwritten. Channel loops use OpenMP.
 
-The caller must supply the absorption and path derivatives. In particular,
+[Perpendicular thermal opacity](ece-opacity.md) can now supply the absorption
+and its temperature, density, field-magnitude and frequency derivatives.
+The caller must supply path derivatives. In particular,
 length sensitivity alone does not account for profiles sampled on a moving
 ray. These components neither freeze that motion nor establish a bound for
 neglecting it. They do not yet consume the cold-ray tape or implement the
@@ -127,6 +129,6 @@ antenna nodes each, including calibration-prior transformation and noise.
 
 These are transfer/receiver verifications with synthetic prescribed opacity.
 They do not check Bornatici optical-depth formulas or shifted-resonance
-posterior recovery. Completing ECE still requires relativistic
-first/second-harmonic ordinary and extraordinary opacity, its derivatives on
-the moving paths, a recorded profile diagnostic and posterior validation. See [cold-ray scope](ece-rays.md).
+posterior recovery. Completing ECE still requires general oblique relativistic
+opacity, its derivatives on moving paths, a recorded profile diagnostic
+and posterior validation. See [cold-ray scope](ece-rays.md).
