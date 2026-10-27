@@ -6,7 +6,7 @@ The existing `tiago_ece_radiometer::ece_t` remains the cold-resonance profile
 diagnostic. Standalone [thermal transfer and receiver components](ece-transfer.md) now
 supply prescribed-opacity transport, reciprocal walls, frequency/antenna
 averaging and calibrated voltage/noise. Relativistic emission/absorption,
-their coupling to the rays and profile sampler, and posterior validation
+their coupling to transport on the sampled rays, and posterior validation
 are still needed for a complete electron cyclotron emission (ECE) diagnostic.
 
 ## Medium and coordinates
@@ -27,12 +27,11 @@ Every output must be initialized, including zeros. Parameter derivatives use
 the caller's physical units. These are field values and derivatives, not
 coefficients of a second equilibrium or profile representation.
 
-There is no VMEC adapter for this primitive yet. The existing profile sampler
-supplies the field magnitude and its first derivatives; it does not supply the
-field vector or second spatial derivatives required here. It would be incorrect
-to identify the magnetic field direction with the ray direction, or to use the
-exterior virtual-casing field inside the plasma. The existing VMEC flux map and
-kinetic profile parameterization should supply a future adapter's quantities.
+The [equilibrium medium](ece-geometry.md) connects this callback to the existing
+VMEC wout state sampler, its vector field and spatial Hessians, and the existing
+kinetic-profile latents. It uses the same inverse map as scalar diagnostics.
+VMEC++ geometry-state snapshots also support the adapter when their two
+contravariant field spectra are supplied at initialization.
 
 ## Hamiltonian and launch
 

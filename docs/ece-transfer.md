@@ -4,8 +4,9 @@
 thermal radiation transfer on supplied rays with a calibrated total-power
 receiver. They accept runtime absorption, paths and instrument response.
 They do **not** yet supply the relativistic electron cyclotron emission (ECE)
-opacity, a VMEC ray adapter or a complete profile diagnostic. The existing
-`tiago_ece_radiometer::ece_t` remains the cold-resonance approximation.
+opacity or a complete profile diagnostic. A separate
+[equilibrium medium](ece-geometry.md) supplies the VMEC wout ray adapter.
+The existing `tiago_ece_radiometer::ece_t` remains the cold-resonance approximation.
 
 ## Transfer on a supplied ray
 
@@ -126,7 +127,6 @@ antenna nodes each, including calibration-prior transformation and noise.
 
 These are transfer/receiver verifications with synthetic prescribed opacity.
 They do not check Bornatici optical-depth formulas or shifted-resonance
-posterior recovery. Completing ECE still requires the VMEC vector field and
-spatial second derivatives, relativistic first/second-harmonic ordinary and
-extraordinary opacity, path-coupled derivatives, a recorded profile diagnostic
-and posterior validation. See [cold-ray scope](ece-rays.md).
+posterior recovery. Completing ECE still requires relativistic
+first/second-harmonic ordinary and extraordinary opacity, its derivatives on
+the moving paths, a recorded profile diagnostic and posterior validation. See [cold-ray scope](ece-rays.md).

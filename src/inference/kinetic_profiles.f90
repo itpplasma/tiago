@@ -40,6 +40,7 @@ module tiago_kinetic_profiles
     use fortnum_bspline, only: bspline_workspace_t, bspline_init, bspline_set_knots, &
         bspline_eval_deriv
     use tiago_kinetic_pressure, only: kinetic_pressure
+    use tiago_density_label_jet, only: density_label_jet
     implicit none
     private
 
@@ -71,6 +72,7 @@ module tiago_kinetic_profiles
         procedure :: set_profile => profiles_set
         procedure :: coefficients => profiles_coefficients
         procedure :: evaluate => profiles_evaluate
+        procedure :: density_jet => profiles_density_jet
         procedure :: vjp => profiles_vjp
         procedure :: pressure => profiles_pressure
         procedure :: pressure_vjp => profiles_pressure_vjp
@@ -388,5 +390,37 @@ contains
             l(1:j - 1, j) = 0.0_dp
         end do
     end function cholesky
+
+    subroutine profiles_density_jet(self, z, rho, ne, dr, drr, nep, drp)
+        class(kinetic_profiles_t), intent(in) :: self
+        real(dp), intent(in) :: z(:), rho
+        real(dp), intent(out) :: ne, dr, drr, nep(:), drp(:)
+        real(dp) :: b(0:2, self%ncoef), c(self%ncoef), u, us, uss, s
+        real(dp) :: up(self%ncoef), usp(self%ncoef), value, d1, d2
+        type(fortnum_status_t) :: st
+        integer :: i, j
+        s = rho**2
+        call bspline_eval_deriv(self%basis, min(s, 1.0_dp), 2, b, st)
+        if (st%code /= FORTNUM_OK) error stop 'density jet: '//trim(st%msg)
+        c = self%coefficients(z, P_NE)
+        call u_at(self, P_NE, s, b, c, u, us)
+        uss = dot_product(b(2, :), c)
+        if (s > 1.0_dp) then
+            uss = 0
+            b(1:2, :) = 0
+        end if
+        call density_label_jet(rho, u, us, uss, self%p(P_NE)%unit, 0.0_dp, 0.0_dp, &
+                               ne, dr, drr, value, d1)
+        nep = 0
+        drp = 0
+        if (.not. self%p(P_NE)%latent) return
+        up = matmul(b(0, :), self%p(P_NE)%chol)
+        usp = matmul(b(1, :), self%p(P_NE)%chol)
+        do i = 1, self%ncoef
+            j = self%p(P_NE)%offset + i
+            call density_label_jet(rho, u, us, uss, self%p(P_NE)%unit, up(i), usp(i), &
+                                   value, d1, d2, nep(j), drp(j))
+        end do
+    end subroutine profiles_density_jet
 
 end module tiago_kinetic_profiles

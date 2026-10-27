@@ -151,3 +151,21 @@ Configure the ordinary build with `TIAGO_FORTSYM_BUILD` to include the exact
 regeneration comparison. These are thermal transfer and receiver kernels;
 they do not generate an ECE absorption coefficient. See
 [the component contract and limits](../docs/ece-transfer.md).
+
+# Regenerate the equilibrium ray-medium kernels
+
+`gen_ece_geometry` uses FortSym
+`21d157b394e775a999a8d9ed0be409eac1eb9574` for Fourier geometry through third
+label derivatives, higher Hermite basis derivatives, the contravariant vector
+field contraction, density jets and inverse-map spatial/parameter rows.
+
+```sh
+cmake --build build-codegen --target gen_ece_geometry
+build-codegen/gen_ece_geometry
+ctest --test-dir build -R tiago_ece_geometry --output-on-failure
+```
+
+With `TIAGO_FORTSYM_BUILD` set, `tiago_ece_geometry_codegen` regenerates all
+nine outputs in an isolated build directory and compares the committed files.
+The [medium contract](../docs/ece-geometry.md) records the knot, axis and
+provider-adjoint limitations.

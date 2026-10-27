@@ -14,8 +14,10 @@ module tiago_vmecpp_state
     !! (tiago_equilibrium%jacobian, coef_cot); the bmnc cotangent is its
     !! bmnc_cot (see docs/inference.md).
     use, intrinsic :: iso_fortran_env, only: dp => real64
-    use tiago_real_space_state, only: real_space_state_t
+    use tiago_real_space_state, only: real_space_state_t, vector_jets_t, locate_unsupported, locate_ok
     use tiago_radial_interp, only: hermite_weights, max_weights
+    use tiago_vmec_state, only: vmec_state_t
+    use tiago_vmec_product_pair, only: vmec_product_pair
     implicit none
     private
 
@@ -27,7 +29,9 @@ module tiago_vmecpp_state
         real(dp), allocatable :: xm_nyq(:), xn_nyq(:)
         real(dp), allocatable :: bmnc(:, :)                !! (mnmax_nyq, ns - 1): surfaces 2 ... ns
         real(dp), allocatable :: rho_full(:), rho_half(:)
+        real(dp), allocatable :: bsupumnc(:,:), bsupvmnc(:,:)
     contains
+        procedure :: vector_jets => state_vector_jets
         procedure :: init => state_init
         procedure :: n_geometry => state_n_geometry
         procedure :: n_params => state_n_params
@@ -41,10 +45,11 @@ module tiago_vmecpp_state
 
 contains
 
-    subroutine state_init(self, coef, nfp, xm_nyq, xn_nyq, bmnc)
+    subroutine state_init(self, coef, nfp, xm_nyq, xn_nyq, bmnc, bsupumnc, bsupvmnc)
         !! bmnc: wout layout (mnmax_nyq, ns) with the axis column ignored.
         class(vmecpp_state_t), intent(inout) :: self
         real(dp), intent(in) :: coef(0:, 0:, :, :), xm_nyq(:), xn_nyq(:), bmnc(:, :)
+        real(dp), intent(in), optional :: bsupumnc(:,:), bsupvmnc(:,:)
         integer, intent(in) :: nfp
         integer :: j
 
@@ -57,6 +62,13 @@ contains
         self%xn_nyq = xn_nyq
         self%mnmax_nyq = size(xm_nyq)
         self%bmnc = bmnc(:, 2:self%ns)
+        if (allocated(self%bsupumnc)) deallocate(self%bsupumnc,self%bsupvmnc)
+        if (present(bsupumnc) .neqv. present(bsupvmnc)) &
+            error stop 'vmecpp_state: both contravariant spectra are required'
+        if (present(bsupumnc)) then
+            self%bsupumnc = bsupumnc(:,2:self%ns)
+            self%bsupvmnc = bsupvmnc(:,2:self%ns)
+        end if
         self%rho_full = [(sqrt(real(j - 1, dp) / (self%ns - 1)), j = 1, self%ns)]
         self%rho_half = [(sqrt((j - 1.5_dp) / (self%ns - 1)), j = 2, self%ns)]
     end subroutine state_init
@@ -69,6 +81,7 @@ contains
     pure integer function state_n_params(self)
         class(vmecpp_state_t), intent(in) :: self
         state_n_params = size(self%coef) + size(self%bmnc)
+        if (allocated(self%bsupumnc)) state_n_params=state_n_params+2*size(self%bmnc)
     end function state_n_params
 
     pure subroutine state_get_params(self, p)
@@ -77,7 +90,12 @@ contains
         integer :: ng
         ng = size(self%coef)
         p(1:ng) = reshape(self%coef, [ng])
-        p(ng + 1:) = reshape(self%bmnc, [size(self%bmnc)])
+        p(ng + 1:ng+size(self%bmnc)) = reshape(self%bmnc, [size(self%bmnc)])
+        if (allocated(self%bsupumnc)) then
+            p(ng+size(self%bmnc)+1:ng+2*size(self%bmnc)) = &
+                reshape(self%bsupumnc,[size(self%bmnc)])
+            p(ng+2*size(self%bmnc)+1:) = reshape(self%bsupvmnc,[size(self%bmnc)])
+        end if
     end subroutine state_get_params
 
     subroutine state_set_params(self, p)
@@ -86,7 +104,11 @@ contains
         integer :: ng
         ng = size(self%coef)
         self%coef = reshape(p(1:ng), shape(self%coef))
-        self%bmnc = reshape(p(ng + 1:), shape(self%bmnc))
+        self%bmnc = reshape(p(ng + 1:ng+size(self%bmnc)), shape(self%bmnc))
+        if (allocated(self%bsupumnc)) then
+            self%bsupumnc=reshape(p(ng+size(self%bmnc)+1:ng+2*size(self%bmnc)),shape(self%bmnc))
+            self%bsupvmnc=reshape(p(ng+2*size(self%bmnc)+1:),shape(self%bmnc))
+        end if
     end subroutine state_set_params
 
     pure subroutine state_point(self, rho, theta, phi, r, z, d)
@@ -250,5 +272,100 @@ contains
             idx = 1 + n + (self%ntor + 1) * (m + self%mpol * (j - 1 + self%ns * (blk - 1)))
         end function idx
     end subroutine state_param_vjp
+
+
+    subroutine state_vector_jets(self, u, jet, status)
+        class(vmecpp_state_t), intent(in)::self
+        real(dp), intent(in)::u(3)
+        type(vector_jets_t), intent(out)::jet
+        integer, intent(out)::status
+        type(vmec_state_t)::wout
+        type(vector_jets_t)::local
+        real(dp)::rc(2), zs(2), rr(2, 4), zr(2, 4)
+        integer::n, m, j, k, a, b, ng, nb, nr, nparam, col, block_, offset
+        integer, parameter::blocks(4) = [R_CC, R_SS, Z_SC, Z_CS]
+        status = locate_unsupported
+        if (.not. allocated(self%bsupumnc)) return
+        wout%ns = self%ns
+        wout%mnmax = 2*(self%ntor + 1)*self%mpol
+        wout%mnmax_nyq = self%mnmax_nyq
+        wout%nfp = self%nfp
+        wout%rho_full = self%rho_full
+        wout%rho_half = self%rho_half
+        wout%xm_nyq = self%xm_nyq
+        wout%xn_nyq = self%xn_nyq
+        wout%bmnc = self%bmnc
+        wout%bsupumnc = self%bsupumnc
+        wout%bsupvmnc = self%bsupvmnc
+        allocate (wout%xm(wout%mnmax), wout%xn(wout%mnmax), &
+                  wout%rmnc(wout%mnmax, self%ns), wout%zmns(wout%mnmax, self%ns))
+        do m = 0, self%mpol - 1
+            do n = 0, self%ntor
+                k = 1 + 2*(n + (self%ntor + 1)*m)
+                wout%xm(k:k + 1) = m
+                wout%xn(k:k + 1) = [n*self%nfp, -n*self%nfp]
+                do j = 1, self%ns
+                    call vmec_product_pair(self%coef(n, m, j, R_CC), self%coef(n, m, &
+                        j, R_SS), &
+                                           self%coef(n, m, j, Z_SC), self%coef(n, m, &
+                                               j, Z_CS), rc, zs, rr, zr)
+                    wout%rmnc(k:k + 1, j) = rc
+                    wout%zmns(k:k + 1, j) = zs
+                end do
+            end do
+        end do
+        call wout%vector_jets(u, local, status)
+        if (status /= locate_ok) return
+        jet%x = local%x
+        jet%xu = local%xu
+        jet%xuu = local%xuu
+        jet%b = local%b
+        jet%bu = local%bu
+        jet%buu = local%buu
+        ng = size(self%coef)
+        nb = size(self%bmnc)
+        nr = wout%mnmax*self%ns
+        nparam = self%n_params()
+        allocate (jet%xp(3, nparam), jet%xup(3, 3, nparam), jet%bp(3, nparam), &
+            jet%bup(3, 3, nparam))
+        jet%xp = 0
+        jet%xup = 0
+        jet%bp = 0
+        jet%bup = 0
+        do m = 0, self%mpol - 1
+            do n = 0, self%ntor
+                do j = 1, self%ns
+                    k = 1 + 2*(n + (self%ntor + 1)*m) + wout%mnmax*(j - 1)
+                    do block_ = 1, 4
+                        col = 1 + n + (self%ntor + 1)*(m + self%mpol*(j - 1 + self%ns*(blocks(block_) - 1)))
+                        do a = 1, 2
+                            do b = 1, 2
+                                offset = 0
+                                if (b == 2) offset = nr
+                                if (b == 1) then
+                                    call accumulate(k + a - 1 + offset, col, rr(a, &
+                                        block_))
+                                else
+                                    call accumulate(k + a - 1 + offset, col, zr(a, &
+                                        block_))
+                                end if
+                            end do
+                        end do
+                    end do
+                end do
+            end do
+        end do
+        jet%bp(:, ng + nb + 1:) = local%bp(:, 2*nr + nb + 1:)
+        jet%bup(:, :, ng + nb + 1:) = local%bup(:, :, 2*nr + nb + 1:)
+    contains
+        subroutine accumulate(source, dest, weight)
+            integer, intent(in)::source, dest
+            real(dp), intent(in)::weight
+            jet%xp(:, dest) = jet%xp(:, dest) + weight*local%xp(:, source)
+            jet%xup(:, :, dest) = jet%xup(:, :, dest) + weight*local%xup(:, :, source)
+            jet%bp(:, dest) = jet%bp(:, dest) + weight*local%bp(:, source)
+            jet%bup(:, :, dest) = jet%bup(:, :, dest) + weight*local%bup(:, :, source)
+        end subroutine
+    end subroutine state_vector_jets
 
 end module tiago_vmecpp_state

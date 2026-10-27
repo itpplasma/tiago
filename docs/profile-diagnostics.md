@@ -82,8 +82,10 @@ of the same sampled rows along a prescribed ray, with derivatives of `alpha`
 with respect to ne, Te and |B|. A ray that depends on these quantities also
 needs its path sensitivity. The complete transport model is not implemented.
 [Cold-ray primitives](ece-rays.md) now supply adaptive Appleton-Hartree rays
-and their endpoint derivatives through a medium callback; they are not yet
-connected to this sampled-profile contract or to an absorption model.
+and their endpoint derivatives through a medium callback. The
+[equilibrium medium](ece-geometry.md) extends the existing sampler with VMEC
+wout vector fields, spatial Hessians and kinetic density jets, including path
+and moving-profile derivatives. An absorption model is a separate component.
 Standalone [thermal transfer and calibrated receiver components](ece-transfer.md)
 accept prescribed absorption and ray cells, with derivatives of both transfer
 and voltage/noise. Their integration with this profile contract remains open.
