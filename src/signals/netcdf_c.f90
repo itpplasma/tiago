@@ -33,6 +33,12 @@ module tiago_netcdf_c
             character(kind=c_char), intent(in) :: name(*)
             integer(c_int), intent(out) :: group
         end function
+        integer(c_int) function nc_inq_dimid(id, name, dim) bind(C)
+            import :: c_int, c_char
+            integer(c_int), value :: id
+            character(kind=c_char), intent(in) :: name(*)
+            integer(c_int), intent(out) :: dim
+        end function
         integer(c_int) function nc_def_grp(id, name, group) bind(C)
             import :: c_int, c_char
             integer(c_int), value :: id
@@ -115,7 +121,7 @@ module tiago_netcdf_c
         end function
     end interface
 
-    public :: nc_open, nc_create, nc_close, nc_inq_ncid, nc_def_grp, nc_def_dim, nc_def_var, &
+    public :: nc_open, nc_create, nc_close, nc_inq_ncid, nc_inq_dimid, nc_def_grp, nc_def_dim, nc_def_var, &
         nc_put_att_text, nc_put_att_double, nc_put_var_double, nc_put_var_text, nc_inq_varid, &
         nc_get_var_double, nc_get_att_double
     public :: cstr, nc_shape, nc_read_text, put_text_att

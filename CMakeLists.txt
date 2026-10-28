@@ -198,6 +198,7 @@ add_library(tiago_inference STATIC
     src/inference/vmecpp_state.f90
     src/inference/thomson_scattering.f90
     src/inference/profile_geometry_io.f90
+    src/inference/mse_state.f90
     src/generated/ts_depolarization.f90
     src/generated/ts_spectral.f90
     src/generated/ts_bessel_chain.f90
@@ -534,6 +535,11 @@ foreach(mode IN ITEMS contravariant covariant conservative)
         ${TIAGO_WOUT_SIMSOPT_SMALL} ${TIAGO_SOURCE_DIR}/tests/data/mse_coils.coils ${mode})
     set_tests_properties(tiago_mse_plasma_${mode} PROPERTIES FIXTURES_REQUIRED wout_li383)
 endforeach()
+
+add_executable(test_mse_state tests/test_mse_state.f90)
+target_link_libraries(test_mse_state PRIVATE tiago_inference)
+add_test(NAME tiago_mse_state COMMAND $<TARGET_FILE:test_mse_state> ${TIAGO_WOUT_SIMSOPT_SMALL})
+set_tests_properties(tiago_mse_state PROPERTIES FIXTURES_REQUIRED wout_li383)
 
 add_executable(test_sensor_set tests/test_sensor_set.f90)
 target_link_libraries(test_sensor_set PRIVATE tiago_solver)

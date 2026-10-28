@@ -13,7 +13,9 @@ module tiago_profile_geometry_io
     !!                         length(channel) [m], label(channel, strlen)
     !!   mse:                  origin(channel, xyz), direction(channel, xyz),
     !!                         beam_origin(channel, xyz),
-    !!                         beam_direction(channel, xyz), label(channel, strlen)
+    !!                         beam_direction(channel, xyz), max_gap(channel) [m],
+    !!                         label(channel, strlen); direction points from the
+    !!                         observer into the plasma
     !!
     !! The profile table has a dimension s (normalized toroidal flux, 0 ... 1)
     !! and variables ne [m^-3], te [eV], ti [eV] and optionally zeff, each
@@ -42,6 +44,7 @@ module tiago_profile_geometry_io
         character(len=:), allocatable :: label
         real(dp) :: origin(3) = 0.0_dp, direction(3) = 0.0_dp
         real(dp) :: beam_origin(3) = 0.0_dp, beam_direction(3) = 0.0_dp
+        real(dp) :: max_gap = 0.0_dp !! largest sight-beam distance accepted [m]
     end type mse_line_t
 
     type, public :: profile_table_t
@@ -192,7 +195,7 @@ contains
         type(mse_line_t), allocatable, intent(out) :: lines(:)
         integer, intent(out) :: ierr
         character(len=:), allocatable, intent(out) :: message
-        real(dp), allocatable :: o(:, :), d(:, :), bo(:, :), bd(:, :)
+        real(dp), allocatable :: o(:, :), d(:, :), bo(:, :), bd(:, :), gap(:)
         character(len=:), allocatable :: labels(:)
         integer(c_int) :: ncid, gid
         integer :: c, n
@@ -203,10 +206,11 @@ contains
         if (ierr == 0) call get_matrix(gid, 'direction', d, ierr, message)
         if (ierr == 0) call get_matrix(gid, 'beam_origin', bo, ierr, message)
         if (ierr == 0) call get_matrix(gid, 'beam_direction', bd, ierr, message)
+        if (ierr == 0) call get_vector(gid, 'max_gap', gap, ierr, message)
         if (ierr == 0) call get_labels(gid, size(o, 2), labels, ierr, message)
         if (ierr == 0) then
             n = size(o, 2)
-            if (any([size(d, 2), size(bo, 2), size(bd, 2)] /= n)) then
+            if (any([size(d, 2), size(bo, 2), size(bd, 2), size(gap)] /= n)) then
                 ierr = 1
                 message = trim(path)//':mse: variables differ in length'
             end if
@@ -214,7 +218,8 @@ contains
         if (ierr == 0) then
             allocate(lines(n))
             do c = 1, n
-                lines(c) = mse_line_t(trim(labels(c)), o(:, c), d(:, c), bo(:, c), bd(:, c))
+                lines(c) = mse_line_t(trim(labels(c)), o(:, c), d(:, c), bo(:, c), bd(:, c), &
+                    gap(c))
             end do
         end if
         c = nc_close(ncid)

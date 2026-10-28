@@ -21,7 +21,7 @@ find_program(NCDUMP ncdump HINTS "${bindir}")
 if(NCDUMP)
     execute_process(COMMAND "${NCDUMP}" -h li383_synthetic.nc WORKING_DIRECTORY "${WORK}"
         OUTPUT_VARIABLE header)
-    foreach(group interferometer thomson xics ece magnetics)
+    foreach(group interferometer thomson xics ece mse magnetics)
         if(NOT header MATCHES "group: ${group} ")
             message(FATAL_ERROR "li383_synthetic.nc has no group ${group}")
         endif()

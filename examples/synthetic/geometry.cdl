@@ -75,4 +75,25 @@ group: ece {
     length = 1.1, 1.1, 1.1, 1.1 ;
     label = "ECE80", "ECE83", "ECE86", "ECE89" ;
   }
+group: mse {
+  dimensions: channel = 2 ; xyz = 3 ; strlen = 8 ;
+  variables:
+    double origin(channel, xyz) ; origin:units = "m" ;
+    double direction(channel, xyz) ;
+    double beam_origin(channel, xyz) ; beam_origin:units = "m" ;
+    double beam_direction(channel, xyz) ;
+    double max_gap(channel) ; max_gap:units = "m" ;
+    char label(channel, strlen) ;
+  data:
+    origin = 2.17, 0.27, 0.6,
+    2.17, 0.27, 0.3 ;
+    direction = -0.8, -0.3, -0.5,
+    -0.8, -0.3, -0.5 ;
+    beam_origin = 1.73, -0.63, 0.115,
+    1.73, -0.63, -0.185 ;
+    beam_direction = -0.4, 0.9, 0.05,
+    -0.4, 0.9, 0.05 ;
+    max_gap = 0.001, 0.001 ;
+    label = "MSE1", "MSE2" ;
+  }
 }
