@@ -51,3 +51,7 @@ target_link_libraries(gen_ece_recorded PRIVATE "${FORTSYM_LIBRARY}")
 add_executable(gen_robust_signals gen_robust_signals.f90)
 target_include_directories(gen_robust_signals PRIVATE "${FORTSYM_BUILD}/include")
 target_link_libraries(gen_robust_signals PRIVATE "${FORTSYM_LIBRARY}")
+
+add_executable(gen_wall gen_wall.f90)
+target_include_directories(gen_wall PRIVATE "${FORTSYM_BUILD}/include")
+target_link_libraries(gen_wall PRIVATE "${FORTSYM_LIBRARY}")
