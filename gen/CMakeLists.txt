@@ -55,3 +55,7 @@ target_link_libraries(gen_robust_signals PRIVATE "${FORTSYM_LIBRARY}")
 add_executable(gen_wall gen_wall.f90)
 target_include_directories(gen_wall PRIVATE "${FORTSYM_BUILD}/include")
 target_link_libraries(gen_wall PRIVATE "${FORTSYM_LIBRARY}")
+
+add_executable(gen_magnetic_pickup gen_magnetic_pickup.f90)
+target_include_directories(gen_magnetic_pickup PRIVATE "${FORTSYM_BUILD}/include")
+target_link_libraries(gen_magnetic_pickup PRIVATE "${FORTSYM_LIBRARY}")
