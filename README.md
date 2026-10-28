@@ -100,3 +100,8 @@ uncertainty); forward equilibrium and kinetic physics stay in their own codes.
 ## License
 
 MIT, see [LICENSE](LICENSE).
+
+Energetic-particle wall-loss events can be converted to surface loads and raw
+infrared signals with the separate [`tiago_wall` API](docs/wall-synthetic.md).
+It requires explicit physical source normalization, material assumptions and
+camera calibration; the repository supplies synthetic fixtures only.

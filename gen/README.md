@@ -205,3 +205,11 @@ The recorded-diagnostic and robust kernels reproduce with the declared FortSym r
 Use matching FortSym module files and shared library from one build. Changing
 `TIAGO_FORTSYM_BUILD` in an existing TIAGO build requires clearing the cached
 `FORTSYM_LIBRARY` (configure with `-UFORTSYM_LIBRARY`).
+
+## Wall-loss infrared kernels
+
+`gen_wall` emits energy conversion, legacy normalized-speed energy, cell heat
+flux, semi-infinite constant-property thermal response and spectral Planck
+radiance with their active partial derivatives. See
+[the wall synthetic API](../docs/wall-synthetic.md#conditional-derivatives-and-regeneration)
+for regeneration and the independent native CTest oracles.

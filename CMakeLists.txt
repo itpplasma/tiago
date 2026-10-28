@@ -911,3 +911,40 @@ if(TIAGO_IS_TOP_LEVEL)
         -P ${TIAGO_SOURCE_DIR}/tests/check_subproject.cmake)
     set_tests_properties(tiago_subproject PROPERTIES TIMEOUT 600)
 endif()
+
+# Energetic-particle event/surface response is independent of profile diagnostics.
+add_library(tiago_wall STATIC
+    src/generated/wall_energy.f90
+    src/generated/wall_flux.f90
+    src/generated/wall_thermal.f90
+    src/generated/wall_radiance.f90
+    src/diagnostics/wall_synthetic.f90)
+set_target_properties(tiago_wall PROPERTIES
+    Fortran_STANDARD 2018 Fortran_STANDARD_REQUIRED YES)
+target_link_libraries(tiago_wall PUBLIC tiago_signals)
+if(TIAGO_ENABLE_OPENMP AND OpenMP_Fortran_FOUND)
+    target_link_libraries(tiago_wall PUBLIC OpenMP::OpenMP_Fortran)
+endif()
+add_executable(test_wall_synthetic tests/test_wall_synthetic.f90)
+target_link_libraries(test_wall_synthetic PRIVATE tiago_wall)
+add_test(NAME tiago_wall_synthetic COMMAND test_wall_synthetic)
+set_tests_properties(tiago_wall_synthetic PROPERTIES ENVIRONMENT "OMP_NUM_THREADS=2")
+add_executable(benchmark_wall EXCLUDE_FROM_ALL benchmarks/benchmark_wall.f90)
+target_link_libraries(benchmark_wall PRIVATE tiago_wall)
+if(FORTSYM_BUILD)
+    add_test(NAME tiago_wall_codegen COMMAND ${CMAKE_COMMAND}
+        -DGENERATOR=$<TARGET_FILE:gen_wall> -DSOURCE=${CMAKE_CURRENT_SOURCE_DIR}
+        -DOUTPUT=${CMAKE_CURRENT_BINARY_DIR}/tests/wall-codegen
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/check_wall_codegen.cmake)
+endif()
+target_sources(tiago_wall PRIVATE src/generated/wall_legacy_energy.f90
+    src/diagnostics/simple_wall_source.f90)
+target_link_libraries(tiago_wall PRIVATE ${TIAGO_NETCDF_C_LIBRARY})
+add_executable(test_simple_wall_source tests/test_simple_wall_source.f90)
+target_link_libraries(test_simple_wall_source PRIVATE tiago_wall)
+add_test(NAME tiago_simple_wall_fixture COMMAND ${Python3_EXECUTABLE}
+    ${CMAKE_CURRENT_SOURCE_DIR}/tests/simple_wall_fixture.py ${CMAKE_CURRENT_BINARY_DIR}/tests/simple-wall)
+set_tests_properties(tiago_simple_wall_fixture PROPERTIES FIXTURES_SETUP simple_wall_file)
+add_test(NAME tiago_simple_wall_source COMMAND test_simple_wall_source
+    ${CMAKE_CURRENT_BINARY_DIR}/tests/simple-wall)
+set_tests_properties(tiago_simple_wall_source PROPERTIES FIXTURES_REQUIRED simple_wall_file)
