@@ -2,9 +2,9 @@ module tiago_ece_ray
     use, intrinsic :: iso_fortran_env, only: dp => real64
     use, intrinsic :: ieee_arithmetic, only: ieee_is_finite
     use fortnum_status, only: fortnum_status_t, status_set, &
-                              FORTNUM_DOMAIN_ERROR
+        FORTNUM_DOMAIN_ERROR
     use fortnum_ode, only: ode_problem_t, ode_workspace_t, ode_solution_t, &
-                           ode_integrate, ode_integrate_jvp, ode_integrate_parameter_vjp
+        ode_integrate, ode_integrate_jvp, ode_integrate_parameter_vjp
     use tiago_ece_hamiltonian_o, only: ece_hamiltonian_o
     use tiago_ece_hamiltonian_x, only: ece_hamiltonian_x
     use tiago_ece_hamiltonian_unmagnetized, &
@@ -41,7 +41,7 @@ module tiago_ece_ray
         real(dp) :: max_index = 0.0_dp
     end type
     public :: cold_hamiltonian, trace_cold_ray, trace_cold_rays, cold_ray_jvp, &
-              cold_ray_vjp
+        cold_ray_vjp
 contains
     subroutine cold_hamiltonian(n, b, ne, frequency, mode, h, dh, d2h)
         real(dp), intent(in) :: n(3), b(3), ne, frequency
@@ -49,28 +49,27 @@ contains
         real(dp), intent(out) :: h, dh(8), d2h(8, 8)
         if (norm2(b) == 0.0_dp) then
             call ece_hamiltonian_unmagnetized(n(1), n(2), n(3), &
-                                            b(1), b(2), b(3), ne, frequency, h, dh, d2h)
+                b(1), b(2), b(3), ne, frequency, h, dh, d2h)
         else if (mode == ECE_O_MODE) then
             call ece_hamiltonian_o(n(1), n(2), n(3), &
-                                   b(1), b(2), b(3), ne, frequency, h, dh, d2h)
+                b(1), b(2), b(3), ne, frequency, h, dh, d2h)
         else
             call ece_hamiltonian_x(n(1), n(2), n(3), &
-                                   b(1), b(2), b(3), ne, frequency, h, dh, d2h)
+                b(1), b(2), b(3), ne, frequency, h, dh, d2h)
         end if
     end subroutine
 
-    subroutine ray_rhs(medium, frequency, mode, y, f, jac, pj, valid, h)
+    subroutine ray_rhs(medium, np, frequency, mode, y, f, jac, pj, valid, h)
         class(cold_medium_t), intent(in) :: medium
         real(dp), intent(in) :: frequency, y(6)
-        integer, intent(in) :: mode
+        integer, intent(in) :: np, mode
         real(dp), intent(out) :: f(6), jac(6, 6)
-        real(dp), intent(out) :: pj(6, medium%n_params() + 1), h
+        real(dp), intent(out) :: pj(6, np + 1), h
         logical, intent(out) :: valid
         real(dp) :: q(4), dq(3, 4), d2q(3, 3, 4), dh(8), d2h(8, 8)
         real(dp) :: qp(4, medium%n_params()), dqp(3, 4, medium%n_params())
         real(dp) :: a(8, 6), ap(8, medium%n_params() + 1)
-        integer :: i, j, np
-        np = medium%n_params()
+        integer :: i, j
         call medium%sample(y(:3), q, dq, d2q, qp, dqp)
         valid = all(ieee_is_finite(q)) .and. all(ieee_is_finite(y))
         valid = valid .and. all(ieee_is_finite(dq))
@@ -116,7 +115,7 @@ contains
     end subroutine
 
     subroutine trace_cold_ray(medium, frequency, mode, initial, duration, &
-                              ray, status, rtol, atol, hmax)
+            ray, status, rtol, atol, hmax)
         class(cold_medium_t), intent(in) :: medium
         real(dp), intent(in) :: frequency, initial(6), duration
         integer, intent(in) :: mode
@@ -141,11 +140,12 @@ contains
         if (present(rtol)) problem%rtol = rtol
         if (present(atol)) problem%atol = atol
         if (present(hmax)) problem%hmax = hmax
-        call ray_rhs(medium, frequency, mode, initial, f, jac, pj, valid, h)
+        call ray_rhs(medium, medium%n_params(), frequency, mode, initial, &
+            f, jac, pj, valid, h)
         if (.not. valid) return
         if (abs(h) > 1.0e-7_dp) then
             call status_set(status, FORTNUM_DOMAIN_ERROR, &
-                            'cold-ray launch is off dispersion surface')
+                'cold-ray launch is off dispersion surface')
             return
         end if
         problem%rhs => rhs
@@ -157,17 +157,17 @@ contains
         ray%mode = mode
         if (failed) then
             call status_set(status, FORTNUM_DOMAIN_ERROR, &
-                            'cold-ray medium or dispersion is singular')
+                'cold-ray medium or dispersion is singular')
             return
         end if
         if (status%code /= 0) return
         ray%derivatives_valid = .true.
         do k = 1, size(ray%trace%t)
-            call ray_rhs(medium, frequency, mode, ray%trace%y(:, k), &
-                         f, jac, pj, valid, h)
+            call ray_rhs(medium, medium%n_params(), frequency, mode, &
+                ray%trace%y(:, k), f, jac, pj, valid, h)
             if (.not. valid) then
                 call status_set(status, FORTNUM_DOMAIN_ERROR, &
-                                'cold-ray accepted state is singular')
+                    'cold-ray accepted state is singular')
                 return
             end if
             call medium%sample(ray%trace%y(:3, k), q, dq, d2q, qp, dqp)
@@ -181,11 +181,11 @@ contains
         end do
         if (ray%max_index > 1.0_dp + max(1.0e-8_dp, 20*problem%rtol)) then
             call status_set(status, FORTNUM_DOMAIN_ERROR, &
-                            'cold-ray fast branch requires |N| <= 1')
+                'cold-ray fast branch requires |N| <= 1')
         end if
         if (ray%max_hamiltonian_error > max(1.0e-7_dp, 100*problem%rtol)) then
             call status_set(status, FORTNUM_DOMAIN_ERROR, &
-                            'cold-ray dispersion residual exceeds tolerance')
+                'cold-ray dispersion residual exceeds tolerance')
         end if
         ray%trace%status = status
         ray%valid = status%code == 0
@@ -196,14 +196,15 @@ contains
             class(*), intent(in), optional :: ctx
             real(dp) :: a(6, 6), p(6, medium%n_params() + 1), hh
             logical :: ok
-            call ray_rhs(medium, frequency, mode, y, dydt, a, p, ok, hh)
+            call ray_rhs(medium, medium%n_params(), frequency, mode, y, &
+                dydt, a, p, ok, hh)
             if (.not. ok) failed = .true.
         end subroutine
     end subroutine
 
     subroutine trace_cold_rays(medium, frequencies, modes, initial, &
-                               durations, &
-                               rays, statuses, status, rtol, atol, hmax)
+            durations, &
+            rays, statuses, status, rtol, atol, hmax)
         class(cold_medium_t), intent(in) :: medium
         real(dp), intent(in) :: frequencies(:), initial(:, :), durations(:)
         integer, intent(in) :: modes(:)
@@ -214,14 +215,14 @@ contains
         integer :: i, n
         n = size(frequencies)
         call status_set(status, FORTNUM_DOMAIN_ERROR, &
-                        'inconsistent cold-ray batch shapes')
+            'inconsistent cold-ray batch shapes')
         if (size(initial, 1) /= 6 .or. size(initial, 2) /= n) return
         if (size(modes) /= n .or. size(durations) /= n) return
         allocate (rays(n), statuses(n))
         !$omp parallel do default(shared) private(i) schedule(dynamic, 1)
         do i = 1, n
             call trace_cold_ray(medium, frequencies(i), modes(i), initial(:, i), &
-                                durations(i), rays(i), statuses(i), rtol, atol, hmax)
+                durations(i), rays(i), statuses(i), rtol, atol, hmax)
         end do
         !$omp end parallel do
         call status_set(status, 0, '')
@@ -233,7 +234,7 @@ contains
     end subroutine
 
     subroutine cold_ray_jvp(medium, ray, initial_dot, parameter_dot, &
-                            frequency_dot, final_dot, status)
+            frequency_dot, final_dot, status)
         class(cold_medium_t), intent(in) :: medium
         type(cold_ray_t), intent(in) :: ray
         real(dp), intent(in) :: initial_dot(6), parameter_dot(:), frequency_dot
@@ -244,7 +245,7 @@ contains
         logical :: failed
         final_dot = 0.0_dp
         call status_set(status, FORTNUM_DOMAIN_ERROR, &
-                        'invalid cold-ray tangent input')
+            'invalid cold-ray tangent input')
         if (size(parameter_dot) /= medium%n_params()) return
         if (.not. ray%valid) return
         if (.not. ray%derivatives_valid) return
@@ -253,10 +254,10 @@ contains
         problem%rhs => rhs
         failed = .false.
         call ode_integrate_jvp(problem, tangent, initial_dot, ray%trace, &
-                               result, status)
+            result, status)
         if (failed) then
             call status_set(status, FORTNUM_DOMAIN_ERROR, &
-                            'cold-ray tangent encountered singular medium')
+                'cold-ray tangent encountered singular medium')
         end if
         if (status%code == 0) final_dot = result
     contains
@@ -266,7 +267,8 @@ contains
             class(*), intent(in), optional :: ctx
             real(dp) :: a(6, 6), p(6, medium%n_params() + 1), h
             logical :: ok
-            call ray_rhs(medium, ray%frequency, ray%mode, y, dydt, a, p, ok, h)
+            call ray_rhs(medium, medium%n_params(), ray%frequency, ray%mode, &
+                y, dydt, a, p, ok, h)
             if (.not. ok) failed = .true.
         end subroutine
         subroutine tangent(t, y, s, ds, ctx)
@@ -275,14 +277,15 @@ contains
             class(*), intent(in), optional :: ctx
             real(dp) :: f(6), a(6, 6), p(6, medium%n_params() + 1), h
             logical :: ok
-            call ray_rhs(medium, ray%frequency, ray%mode, y, f, a, p, ok, h)
+            call ray_rhs(medium, medium%n_params(), ray%frequency, ray%mode, &
+                y, f, a, p, ok, h)
             ds = matmul(a, s) + matmul(p, [parameter_dot, frequency_dot])
             if (.not. ok) failed = .true.
         end subroutine
     end subroutine
 
     subroutine cold_ray_vjp(medium, ray, final_bar, initial_bar, &
-                            parameter_bar, frequency_bar, status)
+            parameter_bar, frequency_bar, status)
         class(cold_medium_t), intent(in) :: medium
         type(cold_ray_t), intent(in) :: ray
         real(dp), intent(in) :: final_bar(6)
@@ -295,7 +298,7 @@ contains
         parameter_bar = 0.0_dp
         frequency_bar = 0.0_dp
         call status_set(status, FORTNUM_DOMAIN_ERROR, &
-                        'invalid cold-ray adjoint input')
+            'invalid cold-ray adjoint input')
         if (size(parameter_bar) /= medium%n_params()) return
         if (.not. ray%valid) return
         if (.not. ray%derivatives_valid) return
@@ -304,11 +307,11 @@ contains
         problem%rhs => rhs
         failed = .false.
         call ode_integrate_parameter_vjp(problem, adjoint, parameters, &
-                                         final_bar, &
-                                 medium%n_params() + 1, ray%trace, result, pbar, status)
+            final_bar, &
+            medium%n_params() + 1, ray%trace, result, pbar, status)
         if (failed) then
             call status_set(status, FORTNUM_DOMAIN_ERROR, &
-                            'cold-ray adjoint encountered singular medium')
+                'cold-ray adjoint encountered singular medium')
         end if
         if (status%code /= 0) return
         initial_bar = result
@@ -321,7 +324,8 @@ contains
             class(*), intent(in), optional :: ctx
             real(dp) :: a(6, 6), p(6, medium%n_params() + 1), h
             logical :: ok
-            call ray_rhs(medium, ray%frequency, ray%mode, y, dydt, a, p, ok, h)
+            call ray_rhs(medium, medium%n_params(), ray%frequency, ray%mode, &
+                y, dydt, a, p, ok, h)
             if (.not. ok) failed = .true.
         end subroutine
         subroutine adjoint(t, y, s, ds, ctx)
@@ -330,7 +334,8 @@ contains
             class(*), intent(in), optional :: ctx
             real(dp) :: f(6), a(6, 6), p(6, medium%n_params() + 1), h
             logical :: ok
-            call ray_rhs(medium, ray%frequency, ray%mode, y, f, a, p, ok, h)
+            call ray_rhs(medium, medium%n_params(), ray%frequency, ray%mode, &
+                y, f, a, p, ok, h)
             ds = matmul(transpose(a), s)
             if (.not. ok) failed = .true.
         end subroutine
@@ -340,7 +345,8 @@ contains
             class(*), intent(in), optional :: ctx
             real(dp) :: f(6), a(6, 6), p(6, medium%n_params() + 1), h
             logical :: ok
-            call ray_rhs(medium, ray%frequency, ray%mode, y, f, a, p, ok, h)
+            call ray_rhs(medium, medium%n_params(), ray%frequency, ray%mode, &
+                y, f, a, p, ok, h)
             gradient = gradient + matmul(transpose(p), cotangent)
             if (.not. ok) failed = .true.
         end subroutine
