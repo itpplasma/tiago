@@ -34,6 +34,11 @@ kinetic rows come from the profiles of the inference core.
 
 Implementations:
 
+- `point_table_t` (`src/inference/point_table.f90`): an equilibrium sampled on
+  a cylindrical grid, with optional island plateaus; it fills the rows s and
+  abs(B) directly, without a label chart, and has no parameters
+  ([synthetic forward driver](synthetic-forward.md)).
+
 - `vmec_state_t`: VMEC wout, `rho = sqrt(s)`, cylindrical `phi`. Each Fourier
   coefficient of R, Z and |B| is a C1 cubic Hermite interpolant in rho of its
   radial node values, which are the parameters; a VMEC adjoint maps their

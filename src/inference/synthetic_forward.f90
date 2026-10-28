@@ -14,6 +14,7 @@ module tiago_synthetic_forward
     use tiago_real_space_state, only: real_space_state_t, located_t, locate_ok
     use tiago_vmec_state, only: vmec_state_t
     use tiago_state_sampler, only: sample_state
+    use tiago_point_table, only: point_table_t
     use tiago_profile_diagnostic, only: profile_diagnostic_t, plasma_sample_t, Q_S, Q_B, Q_NE, Q_TE, Q_TI, Q_ZEFF
     use tiago_kinetic_profiles, only: kinetic_profiles_t, N_PROFILES, P_NE, P_TE, P_TI, P_ZEFF
     use tiago_sight_geometry, only: chord_t, to_rpz
@@ -36,6 +37,9 @@ module tiago_synthetic_forward
     type, public :: synth_config_t
         character(len=:), allocatable :: wout, output
         character(len=:), allocatable :: profiles, geometry !! '' = none
+        !> Equilibrium sampled on a grid (tiago_point_table); replaces the
+        !> wout for the profile instruments when set
+        character(len=:), allocatable :: point_table
         character(len=:), allocatable :: sensors, coils, extcur !! '' = none
         character(len=:), allocatable :: sheet !! contravariant | covariant | conservative
         integer :: npanel = 200 !! panels per chord (4 Gauss points each)
@@ -51,6 +55,8 @@ module tiago_synthetic_forward
         type(kinetic_profiles_t) :: profiles
         real(dp), allocatable :: z(:)
         real(dp) :: aminor = 0.0_dp !! VMEC Aminor_p [m]
+        type(point_table_t) :: table
+        logical :: use_table = .false.
     end type synth_state_t
 
     type :: named_t
@@ -117,12 +123,26 @@ contains
         type(vmec_state_t), allocatable :: vmec
         integer :: k
 
-        allocate(vmec)
-        call vmec%load(cfg%wout, ierr, message, vector=.true.)
-        if (ierr /= 0) return
-        call move_alloc(vmec, st%state)
-        call read_aminor(cfg%wout, st%aminor, ierr, message)
-        if (ierr /= 0) return
+        ierr = 0
+        st%aminor = ieee_value(0.0_dp, ieee_quiet_nan)
+        if (len(cfg%wout) > 0) then
+            allocate(vmec)
+            call vmec%load(cfg%wout, ierr, message, vector=.true.)
+            if (ierr /= 0) return
+            call move_alloc(vmec, st%state)
+            call read_aminor(cfg%wout, st%aminor, ierr, message)
+            if (ierr /= 0) return
+        end if
+        if (len(cfg%point_table) > 0) then
+            call st%table%load(cfg%point_table, ierr, message)
+            if (ierr /= 0) return
+            st%use_table = .true.
+        end if
+        if (.not. (allocated(st%state) .or. st%use_table)) then
+            ierr = 1
+            message = 'neither a wout nor a point table'
+            return
+        end if
         call st%profiles%init([(real(k, dp) / cfg%profile_knots, k = 0, cfg%profile_knots)])
         allocate(st%z(0))
         if (len(cfg%profiles) == 0) return
@@ -163,22 +183,39 @@ contains
         end subroutine set_one
     end subroutine set_profile_table
 
-    subroutine sample_kinetic(st, x, sample, loc)
-        !! Provider rows by tiago_state_sampler, kinetic rows from the
-        !! profiles at s. Points that cannot be located get zero density
-        !! and temperatures and Zeff = 1.
+    subroutine provider_rows(st, x, sample, valid)
+        !! Rows s and |B| from the point table if one is loaded, else from
+        !! the state (tiago_state_sampler); valid marks located points.
         type(synth_state_t), intent(in) :: st
         real(dp), intent(in) :: x(:, :)
         type(plasma_sample_t), intent(out) :: sample
-        type(located_t), allocatable, intent(out) :: loc(:)
+        logical, allocatable, intent(out) :: valid(:)
+        type(located_t), allocatable :: loc(:)
+        integer :: k
+
+        if (st%use_table) then
+            call st%table%sample(x, sample, valid)
+        else
+            call sample_state(st%state, x, sample, loc)
+            valid = [(loc(k)%status == locate_ok, k = 1, size(loc))]
+        end if
+    end subroutine provider_rows
+
+    subroutine sample_kinetic(st, x, sample)
+        !! Provider rows, kinetic rows from the profiles at s. Points that
+        !! cannot be located get zero density and temperatures and Zeff = 1.
+        type(synth_state_t), intent(in) :: st
+        real(dp), intent(in) :: x(:, :)
+        type(plasma_sample_t), intent(out) :: sample
+        logical, allocatable :: valid(:)
         real(dp), allocatable :: f(:, :), df(:, :)
         integer :: k
 
-        call sample_state(st%state, x, sample, loc)
+        call provider_rows(st, x, sample, valid)
         allocate(f(N_PROFILES, sample%n), df(N_PROFILES, sample%n))
         call st%profiles%evaluate(st%z, sample%q(Q_S, :), f, df)
         do k = 1, sample%n
-            if (loc(k)%status /= locate_ok) then
+            if (.not. valid(k)) then
                 sample%q(Q_NE:Q_TI, k) = 0.0_dp
                 sample%q(Q_ZEFF, k) = 1.0_dp
                 cycle
@@ -242,7 +279,6 @@ contains
         type(thomson_volume_t), allocatable :: volumes(:)
         type(thomson_t) :: diag
         type(plasma_sample_t) :: centre
-        type(located_t), allocatable :: loc(:)
         real(dp), allocatable :: y(:), x(:, :)
         character(len=:), allocatable :: labels(:)
         integer :: n, c, width
@@ -256,7 +292,7 @@ contains
         do c = 1, n
             x(:, c) = to_rpz(volumes(c)%center)
         end do
-        call sample_kinetic(st, x, centre, loc)
+        call sample_kinetic(st, x, centre)
         width = maxval([(len(volumes(c)%label), c = 1, n)])
         allocate(character(len=width) :: labels(n))
         do c = 1, n
@@ -310,7 +346,7 @@ contains
         integer, intent(in) :: npoints
         real(dp), allocatable, intent(out) :: te(:), s(:), rpz(:, :)
         type(plasma_sample_t) :: smp, res
-        type(located_t), allocatable :: loc(:)
+        logical, allocatable :: valid(:)
         real(dp) :: x(3, npoints), d(3), b_res, unused, t, nan
         integer :: c, j
 
@@ -324,14 +360,14 @@ contains
             do j = 1, npoints
                 x(:, j) = to_rpz(lines(c)%origin + lines(c)%length * (j - 1) / (npoints - 1) * d)
             end do
-            call sample_state(st%state, x, smp, loc)
+            call provider_rows(st, x, smp, valid)
             call cold_resonance(lines(c)%frequency, real(lines(c)%harmonic, dp), b_res, unused)
             do j = 2, npoints
                 if (.not. (smp%inside(j) .and. smp%inside(j - 1))) cycle
                 if ((smp%q(Q_B, j) - b_res) * (smp%q(Q_B, j - 1) - b_res) > 0.0_dp) cycle
                 t = (b_res - smp%q(Q_B, j - 1)) / (smp%q(Q_B, j) - smp%q(Q_B, j - 1))
                 t = lines(c)%length * (j - 2 + t) / (npoints - 1)
-                call sample_kinetic(st, reshape(to_rpz(lines(c)%origin + t * d), [3, 1]), res, loc)
+                call sample_kinetic(st, reshape(to_rpz(lines(c)%origin + t * d), [3, 1]), res)
                 if (.not. res%inside(1)) exit
                 te(c) = res%q(Q_TE, 1)
                 s(c) = res%q(Q_S, 1)
@@ -357,6 +393,11 @@ contains
         integer :: c, n, width
         integer(i32) :: code
 
+        if (.not. allocated(st%state)) then
+            ierr = 1
+            message = cfg%geometry//':mse: needs the VMEC wout for the interior field'
+            return
+        end if
         call read_mse_lines(cfg%geometry, lines, ierr, message)
         if (ierr /= 0) return
         n = size(lines)
@@ -399,6 +440,11 @@ contains
         character(len=:), allocatable :: labels(:)
         integer :: k, width
 
+        if (len(cfg%wout) == 0) then
+            ierr = 1
+            message = cfg%sensors//': magnetics need the VMEC wout'
+            return
+        end if
         call read_sensor_set(cfg%sensors, set, ierr, message)
         if (ierr /= 0) return
         if (len(cfg%coils) > 0 .and. len(cfg%extcur) > 0) then
@@ -439,13 +485,12 @@ contains
         type(synth_state_t), intent(in) :: st
         real(dp), allocatable, intent(out) :: y(:)
         type(plasma_sample_t) :: smp
-        type(located_t), allocatable :: loc(:)
         real(dp), allocatable :: x(:, :), dx(:, :, :), eta(:)
 
         allocate(eta(diag%n_nuisance()), y(diag%n_signals()))
         eta = 0.0_dp
         call diag%sample_points(eta, x, dx)
-        call sample_kinetic(st, x, smp, loc)
+        call sample_kinetic(st, x, smp)
         call diag%predict(smp, eta, y)
     end subroutine predict
 
@@ -513,6 +558,7 @@ contains
         s = nc_put_att_double(ncid, NC_GLOBAL, cstr('aminor_p'), NC_DOUBLE, 1_c_size_t, [st%aminor])
         s = put_text_att(ncid, NC_GLOBAL, 'plasma_sheet', cfg%sheet)
         call input('wout', cfg%wout)
+        call input('point_table', cfg%point_table)
         call input('profiles', cfg%profiles)
         call input('geometry', cfg%geometry)
         call input('sensors', cfg%sensors)

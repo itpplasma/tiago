@@ -114,6 +114,7 @@ contains
         cfg%sensors = ''
         cfg%coils = ''
         cfg%extcur = ''
+        cfg%point_table = ''
         cfg%sheet = 'contravariant'
         cfg%npanel = 200
         cfg%ece_points = 4001
@@ -263,6 +264,7 @@ contains
         cfg%sensors = ''
         cfg%coils = ''
         cfg%extcur = ''
+        cfg%point_table = ''
         cfg%sheet = 'contravariant'
         call synth_load(cfg, st, ierr, message)
         call check(ierr == 0, 'synth_load: '//message)
