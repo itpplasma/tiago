@@ -27,7 +27,7 @@ elseif(DEFINED ENV{LIBNEO_BRANCH} AND NOT "$ENV{LIBNEO_BRANCH}" STREQUAL "")
     set(_tiago_libneo_ref "$ENV{LIBNEO_BRANCH}")
 elseif(TIAGO_MATCH_LIBNEO_BRANCH)
     execute_process(COMMAND git symbolic-ref --quiet --short HEAD
-        WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
+        WORKING_DIRECTORY "${TIAGO_SOURCE_DIR}"
         OUTPUT_VARIABLE _tiago_branch OUTPUT_STRIP_TRAILING_WHITESPACE
         RESULT_VARIABLE _tiago_branch_status)
     if(_tiago_branch_status EQUAL 0)
@@ -113,15 +113,15 @@ target_link_libraries(tiago_solver PUBLIC tiago_diagnostics)
 # and used by the plasma regression test.
 set(TIAGO_WOUT_SIMSOPT_SMALL_URL
     "https://raw.githubusercontent.com/hiddenSymmetries/simsopt/9e027eac38028d57aa23777be52a781aa860e347/tests/test_files/wout_li383_low_res_reference.nc")
-set(TIAGO_WOUT_SIMSOPT_SMALL ${CMAKE_BINARY_DIR}/tests/cases/wout_li383_low_res_reference.nc)
+set(TIAGO_WOUT_SIMSOPT_SMALL ${TIAGO_BINARY_DIR}/tests/cases/wout_li383_low_res_reference.nc)
 
 # Lets gfortran vectorise log/sqrt in the Biot-Savart kernels (glibc vector math);
 # results are unchanged, only errno is not set.
 set_source_files_properties(src/solver/coil_kernels.f90 PROPERTIES COMPILE_OPTIONS -fno-math-errno)
 
-set(TIAGO_GENERATED_DIR ${CMAKE_BINARY_DIR}/generated)
+set(TIAGO_GENERATED_DIR ${TIAGO_BINARY_DIR}/generated)
 file(MAKE_DIRECTORY ${TIAGO_GENERATED_DIR})
-configure_file(${CMAKE_SOURCE_DIR}/cmake/tiago_config.f90.in
+configure_file(${TIAGO_SOURCE_DIR}/cmake/tiago_config.f90.in
     ${TIAGO_GENERATED_DIR}/tiago_config.f90 @ONLY)
 # Embedded paths/URLs can exceed the 132-column free-form limit.
 set_source_files_properties(${TIAGO_GENERATED_DIR}/tiago_config.f90 PROPERTIES
@@ -342,7 +342,7 @@ if(TIAGO_ENABLE_RECONSTRUCTION)
         GIT_REPOSITORY https://github.com/proximafusion/vmecpp.git
         GIT_TAG 860df56938ea6aaf7a1775c89d51069bab4120b3
         PATCH_COMMAND ${CMAKE_COMMAND} -DSOURCE=<SOURCE_DIR> -DHDF5_URL=${TIAGO_VMECPP_HDF5_URL}
-            -DNETCDF_URL=${TIAGO_VMECPP_NETCDF_URL} -P ${CMAKE_SOURCE_DIR}/cmake/PatchVmecpp.cmake
+            -DNETCDF_URL=${TIAGO_VMECPP_NETCDF_URL} -P ${TIAGO_SOURCE_DIR}/cmake/PatchVmecpp.cmake
         EXCLUDE_FROM_ALL)
     FetchContent_MakeAvailable(vmecpp)
     # VMEC++ builds Release with ThinLTO. Enzyme >= 0.0.303 with Clang 23 then
@@ -420,6 +420,14 @@ end module tiago_vmecpp_paths
     target_link_libraries(tiago_plot_pulls PRIVATE fortplot::fortplot)
 endif()
 
+# Export module search paths to parent projects linking the core libraries.
+set(TIAGO_MODULE_DIR "${TIAGO_BINARY_DIR}/modules")
+file(MAKE_DIRECTORY "${TIAGO_MODULE_DIR}")
+foreach(target IN ITEMS tiago_diagnostics tiago_solver tiago_signals tiago_inference)
+    set_target_properties(${target} PROPERTIES Fortran_MODULE_DIRECTORY "${TIAGO_MODULE_DIR}")
+    target_include_directories(${target} PUBLIC "$<BUILD_INTERFACE:${TIAGO_MODULE_DIR}>")
+endforeach()
+
 enable_testing()
 
 if(TIAGO_ENABLE_SPECTRE)
@@ -441,23 +449,23 @@ if(TIAGO_ENABLE_SPECTRE)
         PASS_REGULAR_EXPRESSION "idia=1 requires signed linked plasma flux metadata")
     add_test(NAME tiago_cli_spectre COMMAND $<TARGET_FILE:tiago_vacuum_cli>
         --plasma-spectre ${spectre_fixture}
-        --bprobes ${CMAKE_SOURCE_DIR}/tests/data/spectre/probes.diagno
+        --bprobes ${TIAGO_SOURCE_DIR}/tests/data/spectre/probes.diagno
         --plasma-nphi 32 --plasma-ntheta 32
-        --output-dir ${CMAKE_BINARY_DIR}/tests/cli_spectre)
-    set(nested_wout ${CMAKE_BINARY_DIR}/tests/cases/wout_qa_nested.nc)
+        --output-dir ${TIAGO_BINARY_DIR}/tests/cli_spectre)
+    set(nested_wout ${TIAGO_BINARY_DIR}/tests/cases/wout_qa_nested.nc)
     add_test(NAME tiago_download_wout_qa_nested COMMAND ${CMAKE_COMMAND}
         -DURL=https://raw.githubusercontent.com/hiddenSymmetries/simsopt/9e027eac38028d57aa23777be52a781aa860e347/tests/test_files/wout_LandremanPaul2021_QA_reactorScale_lowres_reference.nc
-        -DDEST=${nested_wout} -P ${CMAKE_SOURCE_DIR}/cmake/DownloadFile.cmake)
+        -DDEST=${nested_wout} -P ${TIAGO_SOURCE_DIR}/cmake/DownloadFile.cmake)
     set_tests_properties(tiago_download_wout_qa_nested PROPERTIES
         FIXTURES_SETUP qa_nested TIMEOUT 120)
     add_executable(test_spectre_vmec tests/test_spectre_vmec.f90)
     target_link_libraries(test_spectre_vmec PRIVATE tiago_solver)
     add_test(NAME tiago_spectre_vmec COMMAND $<TARGET_FILE:test_spectre_vmec>
-        ${CMAKE_SOURCE_DIR}/tests/data/spectre/qa_nested.h5 ${nested_wout}
-        ${CMAKE_SOURCE_DIR}/tests/data/spectre/qa_vmec_cartesian.dat)
+        ${TIAGO_SOURCE_DIR}/tests/data/spectre/qa_nested.h5 ${nested_wout}
+        ${TIAGO_SOURCE_DIR}/tests/data/spectre/qa_vmec_cartesian.dat)
     add_test(NAME tiago_spectre_vmec_refined COMMAND $<TARGET_FILE:test_spectre_vmec>
-        ${CMAKE_SOURCE_DIR}/tests/data/spectre/qa_nested.h5 ${nested_wout}
-        ${CMAKE_SOURCE_DIR}/tests/data/spectre/qa_vmec_cartesian.dat 128)
+        ${TIAGO_SOURCE_DIR}/tests/data/spectre/qa_nested.h5 ${nested_wout}
+        ${TIAGO_SOURCE_DIR}/tests/data/spectre/qa_vmec_cartesian.dat 128)
     set_tests_properties(tiago_spectre_vmec tiago_spectre_vmec_refined PROPERTIES
         FIXTURES_REQUIRED qa_nested TIMEOUT 180)
 else()
@@ -470,12 +478,12 @@ endif()
 add_executable(test_mse tests/test_mse.f90)
 target_link_libraries(test_mse PRIVATE tiago_solver)
 add_test(NAME tiago_mse COMMAND $<TARGET_FILE:test_mse>
-    ${CMAKE_SOURCE_DIR}/tests/data ${CMAKE_SOURCE_DIR}/examples/mse_channels.txt)
+    ${TIAGO_SOURCE_DIR}/tests/data ${TIAGO_SOURCE_DIR}/examples/mse_channels.txt)
 
 add_executable(tiago_coil_loader_tests tests/test_coil_loader.f90)
 target_link_libraries(tiago_coil_loader_tests PRIVATE tiago_solver)
 add_test(NAME tiago_coil_loader_tests
-    COMMAND $<TARGET_FILE:tiago_coil_loader_tests> ${CMAKE_SOURCE_DIR}/tests/data)
+    COMMAND $<TARGET_FILE:tiago_coil_loader_tests> ${TIAGO_SOURCE_DIR}/tests/data)
 
 add_executable(test_inactive_coil_segments tests/test_inactive_coil_segments.f90)
 target_link_libraries(test_inactive_coil_segments PRIVATE tiago_solver)
@@ -489,29 +497,29 @@ add_executable(test_vacuum_semantics tests/test_vacuum_semantics.f90)
 target_link_libraries(test_vacuum_semantics PRIVATE tiago_solver)
 add_test(NAME tiago_vacuum_semantics
     COMMAND $<TARGET_FILE:test_vacuum_semantics>
-            ${CMAKE_SOURCE_DIR}/tests/data/coils_sample.coils)
+            ${TIAGO_SOURCE_DIR}/tests/data/coils_sample.coils)
 
 # Plasma model regression test on a small VMEC equilibrium (downloaded, pinned).
 add_test(NAME tiago_download_wout_li383
     COMMAND ${CMAKE_COMMAND} -DURL=${TIAGO_WOUT_SIMSOPT_SMALL_URL} -DDEST=${TIAGO_WOUT_SIMSOPT_SMALL}
-            -P ${CMAKE_SOURCE_DIR}/cmake/DownloadFile.cmake)
+            -P ${TIAGO_SOURCE_DIR}/cmake/DownloadFile.cmake)
 set_tests_properties(tiago_download_wout_li383 PROPERTIES FIXTURES_SETUP wout_li383 TIMEOUT 120)
 add_executable(test_mse_plasma tests/test_mse_plasma.f90)
 target_link_libraries(test_mse_plasma PRIVATE tiago_solver)
 foreach(mode IN ITEMS contravariant covariant conservative)
     add_test(NAME tiago_mse_plasma_${mode} COMMAND $<TARGET_FILE:test_mse_plasma>
-        ${TIAGO_WOUT_SIMSOPT_SMALL} ${CMAKE_SOURCE_DIR}/tests/data/mse_coils.coils ${mode})
+        ${TIAGO_WOUT_SIMSOPT_SMALL} ${TIAGO_SOURCE_DIR}/tests/data/mse_coils.coils ${mode})
     set_tests_properties(tiago_mse_plasma_${mode} PROPERTIES FIXTURES_REQUIRED wout_li383)
 endforeach()
 
 add_executable(test_sensor_set tests/test_sensor_set.f90)
 target_link_libraries(test_sensor_set PRIVATE tiago_solver)
-set(TIAGO_TEST_SENSOR_GEOMETRY ${CMAKE_BINARY_DIR}/tests/sensors)
+set(TIAGO_TEST_SENSOR_GEOMETRY ${TIAGO_BINARY_DIR}/tests/sensors)
 file(MAKE_DIRECTORY ${TIAGO_TEST_SENSOR_GEOMETRY})
 add_test(NAME tiago_sensor_set COMMAND $<TARGET_FILE:test_sensor_set>
-    ${CMAKE_SOURCE_DIR}/tests/data/sensors/synthetic.sensors)
+    ${TIAGO_SOURCE_DIR}/tests/data/sensors/synthetic.sensors)
 add_test(NAME tiago_sensor_set_plasma COMMAND $<TARGET_FILE:test_sensor_set>
-    ${CMAKE_SOURCE_DIR}/tests/data/sensors/synthetic.sensors ${TIAGO_WOUT_SIMSOPT_SMALL})
+    ${TIAGO_SOURCE_DIR}/tests/data/sensors/synthetic.sensors ${TIAGO_WOUT_SIMSOPT_SMALL})
 set_tests_properties(tiago_sensor_set tiago_sensor_set_plasma PROPERTIES
     ENVIRONMENT TIAGO_TEST_SENSOR_GEOMETRY=${TIAGO_TEST_SENSOR_GEOMETRY} RESOURCE_LOCK sensor_geometry)
 set_tests_properties(tiago_sensor_set_plasma PROPERTIES FIXTURES_REQUIRED wout_li383)
@@ -533,7 +541,7 @@ set_tests_properties(tiago_plasma_support PROPERTIES FIXTURES_REQUIRED wout_li38
 add_executable(test_field_source tests/test_field_source.f90)
 target_link_libraries(test_field_source PRIVATE tiago_solver)
 add_test(NAME tiago_field_source COMMAND $<TARGET_FILE:test_field_source>
-    ${CMAKE_SOURCE_DIR}/tests/data/coils_sample.coils ${TIAGO_WOUT_SIMSOPT_SMALL})
+    ${TIAGO_SOURCE_DIR}/tests/data/coils_sample.coils ${TIAGO_WOUT_SIMSOPT_SMALL})
 set_tests_properties(tiago_field_source PROPERTIES FIXTURES_REQUIRED wout_li383)
 add_test(NAME tiago_plasma_covariant
     COMMAND $<TARGET_FILE:test_plasma_support> ${TIAGO_WOUT_SIMSOPT_SMALL} covariant)
@@ -548,11 +556,11 @@ set_tests_properties(tiago_plasma_conservative PROPERTIES FIXTURES_REQUIRED wout
 add_executable(test_plasma_vacuum tests/test_plasma_vacuum.f90)
 target_link_libraries(test_plasma_vacuum PRIVATE tiago_solver)
 foreach(case IN ITEMS purely_toroidal_field_reference LandremanPaul2021_QA_lowres)
-    set(wout ${CMAKE_BINARY_DIR}/tests/cases/wout_${case}.nc)
+    set(wout ${TIAGO_BINARY_DIR}/tests/cases/wout_${case}.nc)
     add_test(NAME tiago_download_wout_${case}
         COMMAND ${CMAKE_COMMAND}
                 -DURL=https://raw.githubusercontent.com/hiddenSymmetries/simsopt/9e027eac38028d57aa23777be52a781aa860e347/tests/test_files/wout_${case}.nc
-                -DDEST=${wout} -P ${CMAKE_SOURCE_DIR}/cmake/DownloadFile.cmake)
+                -DDEST=${wout} -P ${TIAGO_SOURCE_DIR}/cmake/DownloadFile.cmake)
     set_tests_properties(tiago_download_wout_${case} PROPERTIES FIXTURES_SETUP wout_${case} TIMEOUT 120)
     add_test(NAME tiago_plasma_vacuum_${case} COMMAND $<TARGET_FILE:test_plasma_vacuum> ${wout})
     set_tests_properties(tiago_plasma_vacuum_${case} PROPERTIES FIXTURES_REQUIRED wout_${case})
@@ -563,17 +571,17 @@ foreach(case IN ITEMS purely_toroidal_field_reference LandremanPaul2021_QA_lowre
 endforeach()
 
 add_test(NAME tiago_mse_cli
-    COMMAND sh ${CMAKE_SOURCE_DIR}/tests/mse_cli.sh $<TARGET_FILE:tiago_vacuum_cli>
-        ${CMAKE_SOURCE_DIR}/tests/data/mse_coils.coils
-        ${CMAKE_SOURCE_DIR}/examples/mse_channels.txt ${CMAKE_BINARY_DIR}/tests/mse_cli)
+    COMMAND sh ${TIAGO_SOURCE_DIR}/tests/mse_cli.sh $<TARGET_FILE:tiago_vacuum_cli>
+        ${TIAGO_SOURCE_DIR}/tests/data/mse_coils.coils
+        ${TIAGO_SOURCE_DIR}/examples/mse_channels.txt ${TIAGO_BINARY_DIR}/tests/mse_cli)
 
 # CLI: the README example and argument errors (message, exit status 1)
 add_test(NAME tiago_cli_sample
     COMMAND $<TARGET_FILE:tiago_vacuum_cli>
-            --coils ${CMAKE_SOURCE_DIR}/tests/data/coil_sample.neo
-            --flux ${CMAKE_SOURCE_DIR}/tests/data/fluxloop_sample.diagno
-            --segrog ${CMAKE_SOURCE_DIR}/tests/data/segrog_sample.diagno
-            --seg-area 3.40e-4 --samples 8 --output-dir ${CMAKE_BINARY_DIR}/tests/cli_sample)
+            --coils ${TIAGO_SOURCE_DIR}/tests/data/coil_sample.neo
+            --flux ${TIAGO_SOURCE_DIR}/tests/data/fluxloop_sample.diagno
+            --segrog ${TIAGO_SOURCE_DIR}/tests/data/segrog_sample.diagno
+            --seg-area 3.40e-4 --samples 8 --output-dir ${TIAGO_BINARY_DIR}/tests/cli_sample)
 foreach(bad IN ITEMS
         "no_diagnostics|nothing to evaluate|--coils;x.coils"
         "no_source|no field source|--flux;x.diagno"
@@ -609,17 +617,17 @@ add_test(NAME tiago_kinetic_profiles COMMAND $<TARGET_FILE:test_kinetic_profiles
 
 add_test(NAME tiago_diag_lint_flux
     COMMAND $<TARGET_FILE:tiago_cli> diag lint
-            ${CMAKE_SOURCE_DIR}/tests/data/fluxloop_sample.diagno
+            ${TIAGO_SOURCE_DIR}/tests/data/fluxloop_sample.diagno
             --kind flux)
 
 add_test(NAME tiago_diag_lint_segrog
     COMMAND $<TARGET_FILE:tiago_cli> diag lint
-            ${CMAKE_SOURCE_DIR}/tests/data/segrog_sample.diagno
+            ${TIAGO_SOURCE_DIR}/tests/data/segrog_sample.diagno
             --kind segrog)
 
 add_test(NAME tiago_diag_lint_invalid
     COMMAND $<TARGET_FILE:tiago_cli> diag lint
-            ${CMAKE_SOURCE_DIR}/tests/data/fluxloop_invalid.diagno
+            ${TIAGO_SOURCE_DIR}/tests/data/fluxloop_invalid.diagno
             --kind flux)
 set_tests_properties(tiago_diag_lint_invalid PROPERTIES WILL_FAIL TRUE)
 
@@ -633,51 +641,51 @@ set_tests_properties(tiago_w7x_sensor_set PROPERTIES SKIP_RETURN_CODE 77)
 if(TIAGO_ENABLE_RECONSTRUCTION)
     # VMEC++ equilibrium chain (edge field, edge reverse mode, full Jacobian vs
     # re-solved equilibria) and a noise-free reconstruction on LI383 (pinned input).
-    set(TIAGO_INPUT_LI383 ${CMAKE_BINARY_DIR}/tests/cases/input.li383_low_res)
+    set(TIAGO_INPUT_LI383 ${TIAGO_BINARY_DIR}/tests/cases/input.li383_low_res)
     add_test(NAME tiago_download_input_li383
         COMMAND ${CMAKE_COMMAND}
             -DURL=https://raw.githubusercontent.com/hiddenSymmetries/simsopt/9e027eac38028d57aa23777be52a781aa860e347/tests/test_files/input.li383_low_res
-            -DDEST=${TIAGO_INPUT_LI383} -P ${CMAKE_SOURCE_DIR}/cmake/DownloadFile.cmake)
+            -DDEST=${TIAGO_INPUT_LI383} -P ${TIAGO_SOURCE_DIR}/cmake/DownloadFile.cmake)
     set_tests_properties(tiago_download_input_li383 PROPERTIES FIXTURES_SETUP input_li383 TIMEOUT 120)
     add_test(NAME tiago_vmecpp_equilibrium
         COMMAND $<TARGET_FILE:test_vmecpp_equilibrium> ${TIAGO_INPUT_LI383}
-                ${CMAKE_BINARY_DIR}/tests/vmecpp_equilibrium)
+                ${TIAGO_BINARY_DIR}/tests/vmecpp_equilibrium)
     add_test(NAME tiago_vmecpp_parallel
         COMMAND $<TARGET_FILE:test_vmecpp_equilibrium> ${TIAGO_INPUT_LI383}
-                ${CMAKE_BINARY_DIR}/tests/vmecpp_parallel)
+                ${TIAGO_BINARY_DIR}/tests/vmecpp_parallel)
     set_tests_properties(tiago_vmecpp_parallel PROPERTIES FIXTURES_REQUIRED input_li383
         TIMEOUT 600 ENVIRONMENT "OMP_NUM_THREADS=4;OPENBLAS_NUM_THREADS=1;TIAGO_VMECPP_VERIFY=1")
     add_test(NAME tiago_reconstruct_exact
-        COMMAND ${CMAKE_SOURCE_DIR}/tests/reconstruct_exact.sh $<TARGET_FILE:tiago_reconstruct>
-                ${TIAGO_INPUT_LI383} ${CMAKE_SOURCE_DIR}/benchmarks/reconstruction/sensors.awk
-                ${CMAKE_BINARY_DIR}/tests/reconstruct_exact)
+        COMMAND ${TIAGO_SOURCE_DIR}/tests/reconstruct_exact.sh $<TARGET_FILE:tiago_reconstruct>
+                ${TIAGO_INPUT_LI383} ${TIAGO_SOURCE_DIR}/benchmarks/reconstruction/sensors.awk
+                ${TIAGO_BINARY_DIR}/tests/reconstruct_exact)
     add_test(NAME tiago_reconstruct_conservative
-        COMMAND ${CMAKE_SOURCE_DIR}/tests/reconstruct_exact.sh $<TARGET_FILE:tiago_reconstruct>
-                ${TIAGO_INPUT_LI383} ${CMAKE_SOURCE_DIR}/benchmarks/reconstruction/sensors.awk
-                ${CMAKE_BINARY_DIR}/tests/reconstruct_conservative conservative)
+        COMMAND ${TIAGO_SOURCE_DIR}/tests/reconstruct_exact.sh $<TARGET_FILE:tiago_reconstruct>
+                ${TIAGO_INPUT_LI383} ${TIAGO_SOURCE_DIR}/benchmarks/reconstruction/sensors.awk
+                ${TIAGO_BINARY_DIR}/tests/reconstruct_conservative conservative)
     set_tests_properties(tiago_vmecpp_equilibrium tiago_reconstruct_exact
         tiago_reconstruct_conservative PROPERTIES
         FIXTURES_REQUIRED input_li383 TIMEOUT 600)
     add_test(NAME tiago_joint_model
         COMMAND $<TARGET_FILE:test_joint_model> ${TIAGO_INPUT_LI383}
-                ${CMAKE_SOURCE_DIR}/benchmarks/reconstruction/sensors.awk
-                ${CMAKE_BINARY_DIR}/tests/joint_model)
+                ${TIAGO_SOURCE_DIR}/benchmarks/reconstruction/sensors.awk
+                ${TIAGO_BINARY_DIR}/tests/joint_model)
     set_tests_properties(tiago_joint_model PROPERTIES
         FIXTURES_REQUIRED input_li383 TIMEOUT 900 ENVIRONMENT "OMP_NUM_THREADS=4;OPENBLAS_NUM_THREADS=1")
     add_test(NAME tiago_infer_smoke
-        COMMAND ${CMAKE_SOURCE_DIR}/tests/infer_smoke.sh $<TARGET_FILE:tiago_infer> ${TIAGO_INPUT_LI383}
-                ${CMAKE_SOURCE_DIR}/benchmarks/reconstruction/sensors.awk
-                ${CMAKE_BINARY_DIR}/tests/infer_smoke)
+        COMMAND ${TIAGO_SOURCE_DIR}/tests/infer_smoke.sh $<TARGET_FILE:tiago_infer> ${TIAGO_INPUT_LI383}
+                ${TIAGO_SOURCE_DIR}/benchmarks/reconstruction/sensors.awk
+                ${TIAGO_BINARY_DIR}/tests/infer_smoke)
     set_tests_properties(tiago_infer_smoke PROPERTIES
         FIXTURES_REQUIRED input_li383 TIMEOUT 900 ENVIRONMENT "OMP_NUM_THREADS=4;OPENBLAS_NUM_THREADS=1")
     add_test(NAME tiago_reconstruction_shape_cache
         COMMAND $<TARGET_FILE:test_reconstruction_shape_cache> ${TIAGO_INPUT_LI383}
-                ${CMAKE_BINARY_DIR}/tests/reconstruction_shape_cache)
+                ${TIAGO_BINARY_DIR}/tests/reconstruction_shape_cache)
     set_tests_properties(tiago_reconstruction_shape_cache PROPERTIES
         FIXTURES_REQUIRED input_li383 TIMEOUT 600)
     add_test(NAME tiago_vmecpp_covariant
         COMMAND $<TARGET_FILE:test_vmecpp_equilibrium> ${TIAGO_INPUT_LI383}
-                ${CMAKE_BINARY_DIR}/tests/vmecpp_covariant 1e-5 covariant)
+                ${TIAGO_BINARY_DIR}/tests/vmecpp_covariant 1e-5 covariant)
     set_tests_properties(tiago_vmecpp_covariant PROPERTIES
         FIXTURES_REQUIRED input_li383 TIMEOUT 600 ENVIRONMENT TIAGO_VMECPP_VERIFY=1)
     # check the extracted adjoint blocks against isolated Hessian-vector products
@@ -690,7 +698,7 @@ add_test(NAME tiago_thomson COMMAND $<TARGET_FILE:test_thomson>)
 add_executable(test_recorded_magnetics tests/test_recorded_magnetics.f90)
 target_link_libraries(test_recorded_magnetics PRIVATE tiago_inference)
 add_test(NAME tiago_recorded_magnetics COMMAND $<TARGET_FILE:test_recorded_magnetics>
-    ${CMAKE_SOURCE_DIR}/tests/data/mse_coils.coils ${TIAGO_WOUT_SIMSOPT_SMALL})
+    ${TIAGO_SOURCE_DIR}/tests/data/mse_coils.coils ${TIAGO_WOUT_SIMSOPT_SMALL})
 set_tests_properties(tiago_recorded_magnetics PROPERTIES FIXTURES_REQUIRED wout_li383)
 add_executable(test_integrated_drift tests/test_integrated_drift.f90)
 target_link_libraries(test_integrated_drift PRIVATE tiago_signals)
@@ -704,27 +712,27 @@ endif()
 if(FORTSYM_BUILD)
     add_subdirectory(gen codegen)
     add_test(NAME tiago_ece_transfer_codegen COMMAND ${CMAKE_COMMAND}
-        -DGENERATOR=$<TARGET_FILE:gen_ece_transfer> -DSOURCE=${CMAKE_SOURCE_DIR}
-        -DOUTPUT=${CMAKE_BINARY_DIR}/tests/ece-transfer-codegen
-        -P ${CMAKE_SOURCE_DIR}/tests/check_ece_transfer_codegen.cmake)
+        -DGENERATOR=$<TARGET_FILE:gen_ece_transfer> -DSOURCE=${TIAGO_SOURCE_DIR}
+        -DOUTPUT=${TIAGO_BINARY_DIR}/tests/ece-transfer-codegen
+        -P ${TIAGO_SOURCE_DIR}/tests/check_ece_transfer_codegen.cmake)
     add_test(NAME tiago_thomson_regeneration COMMAND ${CMAKE_COMMAND}
         -DGENERATOR=$<TARGET_FILE:gen_thomson>
-        -DSOURCE=${CMAKE_SOURCE_DIR} -DOUTPUT=${CMAKE_BINARY_DIR}/thomson-regeneration
-        -P ${CMAKE_SOURCE_DIR}/tests/thomson_regeneration.cmake)
+        -DSOURCE=${TIAGO_SOURCE_DIR} -DOUTPUT=${TIAGO_BINARY_DIR}/thomson-regeneration
+        -P ${TIAGO_SOURCE_DIR}/tests/thomson_regeneration.cmake)
     add_test(NAME tiago_magnetic_codegen COMMAND ${CMAKE_COMMAND}
-        -DGENERATOR=$<TARGET_FILE:gen_magnetics> -DSOURCE=${CMAKE_SOURCE_DIR}
-        -DOUTPUT=${CMAKE_BINARY_DIR}/tests/magnetic-codegen
-        -P ${CMAKE_SOURCE_DIR}/tests/check_magnetic_codegen.cmake)
+        -DGENERATOR=$<TARGET_FILE:gen_magnetics> -DSOURCE=${TIAGO_SOURCE_DIR}
+        -DOUTPUT=${TIAGO_BINARY_DIR}/tests/magnetic-codegen
+        -P ${TIAGO_SOURCE_DIR}/tests/check_magnetic_codegen.cmake)
     add_test(NAME tiago_interferometer_generated COMMAND ${CMAKE_COMMAND}
         -DGENERATOR=$<TARGET_FILE:gen_interferometer>
-        -DSOURCE=${CMAKE_SOURCE_DIR}
-        -DOUTPUT=${CMAKE_BINARY_DIR}/tests/interferometer_codegen
-        -P ${CMAKE_SOURCE_DIR}/cmake/CheckInterferometerGenerated.cmake)
+        -DSOURCE=${TIAGO_SOURCE_DIR}
+        -DOUTPUT=${TIAGO_BINARY_DIR}/tests/interferometer_codegen
+        -P ${TIAGO_SOURCE_DIR}/cmake/CheckInterferometerGenerated.cmake)
     add_test(NAME tiago_recorded_codegen COMMAND ${CMAKE_COMMAND}
         -DGENERATOR=$<TARGET_FILE:gen_recorded>
-        -DEXPECTED=${CMAKE_SOURCE_DIR}/src/generated/recorded_affine.f90
-        -DWORK=${CMAKE_BINARY_DIR}/tests/codegen -P
-        ${CMAKE_SOURCE_DIR}/tests/check_recorded_codegen.cmake)
+        -DEXPECTED=${TIAGO_SOURCE_DIR}/src/generated/recorded_affine.f90
+        -DWORK=${TIAGO_BINARY_DIR}/tests/codegen -P
+        ${TIAGO_SOURCE_DIR}/tests/check_recorded_codegen.cmake)
 endif()
 if(TIAGO_ENABLE_OPENMP AND OpenMP_Fortran_FOUND)
     add_executable(benchmark_magnetics EXCLUDE_FROM_ALL
@@ -741,8 +749,8 @@ add_executable(benchmark_ece_ray EXCLUDE_FROM_ALL benchmarks/ece/benchmark_ray.f
     tests/ece_ray_fixture.f90 src/generated/ece_test_medium.f90)
 target_link_libraries(benchmark_ece_ray PRIVATE tiago_inference)
 
-add_test(NAME tiago_ece_codegen COMMAND sh ${CMAKE_SOURCE_DIR}/tests/ece_codegen.sh
-    ${CMAKE_SOURCE_DIR} "${TIAGO_FORTSYM_BUILD}" ${CMAKE_Fortran_COMPILER})
+add_test(NAME tiago_ece_codegen COMMAND sh ${TIAGO_SOURCE_DIR}/tests/ece_codegen.sh
+    ${TIAGO_SOURCE_DIR} "${TIAGO_FORTSYM_BUILD}" ${CMAKE_Fortran_COMPILER})
 set_tests_properties(tiago_ece_codegen PROPERTIES SKIP_RETURN_CODE 77 LABELS codegen)
 
 add_executable(test_dispersion_interferometer tests/test_dispersion_interferometer.f90)
@@ -762,12 +770,12 @@ target_link_libraries(test_interferometer_profiles PRIVATE tiago_inference)
 add_test(NAME tiago_interferometer_profiles COMMAND test_interferometer_profiles)
 # Synthetic loopback server; production code has no Python dependency.
 find_package(Python3 COMPONENTS Interpreter REQUIRED)
-set(TIAGO_MOCK_DIR ${CMAKE_BINARY_DIR}/tests/mock_archive)
+set(TIAGO_MOCK_DIR ${TIAGO_BINARY_DIR}/tests/mock_archive)
 add_test(NAME tiago_mock_start COMMAND ${Python3_EXECUTABLE}
-    ${CMAKE_SOURCE_DIR}/tests/mock_archive.py start ${TIAGO_MOCK_DIR})
+    ${TIAGO_SOURCE_DIR}/tests/mock_archive.py start ${TIAGO_MOCK_DIR})
 set_tests_properties(tiago_mock_start PROPERTIES FIXTURES_SETUP archive_http)
 add_test(NAME tiago_mock_stop COMMAND ${Python3_EXECUTABLE}
-    ${CMAKE_SOURCE_DIR}/tests/mock_archive.py stop ${TIAGO_MOCK_DIR})
+    ${TIAGO_SOURCE_DIR}/tests/mock_archive.py stop ${TIAGO_MOCK_DIR})
 set_tests_properties(tiago_mock_stop PROPERTIES FIXTURES_CLEANUP archive_http)
 add_executable(test_http_client tests/test_http_client.f90)
 target_link_libraries(test_http_client PRIVATE tiago_signals)
@@ -787,7 +795,7 @@ set_tests_properties(tiago_http_parallel PROPERTIES FIXTURES_REQUIRED "archive_h
     FIXTURES_SETUP archive_parallel
     DEPENDS tiago_online_source TIMEOUT 30 RESOURCE_LOCK archive_http)
 add_test(NAME tiago_archive_events COMMAND ${Python3_EXECUTABLE}
-    ${CMAKE_SOURCE_DIR}/tests/check_archive_events.py ${TIAGO_MOCK_DIR})
+    ${TIAGO_SOURCE_DIR}/tests/check_archive_events.py ${TIAGO_MOCK_DIR})
 set_tests_properties(tiago_archive_events PROPERTIES FIXTURES_REQUIRED "archive_http;archive_parallel"
     FIXTURES_SETUP archive_checked
     DEPENDS "tiago_http_client;tiago_online_source;tiago_http_parallel")
@@ -822,9 +830,9 @@ add_test(NAME tiago_ece_geometry_vmec COMMAND $<TARGET_FILE:test_ece_geometry>
 set_tests_properties(tiago_ece_geometry_vmec PROPERTIES FIXTURES_REQUIRED wout_li383)
 if(FORTSYM_BUILD)
     add_test(NAME tiago_ece_geometry_codegen COMMAND ${CMAKE_COMMAND}
-        -DGENERATOR=$<TARGET_FILE:gen_ece_geometry> -DSOURCE=${CMAKE_SOURCE_DIR}
-        -DOUTPUT=${CMAKE_BINARY_DIR}/tests/ece-geometry-codegen
-        -P ${CMAKE_SOURCE_DIR}/tests/check_ece_geometry_codegen.cmake)
+        -DGENERATOR=$<TARGET_FILE:gen_ece_geometry> -DSOURCE=${TIAGO_SOURCE_DIR}
+        -DOUTPUT=${TIAGO_BINARY_DIR}/tests/ece-geometry-codegen
+        -P ${TIAGO_SOURCE_DIR}/tests/check_ece_geometry_codegen.cmake)
 endif()
 
 add_executable(test_ece_geometry_limits tests/test_ece_geometry_limits.f90)
@@ -840,18 +848,18 @@ add_test(NAME tiago_ece_opacity COMMAND test_ece_opacity
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/data/ece_x1_flr.dat)
 if(FORTSYM_BUILD)
     add_test(NAME tiago_ece_opacity_codegen COMMAND ${CMAKE_COMMAND}
-        -DGENERATOR=$<TARGET_FILE:gen_ece_opacity> -DSOURCE=${CMAKE_SOURCE_DIR}
-        -DOUTPUT=${CMAKE_BINARY_DIR}/tests/ece-opacity-codegen
-        -P ${CMAKE_SOURCE_DIR}/tests/check_ece_opacity_codegen.cmake)
+        -DGENERATOR=$<TARGET_FILE:gen_ece_opacity> -DSOURCE=${TIAGO_SOURCE_DIR}
+        -DOUTPUT=${TIAGO_BINARY_DIR}/tests/ece-opacity-codegen
+        -P ${TIAGO_SOURCE_DIR}/tests/check_ece_opacity_codegen.cmake)
 endif()
 add_executable(benchmark_ece_opacity EXCLUDE_FROM_ALL benchmarks/ece/benchmark_opacity.f90)
 target_link_libraries(benchmark_ece_opacity PRIVATE tiago_inference)
 
 if(FORTSYM_BUILD)
     add_test(NAME tiago_ece_recorded_codegen COMMAND ${CMAKE_COMMAND}
-        -DGENERATOR=$<TARGET_FILE:gen_ece_recorded> -DSOURCE=${CMAKE_SOURCE_DIR}
-        -DOUTPUT=${CMAKE_BINARY_DIR}/tests/ece-recorded-codegen
-        -P ${CMAKE_SOURCE_DIR}/tests/check_ece_recorded_codegen.cmake)
+        -DGENERATOR=$<TARGET_FILE:gen_ece_recorded> -DSOURCE=${TIAGO_SOURCE_DIR}
+        -DOUTPUT=${TIAGO_BINARY_DIR}/tests/ece-recorded-codegen
+        -P ${TIAGO_SOURCE_DIR}/tests/check_ece_recorded_codegen.cmake)
 endif()
 
 add_library(tiago_ece_recorded_fixture STATIC tests/ece_recorded_fixture.f90)
@@ -862,7 +870,7 @@ add_test(NAME tiago_ece_recorded COMMAND test_ece_recorded)
 add_executable(test_ece_posterior tests/test_ece_posterior.f90)
 target_link_libraries(test_ece_posterior PRIVATE tiago_ece_recorded_fixture)
 add_test(NAME tiago_ece_posterior COMMAND test_ece_posterior
-    ${CMAKE_BINARY_DIR}/tests/ece-posterior.csv)
+    ${TIAGO_BINARY_DIR}/tests/ece-posterior.csv)
 add_executable(benchmark_ece_recorded EXCLUDE_FROM_ALL benchmarks/ece/benchmark_recorded.f90)
 target_link_libraries(benchmark_ece_recorded PRIVATE tiago_ece_recorded_fixture)
 
@@ -871,9 +879,9 @@ target_link_libraries(test_robust_signals PRIVATE tiago_inference)
 add_test(NAME tiago_robust_signals COMMAND test_robust_signals)
 if(TARGET gen_robust_signals)
     add_test(NAME tiago_robust_codegen COMMAND ${CMAKE_COMMAND}
-        -DGENERATOR=$<TARGET_FILE:gen_robust_signals> -DSOURCE=${CMAKE_SOURCE_DIR}
-        -DOUTPUT=${CMAKE_BINARY_DIR}/tests/robust-codegen
-        -P ${CMAKE_SOURCE_DIR}/tests/check_robust_codegen.cmake)
+        -DGENERATOR=$<TARGET_FILE:gen_robust_signals> -DSOURCE=${TIAGO_SOURCE_DIR}
+        -DOUTPUT=${TIAGO_BINARY_DIR}/tests/robust-codegen
+        -P ${TIAGO_SOURCE_DIR}/tests/check_robust_codegen.cmake)
 endif()
 
 if(TIAGO_ENABLE_RECONSTRUCTION)
@@ -883,9 +891,23 @@ if(TIAGO_ENABLE_RECONSTRUCTION)
     target_link_libraries(tiago_joint_recorded_fixture PUBLIC tiago_reconstruction tiago_signals)
     add_executable(test_joint_recorded tests/test_joint_recorded.f90)
     target_link_libraries(test_joint_recorded PRIVATE tiago_joint_recorded_fixture)
-    add_test(NAME tiago_joint_recorded COMMAND ${CMAKE_SOURCE_DIR}/tests/joint_recorded.sh
+    add_test(NAME tiago_joint_recorded COMMAND ${TIAGO_SOURCE_DIR}/tests/joint_recorded.sh
         $<TARGET_FILE:test_joint_recorded> ${TIAGO_INPUT_LI383}
-        ${CMAKE_SOURCE_DIR}/benchmarks/reconstruction/sensors.awk
-        ${CMAKE_BINARY_DIR}/tests/joint-recorded)
+        ${TIAGO_SOURCE_DIR}/benchmarks/reconstruction/sensors.awk
+        ${TIAGO_BINARY_DIR}/tests/joint-recorded)
     set_tests_properties(tiago_joint_recorded PROPERTIES FIXTURES_REQUIRED input_li383 TIMEOUT 3600)
+endif()
+
+if(TIAGO_IS_TOP_LEVEL)
+    FetchContent_GetProperties(fortgen_runtime)
+    add_test(NAME tiago_subproject COMMAND ${CMAKE_COMMAND}
+        -DSOURCE=${TIAGO_SOURCE_DIR} -DOUTPUT=${TIAGO_BINARY_DIR}/tests/subproject
+        -DGENERATOR=${CMAKE_GENERATOR}
+        -DC_COMPILER=${CMAKE_C_COMPILER} -DFORTRAN_COMPILER=${CMAKE_Fortran_COMPILER}
+        -DBUILD_TYPE=${CMAKE_BUILD_TYPE} -DCONFIG=$<CONFIG>
+        -DFORTNUM_SOURCE=${fortnum_SOURCE_DIR} -DLIBNEO_SOURCE=${libneo_SOURCE_DIR}
+        -DFORTIO_SOURCE=${fortio_SOURCE_DIR} -DFORTGEN_SOURCE=${fortgen_runtime_SOURCE_DIR}
+        -DJSONFORTRAN_SOURCE=${jsonfortran_SOURCE_DIR}
+        -P ${TIAGO_SOURCE_DIR}/tests/check_subproject.cmake)
+    set_tests_properties(tiago_subproject PROPERTIES TIMEOUT 600)
 endif()
