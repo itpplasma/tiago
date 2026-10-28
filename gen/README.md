@@ -195,3 +195,13 @@ Maxwellian resonant-shell reference integrands. All six include partial rows.
 Build/run `gen_ece_recorded` and run `ctest -R tiago_ece_recorded_codegen` with
 `TIAGO_FORTSYM_BUILD` configured. The [recorded model](../docs/ece-recorded.md)
 describes their composition and the finite-angle reference limit.
+
+`gen_robust_signals` emits the Student residual transform and its derivative,
+including the cancellation-free small-residual series. The native
+`tiago_robust_codegen` test regenerates both leaves and compares their bytes.
+
+The recorded-diagnostic and robust kernels reproduce with the declared FortSym revision
+21d157b394e775a999a8d9ed0be409eac1eb9574 and its pinned FortGen dependency.
+Use matching FortSym module files and shared library from one build. Changing
+`TIAGO_FORTSYM_BUILD` in an existing TIAGO build requires clearing the cached
+`FORTSYM_LIBRARY` (configure with `-UFORTSYM_LIBRARY`).

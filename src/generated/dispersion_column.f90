@@ -15,15 +15,17 @@ contains
         implicit none
         real(dp), intent(in) :: phase, wavelength, neutral, neutral_scale, environment, env_gain, phase0
         real(dp), intent(out) :: value(1), jac(1,7)
+        real(dp) :: t1
 
+        t1 = wavelength**2
         value(1) = (phase - env_gain*environment + neutral*neutral_scale*3.1415926535897931E+000_dp*4/ &
             wavelength - phase0)*2.3657941291970900E+014_dp/wavelength
         jac(1,1) = 2.3657941291970900E+014_dp/wavelength
         jac(1,2) = (env_gain*environment*wavelength*2.3657941291970900E+014_dp - neutral*neutral_scale* &
             3.1415926535897931E+000_dp*1.8926353033576700E+015_dp - phase*wavelength* &
             2.3657941291970900E+014_dp + phase0*wavelength*2.3657941291970900E+014_dp)/wavelength**3
-        jac(1,3) = neutral_scale*3.1415926535897931E+000_dp*9.4631765167883600E+014_dp/wavelength**2
-        jac(1,4) = neutral*3.1415926535897931E+000_dp*9.4631765167883600E+014_dp/wavelength**2
+        jac(1,3) = neutral_scale*3.1415926535897931E+000_dp*9.4631765167883600E+014_dp/t1
+        jac(1,4) = neutral*3.1415926535897931E+000_dp*9.4631765167883600E+014_dp/t1
         jac(1,5) = -env_gain*2.3657941291970900E+014_dp/wavelength
         jac(1,6) = -environment*2.3657941291970900E+014_dp/wavelength
         jac(1,7) = -2.3657941291970900E+014_dp/wavelength

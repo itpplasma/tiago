@@ -14,7 +14,7 @@ contains
         implicit none
         real(dp), intent(in) :: a, z, mu
         real(dp), intent(out) :: value, row(3)
-        real(dp) :: t1, t2, t3, t4, t5, t6, t7
+        real(dp) :: t1, t2, t3, t4, t5, t6, t7, t8
 
         t1 = a**2
         t2 = sqrt(t1 - z)
@@ -23,9 +23,10 @@ contains
         t5 = -mu**2 + 1
         t6 = t5**2
         t7 = t2**4
+        t8 = t2*2
         value = t3*t4*t6
-        row(1) = a*t3*t7*t6*1*2*5/(t2*2) + t3*t4*t6*(-a*a*mu*1*2*2/(t2*2) - a*1*2*2 - mu*t2*1*2)
-        row(2) = -t3*t7*t6*1*5/(t2*2) + t3*t4*t6*(a*mu*1*2/(t2*2) + 1)
+        row(1) = a*t3*t7*t6*1*2*5/t8 + t3*t4*t6*(-a*a*mu*1*2*2/t8 - a*1*2*2 - mu*t2*1*2)
+        row(2) = -t3*t7*t6*1*5/t8 + t3*t4*t6*(a*mu*1*2/t8 + 1)
         row(3) = -a*t3*t2*t4*t6*1*2 - mu*t3*t4*t5*1*2*2
 
     end subroutine ece_doppler_x2

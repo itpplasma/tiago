@@ -5,6 +5,24 @@ work is committed and pushed to `main`. The tested production snapshot is
 [`e14b45a`](https://github.com/itpplasma/tiago/commit/e14b45a0b0877163175b6180e01dfe47069576da).
 This status file adds the handoff record without changing production code.
 
+## Joint recorded-signal inference — October 28, 2026
+
+The [joint workflow](docs/recorded-joint-inference.md) combines recorded
+Thomson, interferometer, moving-ray ECE and magnetic flux signals with common
+equilibrium and kinetic profiles. It includes correlated calibration priors,
+campaign drift factors, Student likelihoods, locally protected instrument
+discrepancy and an autoregressive Gaussian-process proposal surrogate from
+[fortnum](https://github.com/lazy-fortran/fortnum). Final posterior evaluations
+use the exact model. The likelihood conditions on fixed observed covariance.
+
+Synthetic offline/HTTP parity and complete derivatives are checked on the
+pinned public stellarator input. The solved-equilibrium adjoint now also
+propagates contravariant magnetic-field sensitivities used by moving rays;
+seven equilibrium parameter kinds are compared with re-solved finite
+differences. The [repeated-noise and ablation scripts](benchmarks/reconstruction/README.md)
+report local Laplace intervals conditional on a recovered mode, without
+certifying other modes, continuum accuracy or experimental performance.
+
 ## Recorded ECE composition — October 28, 2026
 
 The [recorded ECE model](docs/ece-recorded.md) joins the existing cold rays,
@@ -12,7 +30,8 @@ equilibrium/profile medium, perpendicular opacity, transport and calibrated
 receiver. It supplies sampled and composed forward/reverse derivatives and
 synthetic repeated-noise posterior validation. The documented angle, density,
 provider-chart and cold fast-branch restrictions apply. General oblique opacity
-and the solved-equilibrium input adjoint are not validated by this composition.
+is not validated by this composition. The joint workflow above additionally
+checks the solved-equilibrium input adjoint on its synthetic case.
 
 ## Perpendicular ECE opacity — October 28, 2026
 

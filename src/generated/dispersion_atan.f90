@@ -14,20 +14,21 @@ contains
         implicit none
         real(dp), intent(in) :: ival, qval, ai, aq, oi, oq
         real(dp), intent(out) :: value(1), jac(1,6)
-        real(dp) :: t1, t2, t3, t4, t5
+        real(dp) :: t1, t2, t3, t4, t5, t6
 
         t1 = qval - oq
         t2 = ival - oi
         t3 = ai**2
         t4 = aq**2
         t5 = t2**2/t3 + t1**2/t4
+        t6 = ai*aq*t5
         value(1) = atan2(t1/aq, t2/ai)
-        jac(1,1) = -t1/(ai*aq*t5)
-        jac(1,2) = t2/(ai*aq*t5)
+        jac(1,1) = -t1/t6
+        jac(1,2) = t2/t6
         jac(1,3) = t2*t1/(aq*t3*t5)
         jac(1,4) = -t2*t1/(ai*t4*t5)
-        jac(1,5) = t1/(ai*aq*t5)
-        jac(1,6) = -t2/(ai*aq*t5)
+        jac(1,5) = t1/t6
+        jac(1,6) = -t2/t6
 
     end subroutine dispersion_atan
 

@@ -1,10 +1,37 @@
 # Synthetic equilibrium reconstructions
 
+`recorded_validation.py` repeats the synthetic recorded-signal joint fit with
+independent Gaussian noise. First run the `tiago_joint_recorded` CTest with
+reconstruction enabled, or pass `-1` as the fifth argument to
+`tests/joint_recorded.sh` to also write the fixed-calibration and Thomson-only
+ablations. The fit scans equilibrium flux and initializes calibrations from
+the observed signals; it never uses the injected truth as a starting value.
+It rejects a local solution whose posterior density is below the known
+synthetic truth. The repeated fits start from this validated noiseless mode.
+
+```sh
+python3 benchmarks/reconstruction/recorded_validation.py \
+    --binary build/test_joint_recorded \
+    --input build/tests/cases/input.li383_low_res \
+    --baseline /path/to/baseline/work --output /path/to/realisations \
+    --realisations 64 --threads 1
+python3 benchmarks/reconstruction/plot_recorded_validation.py \
+    /path/to/baseline/work /path/to/plots \
+    --coverage /path/to/realisations/coverage.csv
+```
+
+The plotting script needs NumPy and Matplotlib. It plots every sampled profile
+coordinate without smoothing, with common scales across cases, physical units,
+and Wilson binomial intervals for repeated-noise coverage. The intervals are
+local Gauss–Newton/Laplace approximations, conditional on one recovered mode
+and fixed observed noise covariance. They do not certify global posterior
+mass, other equilibrium modes, continuum accuracy or experimental performance.
+
 The scripts here reconstruct known equilibria from synthetic magnetic data with
 `tiago_reconstruct`. Each fit uses VMEC++ equilibria, Tiago's plasma and coil
 signals, and Levenberg–Marquardt with the exact adjoint Jacobian.
 
-The scripts need no Python. They need a build with
+The shell scripts below need no Python. They need a build with
 `-DTIAGO_ENABLE_RECONSTRUCTION=ON` (see the top-level README), plus `awk`, `bc`
 and `curl`. They are not part of `ctest`. `ctest` runs smaller cases instead:
 - `tests/reconstruct_exact.sh`, a noise-free LI383 fit;
