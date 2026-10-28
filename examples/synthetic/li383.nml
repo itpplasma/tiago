@@ -1,0 +1,10 @@
+! Synthetic diagnostics on the low-resolution LI383 equilibrium.
+! Inputs: wout from the Simsopt test files (see docs/synthetic-forward.md),
+! geometry.nc and profiles.nc from the CDL files here (ncgen -4).
+&synth
+  wout = 'wout_li383_low_res_reference.nc'
+  geometry = 'geometry.nc'
+  profiles = 'profiles.nc'
+  sensors = 'li383.sensors'
+  output = 'li383_synthetic.nc'
+/

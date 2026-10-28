@@ -1,0 +1,3 @@
+tiago-sensors 1
+group diamagnetic_loop loops.diagno select=DIA_PHI0
+group flux_loop loops.diagno select=TOR_TOP
