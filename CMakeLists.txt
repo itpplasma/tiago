@@ -199,6 +199,7 @@ add_library(tiago_inference STATIC
     src/inference/thomson_scattering.f90
     src/inference/profile_geometry_io.f90
     src/inference/mse_state.f90
+    src/inference/point_table.f90
     src/generated/ts_depolarization.f90
     src/generated/ts_spectral.f90
     src/generated/ts_bessel_chain.f90
@@ -569,6 +570,11 @@ add_test(NAME tiago_synthetic_forward
 add_test(NAME tiago_synthetic_forward_vmec
     COMMAND $<TARGET_FILE:test_synthetic_forward> ${TIAGO_SYNTH_TEST_DIR} ${TIAGO_WOUT_SIMSOPT_SMALL})
 set_tests_properties(tiago_synthetic_forward_vmec PROPERTIES FIXTURES_REQUIRED wout_li383)
+add_executable(test_point_table tests/test_point_table.f90)
+target_link_libraries(test_point_table PRIVATE tiago_synthetic)
+add_test(NAME tiago_point_table
+    COMMAND $<TARGET_FILE:test_point_table> ${TIAGO_SYNTH_TEST_DIR} ${TIAGO_WOUT_SIMSOPT_SMALL})
+set_tests_properties(tiago_point_table PROPERTIES FIXTURES_REQUIRED wout_li383)
 # The public example: CDL inputs -> netCDF-4 (ncgen) -> tiago_synth.
 find_program(TIAGO_NCGEN ncgen)
 if(TIAGO_NCGEN)

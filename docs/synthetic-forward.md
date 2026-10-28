@@ -9,7 +9,8 @@ with the virtual-casing plasma model.
 
 ```text
 &synth
-  wout     = 'wout.nc'          ! required
+  wout     = 'wout.nc'          ! required unless point_table is set
+  point_table = ''              ! equilibrium on a grid, see below
   profiles = 'profiles.nc'      ! ne, te, ti (and zeff) on s; omitted: profiles stay at their defaults
   geometry = 'geometry.nc'      ! one group per profile instrument
   sensors  = 'machine.sensors'  ! magnetic sensor set (docs/sensor-sets.md)
@@ -48,6 +49,35 @@ caller with s = (r_eff / a)^2, a = `Aminor_p` of the wout.
 Missing groups are skipped; malformed groups, NaN values, non-positive
 profiles and missing variables stop the run with a message naming the file,
 group and variable. Nothing is filled in.
+
+## Equilibria on a grid and islands
+
+`point_table = 'table.nc'` replaces the wout for the profile instruments by an
+equilibrium sampled on a cylindrical grid by any code (SPECTRE, HINT, KIN6D or
+VMEC itself), so TIAGO needs no code-specific reader (`tiago_point_table`):
+
+| variable | content |
+|---|---|
+| `R(r)`, `Z(z)` [m], `phi(phi)` [rad] | uniform grids; `phi` covers one field period without its end point; global attribute `nfp` |
+| `rho(phi, z, r)` | flux label, 1 on the boundary, > 1 outside |
+| `br`, `bphi`, `bz(phi, z, r)` [T] | cylindrical field components |
+| `status(phi, z, r)` | 0 inside the plasma, 1 outside (values defined), 2 no data |
+| `island(phi, z, r)`, `island_rho(island_count)` | optional: index of the island whose interior holds the point, and its plateau label |
+
+The island regions come from the equilibrium code's field-line connectivity;
+TIAGO does not recompute them. Inside island k the profile label is
+`island_rho(k)`, so the kinetic profiles are flat across the island. Values
+between nodes are trilinear in (R, phi, Z): a point on a node reproduces the
+tabulated values exactly, elsewhere the error is that of the grid. Points with
+a no-data corner get zero density and temperature. Magnetics and MSE still
+need the wout.
+
+`tiago_point_table` checks an island fixture (circles with an island of radius
+0.1 m and plateau rho = 0.5): a Thomson point inside the island gives the
+plateau density to round-off, and the chord through the island agrees with the
+hand integral with the plateau to 2.2e-6 on a 5 mm grid. The LI383 state
+sampled on a 1 cm grid gives s, ne and Te at grid nodes equal to the native VMEC
+path to round-off, and a chord inside the boundary within 8.3e-5.
 
 ## Output
 

@@ -6,11 +6,11 @@ program tiago_synth
     implicit none
 
     character(len=4096) :: wout = '', output = 'synthetic.nc', profiles = '', geometry = '', &
-        sensors = '', coils = '', extcur = ''
+        sensors = '', coils = '', extcur = '', point_table = ''
     character(len=32) :: plasma_sheet = 'contravariant'
     integer :: npanel = 200, thomson_points = 4, ece_points = 4000, profile_knots = 12, &
         plasma_nphi = 64, plasma_ntheta = 64
-    namelist /synth/ wout, output, profiles, geometry, sensors, coils, extcur, plasma_sheet, &
+    namelist /synth/ wout, output, profiles, geometry, sensors, coils, extcur, point_table, plasma_sheet, &
         npanel, thomson_points, ece_points, profile_knots, plasma_nphi, plasma_ntheta
     character(len=4096) :: path
     character(len=:), allocatable :: message
@@ -24,7 +24,8 @@ program tiago_synth
     read(unit, nml=synth, iostat=ios)
     close(unit)
     if (ios /= 0) call die(trim(path)//': cannot read namelist &synth')
-    if (len_trim(wout) == 0) call die(trim(path)//': wout is required')
+    if (len_trim(wout) == 0 .and. len_trim(point_table) == 0) &
+        call die(trim(path)//': wout or point_table is required')
     select case (trim(plasma_sheet))
     case ('contravariant', 'covariant', 'conservative')
     case default
@@ -39,6 +40,7 @@ program tiago_synth
     cfg%sensors = trim(sensors)
     cfg%coils = trim(coils)
     cfg%extcur = trim(extcur)
+    cfg%point_table = trim(point_table)
     cfg%sheet = trim(plasma_sheet)
     cfg%npanel = npanel
     cfg%thomson_points = thomson_points
