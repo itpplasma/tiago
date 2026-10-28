@@ -920,7 +920,10 @@ add_library(tiago_wall STATIC
     src/generated/wall_radiance.f90
     src/diagnostics/wall_synthetic.f90)
 set_target_properties(tiago_wall PROPERTIES
-    Fortran_STANDARD 2018 Fortran_STANDARD_REQUIRED YES)
+    Fortran_STANDARD 2018 Fortran_STANDARD_REQUIRED YES
+    Fortran_MODULE_DIRECTORY "${TIAGO_MODULE_DIR}")
+target_include_directories(tiago_wall PUBLIC
+    "$<BUILD_INTERFACE:${TIAGO_MODULE_DIR}>")
 target_link_libraries(tiago_wall PUBLIC tiago_signals)
 if(TIAGO_ENABLE_OPENMP AND OpenMP_Fortran_FOUND)
     target_link_libraries(tiago_wall PUBLIC OpenMP::OpenMP_Fortran)
