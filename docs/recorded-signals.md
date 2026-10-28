@@ -54,9 +54,13 @@ parameters. Persistence and cross-process sharing are left to future sources.
 ## Offline layout: `tiago-signal-1`
 
 `tiago_netcdf_source::netcdf_source_t%path` names one netCDF file containing
-one logical scalar channel and one version. A device-side registry may choose
-files for many channels; the same read contract applies to every file.
-Both classic netCDF and netCDF-4 with the following root-level layout work.
+one logical scalar channel and one version at the selected location. Optional
+`%group` selects a netCDF-4 group, for example `/channels/voltage`; unset or
+empty selects the root, preserving classic netCDF support. A device-side registry
+may map channels to files and groups. No recursive discovery is performed.
+The following layout applies within the selected group, including its own global
+attributes. The `sample` dimension may be local or inherited from a parent group.
+Missing groups and channel or version mismatches return an error with empty output.
 
 | Item | Required content |
 | --- | --- |

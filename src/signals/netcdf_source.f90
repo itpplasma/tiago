@@ -2,11 +2,12 @@ module tiago_netcdf_source
     use, intrinsic :: iso_c_binding, only: &
         c_int, c_size_t, c_char, c_double, c_null_char
     use tiago_signal_source, only: signal_source_t, signal_request_t, &
-                                   signal_window_t, version_matches
+        signal_window_t, version_matches
     implicit none
     private
     type, extends(signal_source_t), public :: netcdf_source_t
         character(:), allocatable :: path
+        character(:), allocatable :: group
     contains
         procedure :: read => file_read
     end type
@@ -20,6 +21,13 @@ module tiago_netcdf_source
         integer(c_int) function nc_close(id) bind(C)
             import :: c_int, c_size_t, c_char, c_double
             integer(c_int), value :: id
+        end function
+        integer(c_int) function nc_inq_grp_full_ncid(grpid, grpname, ncgrpid) &
+                bind(C)
+            import :: c_int, c_size_t, c_char, c_double
+            integer(c_int), value :: grpid
+            character(kind=c_char), intent(in) :: grpname(*)
+            integer(c_int), intent(out) :: ncgrpid
         end function
         integer(c_int) function nc_inq_dimid(id, name, dim) bind(C)
             import :: c_int, c_size_t, c_char, c_double
@@ -49,7 +57,7 @@ module tiago_netcdf_source
             integer(c_int), intent(out) :: dims(*)
         end function
         integer(c_int) function nc_get_vara_double( &
-            id, var, first, count, values) bind(C)
+                id, var, first, count, values) bind(C)
             import :: c_int, c_size_t, c_char, c_double
             integer(c_int), value :: id, var
             integer(c_size_t), intent(in) :: first(*), count(*)
@@ -80,7 +88,7 @@ contains
         type(signal_request_t), intent(in) :: request
         type(signal_window_t), intent(out) :: window
         integer, intent(out) :: status
-        integer(c_int) :: id, dim, tv, sv, vv, cv, rc, dims(2), rank
+        integer(c_int) :: root, id, dim, tv, sv, vv, cv, rc, dims(2), rank
         integer(c_size_t) :: total, lo, hi, mid, first, after, n
         real(c_double) :: value(1)
         character(:), allocatable :: text, original_checksum
@@ -88,8 +96,15 @@ contains
         status = 1
         if (.not. request%valid()) return
         if (.not. allocated(self%path)) return
-        rc = nc_open(self%path//c_null_char, 0_c_int, id)
+        rc = nc_open(self%path//c_null_char, 0_c_int, root)
         if (rc /= 0) return
+        id = root
+        if (allocated(self%group)) then
+            if (len(self%group) > 0) then
+                rc = nc_inq_grp_full_ncid(root, self%group//c_null_char, id)
+                if (rc /= 0) goto 900
+            end if
+        end if
         call attribute('format', text)
         if (rc /= 0) goto 900
         if (text /= 'tiago-signal-1') goto 900
@@ -172,7 +187,7 @@ contains
             allocate (window%covariance(n, n))
             if (n > 0) then
                 rc = nc_get_vara_double(id, cv, [first, first], [n, n], &
-                                        window%covariance)
+                    window%covariance)
                 if (rc /= 0) goto 900
             end if
         else if (rc /= -49) then ! NC_ENOTVAR
@@ -184,13 +199,13 @@ contains
             if (window%provenance%checksum /= original_checksum) goto 900
         end if
         window%provenance%metadata = window%provenance%metadata// &
-                                    new_line('a')//'record_checksum='//original_checksum
+            new_line('a')//'record_checksum='//original_checksum
         if (any(window%time < request%first)) goto 900
         if (any(window%time > request%last)) goto 900
         window%provenance%request_key = request%key()
         if (.not. window%has_provenance()) goto 900
         status = 0
-900     rc = nc_close(id)
+        900     rc = nc_close(root)
         if (rc /= 0) status = 1
         if (status /= 0) window = signal_window_t()
     contains

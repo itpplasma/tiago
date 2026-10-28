@@ -605,7 +605,8 @@ add_executable(benchmark_recorded EXCLUDE_FROM_ALL
     benchmarks/signals/benchmark_recorded.f90)
 target_link_libraries(benchmark_recorded PRIVATE tiago_inference)
 
-add_executable(test_signal_sources tests/test_signal_sources.f90)
+add_executable(test_signal_sources tests/test_signal_sources.f90
+    tests/grouped_signal_fixture.c)
 target_link_libraries(test_signal_sources PRIVATE tiago_signals)
 add_test(NAME tiago_signal_sources COMMAND $<TARGET_FILE:test_signal_sources>)
 add_executable(test_recorded_diagnostic tests/test_recorded_diagnostic.f90)
