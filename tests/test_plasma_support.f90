@@ -1,7 +1,9 @@
 program test_plasma_support
     !! Plasma sheet-current model checks that need no reference code.
     !! Usage: test_plasma_support <wout.nc>
-    !!  1. Ampere: a closed poloidal loop around the plasma gives mu0 * I_tor (VMEC ctor).
+    !!  1. Ampere: a closed poloidal loop around the plasma gives mu0 * I_tor (VMEC ctor),
+    !!     signed: ctor is the current along +phi, so a loop counterclockwise in
+    !!     (R, Z) sees -mu0 ctor.
     !!  2. curl A = B: the flux of A around a small square equals B.n * area.
     !!  4. The boundary-shape Jacobian matches central finite differences.
     use, intrinsic :: iso_fortran_env, only: dp => real64, error_unit
@@ -38,9 +40,10 @@ program test_plasma_support
     end do
     call plasma%sample_bfield(pts, field)
     circ = sum(field * dls)
-    call check('Ampere: |loop integral of B| = mu0 |I_tor|', &
-        abs(circ), mu0 * abs(ctor), merge(1.0e-5_dp, 2.0e-3_dp, conservative))
+    call check('Ampere: loop integral of B = -mu0 I_tor', &
+        circ, -mu0 * ctor, merge(1.0e-5_dp, 2.0e-3_dp, conservative))
     if (conservative) call check_current_conservation()
+    call check_loop_shapes()
 
     ! 2. curl A = B on a 1 cm square in the x-y plane outside the plasma.
     h = 0.01_dp
@@ -106,10 +109,72 @@ contains
                     cos(theta)] * radius * 2.0_dp * pi / real(n, dp)
             end do
             call plasma%sample_bfield(p, b)
-            call check('covariant current conservation', abs(sum(b * dl)), &
-                mu0 * abs(ctor), 1.0e-5_dp)
+            call check('covariant current conservation', sum(b * dl), &
+                -mu0 * ctor, 1.0e-5_dp)
         end do
     end subroutine check_current_conservation
+
+    subroutine check_loop_shapes()
+        !! Ampere's law on a rectangle and a tilted ellipse in other toroidal
+        !! planes: the enclosed current must not depend on the loop.
+        ! Midpoint rule per side: second order only, hence n points per side.
+        integer, parameter :: m = n
+        real(dp) :: phi, corner(2, 5), rz(2), drz(2), e(3), p(3, 4 * m), dl(3, 4 * m), b(3, 4 * m)
+        real(dp) :: theta, tilt
+        integer :: side, j, k, nfp
+
+        call read_nfp(trim(wout), nfp)
+        ! Rectangle 3 a around the axis, counterclockwise in (R, Z), quarter period.
+        phi = 0.5_dp * pi / nfp
+        corner = reshape([-1, -1, 1, -1, 1, 1, -1, 1, -1, -1], [2, 5]) * 3.0_dp * aminor
+        e = [cos(phi), sin(phi), 0.0_dp]
+        k = 0
+        do side = 1, 4
+            drz = (corner(:, side + 1) - corner(:, side)) / real(m, dp)
+            do j = 1, m
+                k = k + 1
+                rz = corner(:, side) + (real(j, dp) - 0.5_dp) * drz
+                p(:, k) = (rmajor + rz(1)) * e + [0.0_dp, 0.0_dp, rz(2)]
+                dl(:, k) = drz(1) * e + [0.0_dp, 0.0_dp, drz(2)]
+            end do
+        end do
+        call plasma%sample_bfield(p, b)
+        call check('Ampere, rectangle at a quarter period', sum(b * dl), -mu0 * ctor, &
+            merge(1.0e-5_dp, 2.0e-3_dp, conservative))
+        ! Ellipse with semi-axes 4 a and 2.5 a tilted by 0.4 rad, half period.
+        phi = pi / nfp
+        tilt = 0.4_dp
+        e = [cos(phi), sin(phi), 0.0_dp]
+        do j = 1, n
+            theta = 2.0_dp * pi * (real(j, dp) - 0.5_dp) / real(n, dp)
+            rz = rotate([4.0_dp * aminor * cos(theta), 2.5_dp * aminor * sin(theta)], tilt)
+            drz = rotate([-4.0_dp * aminor * sin(theta), 2.5_dp * aminor * cos(theta)], tilt) &
+                * 2.0_dp * pi / real(n, dp)
+            p(:, j) = (rmajor + rz(1)) * e + [0.0_dp, 0.0_dp, rz(2)]
+            dl(:, j) = drz(1) * e + [0.0_dp, 0.0_dp, drz(2)]
+        end do
+        call plasma%sample_bfield(p(:, :n), b(:, :n))
+        call check('Ampere, tilted ellipse at a half period', sum(b(:, :n) * dl(:, :n)), -mu0 * ctor, &
+            merge(1.0e-5_dp, 2.0e-3_dp, conservative))
+    end subroutine check_loop_shapes
+
+    pure function rotate(v, angle) result(w)
+        real(dp), intent(in) :: v(2), angle
+        real(dp) :: w(2)
+        w = [cos(angle) * v(1) - sin(angle) * v(2), sin(angle) * v(1) + cos(angle) * v(2)]
+    end function rotate
+
+    subroutine read_nfp(path, nfp)
+        character(len=*), intent(in) :: path
+        integer, intent(out) :: nfp
+        integer :: ncid, varid, status
+
+        status = nf90_open(path, nf90_nowrite, ncid)
+        if (status /= 0) error stop 'cannot open wout file'
+        status = nf90_inq_varid(ncid, 'nfp', varid)
+        status = nf90_get_var(ncid, varid, nfp)
+        status = nf90_close(ncid)
+    end subroutine read_nfp
 
     subroutine check_shape(vb, mode)
         !! rmnc(mode) and zmns(mode) columns of both signals vs central differences.
