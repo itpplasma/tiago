@@ -34,6 +34,8 @@ It omits refraction, absorption, finite-temperature/magnetization corrections,
 optical misalignment, electronic filtering and the detector modulation waveform.
 The I/Q response describes demodulated quadratures with separate gains and
 baselines, rather than an instrument-specific harmonic-demodulation algorithm.
+A separate [coherent harmonic lock-in](harmonic-lockin.md) converts explicitly
+calibrated detector/reference waveforms into these quadratures.
 Neutral and environmental inputs are observations/configuration supplied at
 runtime; this module does not infer a gas composition or atmospheric index law.
 A reference-baseline subtraction must use differences of these same inputs.
