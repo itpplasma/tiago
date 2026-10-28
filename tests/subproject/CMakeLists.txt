@@ -1,0 +1,7 @@
+cmake_minimum_required(VERSION 3.24)
+project(TiagoConsumer LANGUAGES C Fortran)
+enable_testing()
+add_subdirectory("${TIAGO_SOURCE}" tiago)
+add_executable(tiago_consumer consumer.f90)
+target_link_libraries(tiago_consumer PRIVATE tiago_signals tiago_inference)
+add_test(NAME consumer COMMAND tiago_consumer)
