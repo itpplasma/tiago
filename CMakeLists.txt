@@ -159,7 +159,9 @@ add_library(tiago_signals STATIC
     src/generated/integrator_signal.f90
     src/signals/integrated_drift.f90
     src/signals/signal_reduction.f90
-    src/signals/calibration.f90)
+    src/signals/calibration.f90
+    src/signals/sha256.f90
+    src/signals/netcdf_c.f90)
 set_target_properties(tiago_signals PROPERTIES
     Fortran_STANDARD 2018 Fortran_STANDARD_REQUIRED YES)
 target_link_libraries(tiago_signals PUBLIC LIBNEO::nctools fortnum
@@ -195,6 +197,7 @@ add_library(tiago_inference STATIC
     src/generated/vmec_product_pair.f90
     src/inference/vmecpp_state.f90
     src/inference/thomson_scattering.f90
+    src/inference/profile_geometry_io.f90
     src/generated/ts_depolarization.f90
     src/generated/ts_spectral.f90
     src/generated/ts_bessel_chain.f90
@@ -257,6 +260,22 @@ add_executable(tiago_cli src/cli/tiago_cli.f90)
 target_link_libraries(tiago_cli PRIVATE tiago_diagnostics)
 
 add_library(tiago_build_config STATIC ${TIAGO_GENERATED_DIR}/tiago_config.f90)
+
+# Source revision for output provenance, regenerated on every build.
+add_custom_target(tiago_revision_file
+    COMMAND ${CMAKE_COMMAND} -DSOURCE_DIR=${TIAGO_SOURCE_DIR}
+        -DOUTPUT=${TIAGO_GENERATED_DIR}/tiago_revision.f90
+        -P ${TIAGO_SOURCE_DIR}/cmake/TiagoRevision.cmake
+    BYPRODUCTS ${TIAGO_GENERATED_DIR}/tiago_revision.f90)
+add_library(tiago_synthetic STATIC ${TIAGO_GENERATED_DIR}/tiago_revision.f90
+    src/inference/synthetic_forward.f90)
+add_dependencies(tiago_synthetic tiago_revision_file)
+set_target_properties(tiago_synthetic PROPERTIES
+    Fortran_STANDARD 2018 Fortran_STANDARD_REQUIRED YES)
+target_link_libraries(tiago_synthetic PUBLIC tiago_inference tiago_solver
+    ${TIAGO_NETCDF_C_LIBRARY})
+add_executable(tiago_synth src/cli/tiago_synth.f90)
+target_link_libraries(tiago_synth PRIVATE tiago_synthetic)
 
 add_executable(tiago_vacuum_cli src/cli/tiago_vacuum_cli.f90)
 set_source_files_properties(src/cli/tiago_vacuum_cli.f90 PROPERTIES Fortran_PREPROCESS ON)
@@ -534,6 +553,26 @@ add_test(NAME tiago_profile_instruments COMMAND $<TARGET_FILE:test_profile_instr
 add_test(NAME tiago_profile_instruments_vmec
     COMMAND $<TARGET_FILE:test_profile_instruments> ${TIAGO_WOUT_SIMSOPT_SMALL})
 set_tests_properties(tiago_profile_instruments_vmec PROPERTIES FIXTURES_REQUIRED wout_li383)
+
+add_executable(test_synthetic_forward tests/test_synthetic_forward.f90)
+target_link_libraries(test_synthetic_forward PRIVATE tiago_synthetic)
+set(TIAGO_SYNTH_TEST_DIR ${TIAGO_BINARY_DIR}/tests/synthetic)
+file(MAKE_DIRECTORY ${TIAGO_SYNTH_TEST_DIR})
+add_test(NAME tiago_synthetic_forward
+    COMMAND $<TARGET_FILE:test_synthetic_forward> ${TIAGO_SYNTH_TEST_DIR})
+add_test(NAME tiago_synthetic_forward_vmec
+    COMMAND $<TARGET_FILE:test_synthetic_forward> ${TIAGO_SYNTH_TEST_DIR} ${TIAGO_WOUT_SIMSOPT_SMALL})
+set_tests_properties(tiago_synthetic_forward_vmec PROPERTIES FIXTURES_REQUIRED wout_li383)
+# The public example: CDL inputs -> netCDF-4 (ncgen) -> tiago_synth.
+find_program(TIAGO_NCGEN ncgen)
+if(TIAGO_NCGEN)
+    add_test(NAME tiago_synth_example
+        COMMAND ${CMAKE_COMMAND} -DNCGEN=${TIAGO_NCGEN} -DSYNTH=$<TARGET_FILE:tiago_synth>
+            -DEXAMPLE=${TIAGO_SOURCE_DIR}/examples/synthetic -DWOUT=${TIAGO_WOUT_SIMSOPT_SMALL}
+            -DWORK=${TIAGO_BINARY_DIR}/tests/synthetic_example
+            -P ${TIAGO_SOURCE_DIR}/tests/synth_example.cmake)
+    set_tests_properties(tiago_synth_example PROPERTIES FIXTURES_REQUIRED wout_li383)
+endif()
 
 add_executable(test_plasma_projection tests/test_plasma_projection.f90)
 target_link_libraries(test_plasma_projection PRIVATE tiago_solver)

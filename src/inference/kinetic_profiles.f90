@@ -53,10 +53,10 @@ module tiago_kinetic_profiles
 
     type, public :: profile_t
         logical :: latent = .false.
-        real(dp) :: unit = 1.0_dp                   !! physical value for u = 0 (log profiles)
-        real(dp), allocatable :: mean(:)            !! prior mean of the coefficients
-        real(dp), allocatable :: chol(:, :)         !! lower Cholesky factor of the prior covariance
-        integer :: offset = 0                       !! first latent index - 1
+        real(dp) :: unit = 1.0_dp !! physical value for u = 0 (log profiles)
+        real(dp), allocatable :: mean(:) !! prior mean of the coefficients
+        real(dp), allocatable :: chol(:, :) !! lower Cholesky factor of the prior covariance
+        integer :: offset = 0 !! first latent index - 1
     end type profile_t
 
     type, public :: kinetic_profiles_t
@@ -64,7 +64,7 @@ module tiago_kinetic_profiles
         integer :: ncoef = 0
         real(dp), allocatable :: greville(:)
         real(dp) :: z_imp = 6.0_dp
-        real(dp) :: sol_decay = 0.05_dp               !! e-folding length in s beyond s = 1
+        real(dp) :: sol_decay = 0.05_dp !! e-folding length in s beyond s = 1
         type(profile_t) :: p(N_PROFILES)
         integer :: n_latent = 0
     contains
@@ -77,6 +77,7 @@ module tiago_kinetic_profiles
         procedure :: pressure => profiles_pressure
         procedure :: pressure_vjp => profiles_pressure_vjp
         procedure :: fit_latent => profiles_fit_latent
+        procedure :: set_table => profiles_set_table
     end type kinetic_profiles_t
 
     public :: gibbs_kernel
@@ -111,8 +112,8 @@ contains
         self%p(P_TE)%unit = 1.0e3_dp
         self%p(P_TI)%unit = 1.0e3_dp
         self%p(P_FAST)%unit = 1.0e3_dp
-        self%p(P_FAST)%mean = -50.0_dp      ! p_fast ~ 0 unless set
-        self%p(P_ZEFF)%mean = -50.0_dp      ! Zeff ~ 1 unless set
+        self%p(P_FAST)%mean = -50.0_dp ! p_fast ~ 0 unless set
+        self%p(P_ZEFF)%mean = -50.0_dp ! Zeff ~ 1 unless set
         call layout(self)
     end subroutine profiles_init
 
@@ -323,6 +324,46 @@ contains
         end associate
     end subroutine profiles_fit_latent
 
+    subroutine profiles_set_table(self, which, s, values, ierr)
+        !! Fix one profile to a table f(s): least-squares fit of the spline
+        !! to the transformed values (log, or logit for Zeff), so any table
+        !! whose transform lies in the spline space is reproduced exactly.
+        !! ierr = 1 for a non-positive value, 2 for fewer points than
+        !! coefficients or a rank-deficient fit.
+        class(kinetic_profiles_t), intent(inout) :: self
+        integer, intent(in) :: which
+        real(dp), intent(in) :: s(:), values(:)
+        integer, intent(out) :: ierr
+        real(dp), allocatable :: a(:, :), u(:, :), work(:)
+        real(dp) :: b(0:1, self%ncoef), wq(1)
+        integer :: j, info, lwork
+        external :: dgels
+
+        ierr = 1
+        if (which == P_ZEFF) then
+            if (any(values <= 1.0_dp) .or. any(values >= self%z_imp)) return
+        else
+            if (any(values <= 0.0_dp)) return
+        end if
+        ierr = 2
+        if (size(s) /= size(values) .or. size(s) < self%ncoef) return
+        allocate(a(size(s), self%ncoef), u(size(s), 1))
+        do j = 1, size(s)
+            call basis_at(self, s(j), b)
+            a(j, :) = b(0, :)
+            u(j, 1) = inverse_transform(self, which, values(j))
+        end do
+        call dgels('N', size(s), self%ncoef, 1, a, size(s), u, size(s), wq, -1, info)
+        lwork = int(wq(1))
+        allocate(work(lwork))
+        call dgels('N', size(s), self%ncoef, 1, a, size(s), u, size(s), work, lwork, info)
+        if (info /= 0) return
+        self%p(which)%mean = u(:self%ncoef, 1)
+        self%p(which)%latent = .false.
+        call layout(self)
+        ierr = 0
+    end subroutine profiles_set_table
+
     subroutine basis_at(self, s, b)
         type(kinetic_profiles_t), intent(in) :: self
         real(dp), intent(in) :: s
@@ -410,7 +451,7 @@ contains
             b(1:2, :) = 0
         end if
         call density_label_jet(rho, u, us, uss, self%p(P_NE)%unit, 0.0_dp, 0.0_dp, &
-                               ne, dr, drr, value, d1)
+            ne, dr, drr, value, d1)
         nep = 0
         drp = 0
         if (.not. self%p(P_NE)%latent) return
@@ -419,7 +460,7 @@ contains
         do i = 1, self%ncoef
             j = self%p(P_NE)%offset + i
             call density_label_jet(rho, u, us, uss, self%p(P_NE)%unit, up(i), usp(i), &
-                                   value, d1, d2, nep(j), drp(j))
+                value, d1, d2, nep(j), drp(j))
         end do
     end subroutine profiles_density_jet
 

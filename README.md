@@ -77,6 +77,8 @@ Recorded signals and inference:
 - ECE: [recorded ECE](docs/ece-recorded.md), [rays](docs/ece-rays.md),
   [equilibrium medium](docs/ece-geometry.md), [opacity](docs/ece-opacity.md),
   [transfer and radiometer](docs/ece-transfer.md)
+- [Synthetic forward driver](docs/synthetic-forward.md) (`tiago_synth`: every
+  channel from one wout, geometry and profile tables)
 - [Profile diagnostics](docs/profile-diagnostics.md),
   [joint inference](docs/inference.md),
   [joint inference from recorded signals](docs/recorded-joint-inference.md)
