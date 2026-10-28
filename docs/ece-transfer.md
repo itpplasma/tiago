@@ -3,10 +3,9 @@
 `tiago_ece_transfer` and `tiago_ece_receiver`, in `tiago_inference`, compose
 thermal radiation transfer on supplied rays with a calibrated total-power
 receiver. They accept runtime absorption, paths and instrument response.
-They do **not** yet supply the relativistic electron cyclotron emission (ECE)
-opacity or a complete profile diagnostic. A separate
-[equilibrium medium](ece-geometry.md) supplies the VMEC wout ray adapter.
-The existing `tiago_ece_radiometer::ece_t` remains the cold-resonance approximation.
+The [recorded ECE composition](ece-recorded.md) connects these primitives
+to the equilibrium medium and perpendicular relativistic opacity. This page
+describes transfer and receiver inputs separately.
 
 ## Transfer on a supplied ray
 
@@ -113,9 +112,8 @@ All adjoint outputs are overwritten. Channel loops use OpenMP.
 and its temperature, density, field-magnitude and frequency derivatives.
 The caller must supply path derivatives. In particular,
 length sensitivity alone does not account for profiles sampled on a moving
-ray. These components neither freeze that motion nor establish a bound for
-neglecting it. They do not yet consume the cold-ray tape or implement the
-`profile_diagnostic_t` contract.
+ray. The [recorded adapter](ece-recorded.md) supplies these moving-ray derivatives
+and the `profile_diagnostic_t` implementation.
 
 `tiago_ece_transfer` checks vacuum, thin emission, thick thermal equilibrium,
 nonuniform-source refinement, independent repeated wall reflections,
@@ -128,7 +126,6 @@ them with committed output. `benchmark_ece_transfer` measures independent
 antenna nodes each, including calibration-prior transformation and noise.
 
 These are transfer/receiver verifications with synthetic prescribed opacity.
-They do not check Bornatici optical-depth formulas or shifted-resonance
-posterior recovery. Completing ECE still requires general oblique relativistic
-opacity, its derivatives on moving paths, a recorded profile diagnostic
-and posterior validation. See [cold-ray scope](ece-rays.md).
+Published optical-depth checks belong to the [opacity tests](ece-opacity.md);
+shifted-resonance recovery belongs to the [recorded tests](ece-recorded.md).
+General oblique relativistic opacity remains unavailable.

@@ -120,6 +120,13 @@ corrections and exact tangent/adjoint derivatives. An I/Q reduction propagates
 noise and unwraps bounded trace chunks. See the
 [model, calibration and verification contract](docs/dispersion-interferometer.md).
 
+## Recorded electron cyclotron emission
+
+The [recorded ECE model](docs/ece-recorded.md) composes equilibrium/profile
+sampling, cold rays, perpendicular weakly relativistic opacity, thermal
+transport and calibrated voltage/noise with forward and reverse derivatives.
+Its strict angle, density and propagation limits are part of the interface.
+
 ## MSE pitch angles
 `--mse file` evaluates point MSE pi-polarization angles at beam–sightline
 closest-approach midpoints and writes `tiago_mse.csv` in radians. Geometry,

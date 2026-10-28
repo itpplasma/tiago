@@ -186,3 +186,12 @@ Configure `TIAGO_FORTSYM_BUILD` to enable the exact regeneration comparison.
 `reference_ece_opacity.py` independently reproduces the committed X1 reference
 values with 90-digit principal-value quadrature; it requires mpmath only when
 reproducing those fixtures. See [the model and verification limits](../docs/ece-opacity.md).
+
+# Regenerate recorded ECE composition kernels
+
+`gen_ece_recorded` uses the same pinned FortSym revision and emits launch
+scaling, vector magnitude, cell length and angle kernels, plus two independent
+Maxwellian resonant-shell reference integrands. All six include partial rows.
+Build/run `gen_ece_recorded` and run `ctest -R tiago_ece_recorded_codegen` with
+`TIAGO_FORTSYM_BUILD` configured. The [recorded model](../docs/ece-recorded.md)
+describes their composition and the finite-angle reference limit.

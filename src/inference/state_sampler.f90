@@ -22,6 +22,7 @@ module tiago_state_sampler
     private
 
     public :: sample_medium, medium_sample_jvp, medium_sample_vjp
+    public :: cylinder_jacobian
     public :: sample_state, sample_state_jvp, sample_state_vjp
 
 contains

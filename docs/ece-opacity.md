@@ -8,8 +8,9 @@ absorption remains available through `thermal_transfer`.
 
 These are perpendicular, near-resonance, weak-damping approximations. They
 have no parallel wave-vector argument and must not be used as an oblique
-Doppler-broadened model. They neither replace the [cold-ray solver](ece-rays.md)
-nor implement the recorded `profile_diagnostic_t` adapter.
+Doppler-broadened model. The [recorded composition](ece-recorded.md) joins them to the
+[cold-ray solver](ece-rays.md) and the profile-diagnostic adapter, with an
+explicit small-angle guard.
 
 ## Local interface and units
 

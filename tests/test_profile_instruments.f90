@@ -1,5 +1,5 @@
 program test_profile_instruments
-    !! Thomson scattering, ECE, interferometer and XICS on the profile-diagnostic
+    !! Thomson scattering, interferometer and XICS on the profile-diagnostic
     !! contract, sampled from a real-space state by tiago_state_sampler.
     !! Usage: test_profile_instruments            (analytic shifted-circle state)
     !!        test_profile_instruments <wout.nc>  (VMEC nested state)
@@ -17,7 +17,6 @@ program test_profile_instruments
         Q_NE, Q_TE, Q_TI, Q_ZEFF, N_QUANTITIES, check_diagnostic_derivatives
     use tiago_sight_geometry, only: chord_t
     use tiago_thomson_scattering, only: thomson_t, thomson_volume_t
-    use tiago_ece_radiometer, only: ece_t, ece_channel_t
     use tiago_line_integrals, only: interferometer_t, xics_t
     use tiago_dispersion_interferometer, only: dispersion_interferometer_t
     use tiago_calibration, only: calibration_prior_t
@@ -25,12 +24,10 @@ program test_profile_instruments
 
     real(dp), parameter :: pi = acos(-1.0_dp)
     real(dp), parameter :: n0 = 5.0e19_dp, t0 = 3.0e3_dp, ti0 = 1.5e3_dp, zeff0 = 2.0_dp
-    real(dp), parameter :: me = 9.1093837015e-31_dp, qe = 1.602176634e-19_dp
     integer :: failures, i
     character(len=1024) :: wout
     class(real_space_state_t), allocatable :: state
     type(thomson_t) :: ts
-    type(ece_t) :: ece
     type(interferometer_t) :: interf
     type(xics_t) :: xics
     type(dispersion_interferometer_t) :: dispersion
@@ -58,7 +55,6 @@ program test_profile_instruments
     vstate = [(sin(1.7_dp * i + 0.3_dp), i = 1, size(p0))]
     vstate = vstate * max(abs(p0), 1.0e-2_dp * maxval(abs(p0)))
     call check_chain('Thomson', ts, 1.0e-6_dp)
-    call check_chain('ECE', ece, 1.0e-8_dp)
     call check_chain('interferometer', interf, 1.0e-6_dp)
     call check_chain('XICS', xics, 1.0e-6_dp)
     call check_chain('dispersion I/Q', dispersion, 1.0e-4_dp)
@@ -152,13 +148,6 @@ contains
         call close('Thomson ne volume average', y(1), n0 * m1, 1.0e-12_dp)
         call close('Thomson Te density-weighted average', y(2), t0 * m2 / m1, 1.0e-12_dp)
 
-        ! ECE: second harmonic resonant at R = 3.2 on a chord at z = 0.1.
-        f = 2.0_dp * qe * (2.5_dp * 3.0_dp / 3.2_dp) / (2.0_dp * pi * me)
-        call ece%init([ece_channel_t('ECE', f, 2, [4.5_dp, 0.0_dp, 0.1_dp], &
-            [-1.0_dp, 0.0_dp, 0.0_dp], 3.0_dp, 1000)])
-        call predict(ece, y)
-        call close('ECE Te at the cold resonance', y(1), t0 * (1.0_dp - 0.05_dp), 1.0e-5_dp)
-
         ! Vertical chord at R = 3.4 between its boundary crossings.
         u0 = sqrt(1.0_dp - 0.16_dp)
         chord(1) = chord_t('VERT', [3.4_dp, 0.0_dp, -u0], [0.0_dp, 0.0_dp, 1.0_dp], &
@@ -206,12 +195,11 @@ contains
     subroutine geometry_from_state()
         !! Instruments placed relative to the state's own axis and boundary.
         type(thomson_volume_t) :: vol(4)
-        type(ece_channel_t) :: ch(3)
         type(chord_t) :: chords(3)
         type(calibration_prior_t) :: prior
         real(dp) :: cm(8), cov(8, 8), sd(8)
         integer :: status
-        real(dp) :: xa(3), xb(3), xm(3), jac(3, 3), b, bm, db(3), d(3), phi0, f, size0
+        real(dp) :: xa(3), xb(3), xm(3), jac(3, 3), b, db(3), d(3), phi0, size0
         integer :: k
 
         phi0 = 0.2_dp
@@ -224,13 +212,6 @@ contains
         end do
         call ts%init(vol, aligned=.false.)
         d = (xa - xb) / size0
-        do k = 1, 3
-            call state%eval([0.25_dp * k, 0.05_dp, phi0], xm, jac, bm, db)
-            f = 2.0_dp * qe * bm / (2.0_dp * pi * me)
-            ch(k) = ece_channel_t('ECE', f, 2, xb - 0.6_dp * (xa - xb) &
-                + [0.0_dp, 0.0_dp, 0.01_dp * k], d, 3.0_dp * size0, 1000)
-        end do
-        call ece%init(ch)
         chords(1) = chord_t('C1', xa - 2.0_dp * size0 * [0.0_dp, 0.1_dp, 1.0_dp], &
             [0.0_dp, 0.1_dp, 1.0_dp], 4.0_dp * size0, 200, 4)
         chords(2) = chord_t('C2', xb + 0.5_dp * (xb - xa), d, 2.5_dp * size0, 200, 4)
@@ -273,7 +254,7 @@ contains
         etadot = 0.0_dp
         call sample(diag, smp, loc)
         call predict(diag, y)
-        call check(any(y /= 0.0_dp), name//' signals are non-zero')
+        call check(any(abs(y) > 0.0_dp), name//' signals are non-zero')
         call check_diagnostic_derivatives(diag, smp, eta, step, jerr, aerr)
         print '(A,": contract JVP error ",ES10.3,", adjoint error ",ES10.3)', name, jerr, aerr
         call check(jerr <= 1.0e-6_dp .and. aerr <= 1.0e-12_dp, name//' contract derivatives')

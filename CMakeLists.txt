@@ -222,7 +222,14 @@ add_library(tiago_inference STATIC
     src/inference/ece_opacity.f90
     src/inference/ece_opacity_transfer.f90
     src/inference/ece_receiver.f90
+    src/generated/ece_launch_scale.f90
+    src/generated/ece_field_norm.f90
+    src/generated/ece_segment_length.f90
+    src/generated/ece_parallel_fraction.f90
+    src/generated/ece_doppler_x1.f90
+    src/generated/ece_doppler_x2.f90
     src/inference/ece_radiometer.f90
+    src/inference/ece_recorded.f90
     src/inference/line_integrals.f90
     src/generated/dispersion_phase.f90
     src/generated/dispersion_column.f90
@@ -822,3 +829,22 @@ if(FORTSYM_BUILD)
 endif()
 add_executable(benchmark_ece_opacity EXCLUDE_FROM_ALL benchmarks/ece/benchmark_opacity.f90)
 target_link_libraries(benchmark_ece_opacity PRIVATE tiago_inference)
+
+if(FORTSYM_BUILD)
+    add_test(NAME tiago_ece_recorded_codegen COMMAND ${CMAKE_COMMAND}
+        -DGENERATOR=$<TARGET_FILE:gen_ece_recorded> -DSOURCE=${CMAKE_SOURCE_DIR}
+        -DOUTPUT=${CMAKE_BINARY_DIR}/tests/ece-recorded-codegen
+        -P ${CMAKE_SOURCE_DIR}/tests/check_ece_recorded_codegen.cmake)
+endif()
+
+add_library(tiago_ece_recorded_fixture STATIC tests/ece_recorded_fixture.f90)
+target_link_libraries(tiago_ece_recorded_fixture PUBLIC tiago_ece_geometry_fixture)
+add_executable(test_ece_recorded tests/test_ece_recorded.f90)
+target_link_libraries(test_ece_recorded PRIVATE tiago_ece_recorded_fixture)
+add_test(NAME tiago_ece_recorded COMMAND test_ece_recorded)
+add_executable(test_ece_posterior tests/test_ece_posterior.f90)
+target_link_libraries(test_ece_posterior PRIVATE tiago_ece_recorded_fixture)
+add_test(NAME tiago_ece_posterior COMMAND test_ece_posterior
+    ${CMAKE_BINARY_DIR}/tests/ece-posterior.csv)
+add_executable(benchmark_ece_recorded EXCLUDE_FROM_ALL benchmarks/ece/benchmark_recorded.f90)
+target_link_libraries(benchmark_ece_recorded PRIVATE tiago_ece_recorded_fixture)
