@@ -33,6 +33,7 @@ character variable in every group.
 | `xics` | `start(chord, xyz)`, `end(chord, xyz)` |
 | `thomson` | `center(volume, xyz)`, `direction(volume, xyz)` (laser), `length(volume)` |
 | `ece` | `frequency(channel)` [Hz], `harmonic(channel)`, `origin(channel, xyz)`, `direction(channel, xyz)`, `length(channel)` |
+| `mse` | sight line `origin(channel, xyz)` (observer) and `direction(channel, xyz)` (into the plasma), heating beam `beam_origin(channel, xyz)` and `beam_direction(channel, xyz)`, `max_gap(channel)` [m] |
 
 The profile table has one dimension `s` (normalized toroidal flux in [0, 1])
 and the variables `ne` [m^-3], `te` [eV], `ti` [eV] and optionally `zeff`,
@@ -60,6 +61,7 @@ Global attributes: `tiago_revision` (`git describe` of the build),
 | `thomson` | `ne` [m^-3] (volume average), `te` [eV] (density weighted), `s`, `r_eff` [m], `inside` at the volume centre |
 | `xics` | `brightness` (relative, unit scale), `ti` [eV] (emissivity-weighted along the chord) |
 | `ece` | `te` [eV] at the first cold resonance n f_ce(abs(B)) = f inside the plasma along the line of sight, with its `s`, `r_eff`, `R`, `phi`, `Z`; NaN if there is none |
+| `mse` | `gamma` [rad], pi-polarization angle at the sight-beam midpoint from the interior VMEC field (`docs/mse.md`, reference +Z), with `s` and Cartesian `b_x`, `b_y`, `b_z` [T] there |
 | `magnetics` | `signal` (flux loops [Wb], Rogowski coils and B-probes [T m^2]), `kind` (sensor kind code) |
 
 The ECE value is the electron temperature at the cold resonance; it neglects
@@ -91,5 +93,6 @@ emissivity and its Ti moment agree with independent Simpson quadratures to
 1e-11, Thomson points and a finite volume reproduce the tabulated profiles to
 1e-11, and the ECE cold resonance lies at R = B0 R0 / B_res; on the LI383 wout,
 Thomson points placed at X(u) for known labels u give s = u_1^2 and the
-tabulated ne and Te to 1e-9. It also checks the SHA-256 implementation
+tabulated ne and Te to 1e-9, and an MSE channel there gives s and the angle of
+`mse_state_angles`. It also checks the SHA-256 implementation
 against the FIPS 180-4 examples. `tiago_synth_example` runs the example above.

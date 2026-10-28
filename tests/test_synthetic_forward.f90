@@ -9,16 +9,18 @@ program test_synthetic_forward
     !! independent Simpson quadratures of int ne dl and of the XICS
     !! emissivity moments and the closed-form cold resonance R = B0 R0 / B_res;
     !! on the VMEC state Thomson points placed at X(u) of known labels u.
-    use, intrinsic :: iso_fortran_env, only: dp => real64, error_unit, int8
+    use, intrinsic :: iso_fortran_env, only: dp => real64, error_unit, int8, i32 => int32
     use, intrinsic :: iso_c_binding, only: c_int, c_size_t
     use tiago_netcdf_c, only: NC_NOERR, NC_NOWRITE, NC_CLOBBER, NC_NETCDF4, NC_CHAR, NC_DOUBLE, &
-        nc_open, nc_create, nc_close, nc_inq_ncid, nc_def_grp, nc_def_dim, nc_def_var, &
+        nc_open, nc_create, nc_close, nc_inq_ncid, nc_inq_dimid, nc_def_grp, nc_def_dim, nc_def_var, &
         nc_put_var_double, nc_put_var_text, nc_inq_varid, nc_get_var_double, cstr
     use tiago_analytic_state, only: circular_state_t
     use tiago_synthetic_forward, only: synth_config_t, synth_state_t, synth_load, synth_write, &
         set_profile_table
     use tiago_profile_geometry_io, only: profile_table_t
     use tiago_sha256, only: sha256_bytes
+    use tiago_diagnostic_types, only: mse_channel_t
+    use tiago_mse_state, only: mse_state_angles
     implicit none
 
     real(dp), parameter :: pi = acos(-1.0_dp)
@@ -232,7 +234,10 @@ contains
         type(synth_state_t) :: st
         type(vmec_state_t) :: vm
         real(dp) :: u(3), x(3), jac(3, 3), b, db(3), ts(3, 8), chord(3, 2, 1)
-        real(dp), allocatable :: v(:), s(:)
+        real(dp), allocatable :: v(:), s(:), gamma(:)
+        real(dp), parameter :: beam(3) = [-0.4_dp, 0.9_dp, 0.05_dp], sight(3) = [0.8_dp, 0.3_dp, 0.5_dp]
+        type(mse_channel_t) :: mse_ch(1)
+        integer(i32) :: code
         integer :: k, ierr
         character(len=:), allocatable :: message
 
@@ -247,7 +252,8 @@ contains
         chord(:, 1, 1) = [0.0_dp, 0.0_dp, 0.0_dp]
         chord(:, 2, 1) = [1.0_dp, 0.0_dp, 0.0_dp]
         call write_geometry(trim(workdir)//'/vmec_geometry.nc', chord, ts, [real(dp) ::], &
-            [0.0_dp, 0.0_dp, 0.0_dp], 1.0_dp)
+            [0.0_dp, 0.0_dp, 0.0_dp], 1.0_dp, mse=[ts(:, 5) + 0.9_dp * sight, -sight, &
+            ts(:, 5) - 0.7_dp * beam, beam])
         call write_profiles(trim(workdir)//'/vmec_profiles.nc', table())
 
         cfg%wout = trim(wout)
@@ -276,14 +282,30 @@ contains
         end do
         call read_var(cfg%output, 'thomson', 'r_eff', v)
         call close('VMEC r_eff = Aminor_p sqrt(s)', v(5), st%aminor * 0.5_dp, 1.0e-9_dp)
+
+        ! MSE: the geometry file gives the sight direction into the plasma;
+        ! the angle convention needs it towards the observer.
+        call read_var(cfg%output, 'mse', 's', v)
+        call close('VMEC MSE s at X(u)', v(1), 0.25_dp, 1.0e-9_dp)
+        call read_var(cfg%output, 'mse', 'gamma', v)
+        mse_ch(1)%label = 'M1'
+        mse_ch(1)%beam_point = ts(:, 5) - 0.7_dp * beam
+        mse_ch(1)%beam_direction = beam
+        mse_ch(1)%sight_point = ts(:, 5) + 0.9_dp * sight
+        mse_ch(1)%sight_direction = sight
+        mse_ch(1)%max_gap = 1.0e-6_dp
+        call mse_state_angles(st%state, mse_ch, gamma, code, message)
+        call check(code == 0, 'mse_state_angles: '//message)
+        call close('VMEC MSE gamma through the driver', v(1), gamma(1), 1.0e-12_dp)
     end subroutine vmec_case
 
-    subroutine write_geometry(path, chords, centres, freq, origin, length)
+    subroutine write_geometry(path, chords, centres, freq, origin, length, mse)
         !! Interferometer and XICS on the same chords, Thomson point volumes
         !! (the sixth, if present, 0.1 m along Z), ECE along -x.
         character(len=*), intent(in) :: path
         real(dp), intent(in) :: chords(:, :, :), centres(:, :), freq(:), origin(3), length
-        integer(c_int) :: ncid, s
+        real(dp), intent(in), optional :: mse(12) !! one channel: origin, direction, beam point, beam direction
+        integer(c_int) :: ncid, s, gid, dn, dx, var
         integer :: k
         real(dp), allocatable :: dir(:, :), len_(:)
 
@@ -302,6 +324,15 @@ contains
         if (size(centres, 2) == 6) len_(6) = 0.1_dp
         call put_thomson(ncid, centres, dir, len_)
         if (size(freq) > 0) call put_ece(ncid, freq, origin, length)
+        if (present(mse)) then
+            call put_group(ncid, 'mse', 'channel', ['M1'], &
+                ['origin        ', 'direction     ', 'beam_origin   ', 'beam_direction'], mse, 1)
+            s = nc_inq_ncid(ncid, cstr('mse'), gid)
+            s = nc_inq_dimid(gid, cstr('channel'), dn)
+            s = nc_def_var(gid, cstr('max_gap'), NC_DOUBLE, 1_c_int, [dn], var)
+            s = nc_put_var_double(gid, var, [1.0e-6_dp])
+            call check(s == NC_NOERR, 'write mse/max_gap')
+        end if
         s = nc_close(ncid)
     end subroutine write_geometry
 

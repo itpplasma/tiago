@@ -115,8 +115,23 @@ specified in [gen/README.md](../gen/README.md).
 The virtual-casing source is physically valid **outside the plasma only**.
 Inside, its sheet field cancels the external coil field rather than giving
 the physical internal field (see `tiago_plasma_support`). Therefore the CLI's
-`--plasma-wout` path cannot predict an internal BL3 MSE measurement. Use
-`mse_angles` with a genuine internal field provider for that calculation.
+`--plasma-wout` path cannot predict an internal BL3 MSE measurement.
+
+`tiago_mse_state::mse_state_angles(state, channels, angles, ierr, message,
+param_jacobian, field, rho)` takes the interior field instead: it locates each
+midpoint in a `real_space_state_t` and evaluates the state's vector field there
+(`vector_jets`; a `vmec_state_t` loaded with `vector=.true.` gives
+`B = B^theta dX/dtheta + B^phi dX/dphi` from `bsupumnc`, `bsupvmnc`). Midpoints
+outside the boundary and states without a vector field are errors. The
+optional `param_jacobian(nchannel, n_params)` is `d gamma / dp` at fixed
+midpoints, with the labels moving by the implicit-function theorem,
+`dB/dp|_x = dB/dp|_u - dB/du J^{-1} dX/dp|_u`. `tiago_synth` uses it for its
+`mse` group ([synthetic forward driver](synthetic-forward.md)).
+`tiago_mse_state` checks it on the LI383 wout against a direct evaluation of
+`B^theta dX/dtheta + B^phi dX/dphi` from the wout coefficients on six
+half-grid surfaces (agreement of gamma within 5e-4 rad, tolerance 2e-3 rad;
+the residual is the radial interpolation of R and Z at ns = 16) and the
+parameter derivative against central differences (relative 2e-7).
 No MSE measurements are wired into `tiago_reconstruct` yet; its current VMEC
 boundary-field representation does not supply this internal field.
 

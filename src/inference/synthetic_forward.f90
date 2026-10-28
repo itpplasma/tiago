@@ -4,7 +4,7 @@ module tiago_synthetic_forward
     !! written to one netCDF-4 file with a group per diagnostic (see
     !! docs/synthetic-forward.md). The profiles enter as fixed (non-latent)
     !! spline coefficients; no new physics is added here.
-    use, intrinsic :: iso_fortran_env, only: dp => real64
+    use, intrinsic :: iso_fortran_env, only: dp => real64, i32 => int32
     use, intrinsic :: ieee_arithmetic, only: ieee_value, ieee_quiet_nan
     use, intrinsic :: iso_c_binding, only: c_int, c_size_t
     use netcdf, only: nf90_open, nf90_close, nf90_inq_varid, nf90_get_var, nf90_noerr, nf90_nowrite
@@ -21,7 +21,10 @@ module tiago_synthetic_forward
     use tiago_thomson_scattering, only: thomson_t, thomson_volume_t
     use tiago_cold_resonance, only: cold_resonance
     use tiago_profile_geometry_io, only: has_group, read_chords, read_thomson_volumes, &
-        read_ece_lines, ece_line_t, profile_table_t, read_profile_table
+        read_ece_lines, ece_line_t, read_mse_lines, mse_line_t, profile_table_t, &
+        read_profile_table
+    use tiago_diagnostic_types, only: mse_channel_t
+    use tiago_mse_state, only: mse_state_angles
     use tiago_sensor_set, only: sensor_set_t, read_sensor_set, sensor_kind_name
     use tiago_sensor_signals, only: sensor_set_signals
     use tiago_vacuum_forward, only: vacuum_solver_t
@@ -95,6 +98,8 @@ contains
                 call run_xics(ncid, cfg, st, ierr, message)
             if (ierr == 0 .and. has_group(cfg%geometry, 'ece')) &
                 call run_ece(ncid, cfg, st, ierr, message)
+            if (ierr == 0 .and. has_group(cfg%geometry, 'mse')) &
+                call run_mse(ncid, cfg, st, ierr, message)
         end if
         if (ierr == 0 .and. len(cfg%sensors) > 0) call run_magnetics(ncid, cfg, ierr, message)
         if (nc_close(ncid) /= NC_NOERR .and. ierr == 0) then
@@ -113,7 +118,7 @@ contains
         integer :: k
 
         allocate(vmec)
-        call vmec%load(cfg%wout, ierr, message)
+        call vmec%load(cfg%wout, ierr, message, vector=.true.)
         if (ierr /= 0) return
         call move_alloc(vmec, st%state)
         call read_aminor(cfg%wout, st%aminor, ierr, message)
@@ -335,6 +340,53 @@ contains
             end do
         end do
     end subroutine ece_cold_resonance
+
+    subroutine run_mse(ncid, cfg, st, ierr, message)
+        !! Pi-polarization angle from the interior field at each channel's
+        !! sight-beam midpoint (tiago_mse_state, docs/mse.md conventions,
+        !! reference +Z).
+        integer(c_int), intent(in) :: ncid
+        type(synth_config_t), intent(in) :: cfg
+        type(synth_state_t), intent(in) :: st
+        integer, intent(out) :: ierr
+        character(len=:), allocatable, intent(out) :: message
+        type(mse_line_t), allocatable :: lines(:)
+        type(mse_channel_t), allocatable :: channels(:)
+        real(dp), allocatable :: gamma(:), field(:, :), rho(:)
+        character(len=:), allocatable :: labels(:)
+        integer :: c, n, width
+        integer(i32) :: code
+
+        call read_mse_lines(cfg%geometry, lines, ierr, message)
+        if (ierr /= 0) return
+        n = size(lines)
+        allocate(channels(n))
+        do c = 1, n
+            channels(c)%label = lines(c)%label
+            channels(c)%beam_point = lines(c)%beam_origin
+            channels(c)%beam_direction = lines(c)%beam_direction
+            channels(c)%sight_point = lines(c)%origin
+            channels(c)%sight_direction = -lines(c)%direction
+            channels(c)%max_gap = lines(c)%max_gap
+        end do
+        call mse_state_angles(st%state, channels, gamma, code, message, field=field, rho=rho)
+        ierr = int(code)
+        if (ierr /= 0) then
+            message = cfg%geometry//':mse: '//message
+            return
+        end if
+        width = maxval([(len(lines(c)%label), c = 1, n)])
+        allocate(character(len=width) :: labels(n))
+        do c = 1, n
+            labels(c) = lines(c)%label
+        end do
+        call write_group(ncid, 'mse', 'channel', labels, ierr, message, &
+            [named('gamma', 'rad', 'pi-polarization angle at the sight-beam midpoint', gamma), &
+            named('s', '1', 'normalized toroidal flux at the midpoint', rho**2), &
+            named('b_x', 'T', 'Cartesian B at the midpoint', field(1, :)), &
+            named('b_y', 'T', 'Cartesian B at the midpoint', field(2, :)), &
+            named('b_z', 'T', 'Cartesian B at the midpoint', field(3, :))])
+    end subroutine run_mse
 
     subroutine run_magnetics(ncid, cfg, ierr, message)
         integer(c_int), intent(in) :: ncid
