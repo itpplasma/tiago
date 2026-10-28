@@ -203,9 +203,41 @@ program test_joint_model
     print '(A,F12.3,A,F10.3)', 'log evidence ', lap%log_evidence, ', chi^2 ', lap%chi2
     print '(A,*(F8.3))', 'pull of truth (theta* - truth)/sd: ', &
         [((theta(i) - theta_true(i)) / sqrt(lap%cov(i, i)), i = 1, model%n)]
+    call check_surrogate_priors()
     if (fails > 0) error stop 1
     print '(A)', 'joint model: all checks passed'
 contains
+    subroutine check_surrogate_priors()
+        real(dp) :: design(model%n, 3), direction(model%n), length(model%n)
+        real(dp), allocatable :: exact(:), approximate(:), exact_jac(:, :), approximate_jac(:, :)
+        integer :: first, last
+        logical :: valid
+        direction = [(sin(real(i, dp)), i=1, model%n)]
+        design(:, 1) = theta
+        design(:, 2) = theta + .001_dp*direction
+        design(:, 3) = theta - .001_dp*direction
+        length = 1
+        allocate (exact(model%n_residuals()), approximate(model%n_residuals()))
+        call model%residual(theta, exact, valid)
+        call expect(valid, 'exact surrogate prior reference')
+        call model%jacobian(theta, exact_jac)
+        call model%train_surrogate(design, length, 1._dp, .7_dp, .05_dp, st)
+        call expect(st%code == 0, 'surrogate prior training')
+        model%use_surrogate = .true.
+        call model%residual(theta, approximate, valid)
+        call expect(valid, 'surrogate prior prediction')
+        call model%jacobian(theta, approximate_jac)
+        first = model%n_mag + model%n_fb + 1
+        last = first + model%n_rec_prior - 1
+        print '(A,ES14.6)', 'surrogate reconstruction prior error=', &
+            maxval(abs(exact(first:last) - approximate(first:last)))
+        call expect(maxval(abs(exact(first:last) - approximate(first:last))) < 1.e-14_dp, &
+                    'surrogate retains exact reconstruction priors with rho /= 1 and nugget')
+        call expect(maxval(abs(exact_jac(first:last, :) - approximate_jac(first:last, :))) < 1.e-14_dp, &
+                    'surrogate retains exact reconstruction prior derivatives')
+        model%use_surrogate = .false.
+    end subroutine
+
     subroutine add_b_probes()
         !! Third diagnostic: |B| at the Ti points (fixed in space), so the
         !! Jacobian check covers |B| at fixed points through the equilibrium.

@@ -409,7 +409,7 @@ contains
         type(plasma_sample_t) :: sample
         type(located_t), allocatable :: loc(:)
         real(dp) :: gain
-        integer :: d, row, nm
+        integer :: d, row, nm, i, k
 
         if (self%use_surrogate) then
             ok = .false.
@@ -419,6 +419,11 @@ contains
             allocate (sj(self%n_residuals(), self%n))
             call self%surrogate%predict(theta, low, self%surrogate_jac, r, sj, variance, status)
             ok = status%code == 0
+            do i = 1, self%n_rec_prior
+                k = rec%prior_param(i)
+                r(self%n_mag + self%n_fb + i) = &
+                    (theta(k)*rec%scale(k) - rec%prior(k))/rec%prior_sigma(k)
+            end do
             row = self%n_residuals() - (self%n - self%n_rec)
             r(row + 1:) = theta(self%n_rec + 1:)
             return
@@ -487,6 +492,12 @@ contains
             y = r0
             call self%surrogate%predict(theta, y, self%surrogate_jac, r0, jac, gain, status)
             if (status%code /= 0) error stop 'joint: surrogate prediction failed'
+            do i = 1, self%n_rec_prior
+                k = rec%prior_param(i)
+                row = self%n_mag + self%n_fb + i
+                jac(row, :) = 0
+                jac(row, k) = rec%scale(k)/rec%prior_sigma(k)
+            end do
             row = self%n_residuals() - (self%n - self%n_rec)
             jac(row + 1:, :) = 0
             do k = self%n_rec + 1, self%n
