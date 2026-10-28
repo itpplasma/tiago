@@ -32,7 +32,7 @@ The scripts here reconstruct known equilibria from synthetic magnetic data with
 signals, and Levenberg–Marquardt with the exact adjoint Jacobian.
 
 The shell scripts below need no Python. They need a build with
-`-DTIAGO_ENABLE_RECONSTRUCTION=ON` (see the top-level README), plus `awk`, `bc`
+`-DTIAGO_ENABLE_RECONSTRUCTION=ON` (see [docs/building.md](../../docs/building.md)), plus `awk`, `bc`
 and `curl`. They are not part of `ctest`. `ctest` runs smaller cases instead:
 - `tests/reconstruct_exact.sh`, a noise-free LI383 fit;
 - the adjoint check against finite differences, with its block-by-block

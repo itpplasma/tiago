@@ -1,469 +1,102 @@
 # TIAGO: Toolkit for Inference and Analysis of Generalized Observables
 
-Tiago is a modern Fortran toolkit for diagnostic forward models,
-reconstruction and uncertainty quantification. The currently implemented
-production path is magnetic: it reads DIAGNO diagnostic files and STELLOPT coil
-files, evaluates flux loops/Rogowski probes/B-probes from coil currents and a
-VMEC equilibrium, and reconstructs VMEC++ parameters with exact adjoint
-derivatives. Results are benchmarked against STELLOPT's `xdiagno`.
+Tiago is a modern Fortran toolkit for plasma diagnostic forward models,
+equilibrium reconstruction and uncertainty quantification. It is aimed at
+stellarator physicists who need DIAGNO-compatible synthetic diagnostics with
+exact derivatives, and inference built on them.
 
-Long-term, TIAGO owns the inverse-problem layer for the ITP plasma stack:
-measurements, diagnostic/calibration models, priors/nuisance parameters and
-posterior uncertainty. Forward equilibrium/kinetic physics remains in its
-own provider, with KIN6D planned as the general differentiable provider while
-the existing VMEC++ path remains an independent reference.
+Status: research code under active development; interfaces may change.
 
-## Highlights
-- **Drop-in DIAGNO ingestion** – Load STELLOPT-compatible flux loops and
-  segmented Rogowski files (including per-point effective areas) unchanged.
-- **Vacuum solver + CLI** – Batch evaluation with `tiago_vacuum_cli` using
-  exact straight-filament Biot–Savart kernels (Hanson & Hirshman); coil files
-  are read with libneo.
-- **Equilibrium reconstruction** – `tiago_reconstruct` fits VMEC input
-  parameters (profiles, total current and flux, boundary shape, coil currents)
-  to magnetic measurements with Levenberg–Marquardt. Equilibria come from
-  VMEC++ through an ISO C adapter, and the Jacobian is exact: VMEC++'s implicit
-  adjoint for the equilibrium, reverse mode in Tiago for the diagnostics. No
-  Python is involved at any stage.
-- **Cross-code validation** – `benchmarks/xdiagno/` builds STELLOPT's `xdiagno`
-  at a pinned commit and compares accuracy and run time on identical inputs.
+## Features
 
-## Architecture direction
+- Magnetic diagnostics: reads DIAGNO flux-loop, segmented Rogowski and
+  magnetic-probe files and STELLOPT coil files, and evaluates them from coil
+  currents with exact straight-filament Biot–Savart kernels. Coil response
+  matrices make coil-current fits linear.
+- Plasma response from a VMEC equilibrium by virtual casing, with exact
+  derivatives with respect to boundary field and shape; optional SPECTRE
+  equilibria through libneo. MSE pitch angles.
+- Equilibrium reconstruction (`tiago_reconstruct`): Levenberg–Marquardt fit of
+  VMEC++ input parameters to magnetic data, with an exact Jacobian from the
+  VMEC++ implicit adjoint and reverse-mode diagnostics, and local covariance.
+- Recorded-signal models with calibration and derivatives: magnetics, Thomson
+  scattering, dispersion interferometry and electron cyclotron emission (cold
+  rays, thermal opacity and transfer, receiver).
+- Joint inference of equilibrium and kinetic profiles from several
+  diagnostics, with archive access over HTTP/REST or from netCDF files.
+- Validation against STELLOPT `xdiagno` and finite differences.
 
-The current VMEC++ reconstruction is implemented and retained. The intended
-architecture is provider-neutral, but **do not refactor the working VMEC++
-chain speculatively**. Freeze the provider seam only when the first KIN6D
-reconstruction is ready to consume it.
+## Building
 
-A forward provider supplies a stationary/evolution state and the matrix-free
-tangent/adjoint actions needed by TIAGO's diagnostic map. TIAGO does not own
-Grad--Shafranov, general 3-D MHD, DK/GK/FK or their numerical certificates;
-KIN6D does not own likelihoods or posterior covariance.
+Requirements: CMake 3.24 or newer, Fortran and C compilers, netCDF-C,
+libcurl, and Python 3 for the test suite. libneo, fortnum and json-fortran are
+fetched at pinned commits.
 
-See [DESIGN.md](DESIGN.md) and [ROADMAP.md](ROADMAP.md).
-
-## Quick start
 ```bash
-# Configure + build
 cmake -S . -B build
 cmake --build build
-# optional: -DTIAGO_LIBNEO_TAG=<commit> to use another libneo, and
-# -DTIAGO_ENABLE_NATIVE_OPTIMIZATION=ON for a machine-specific build
-# (about 2x faster Biot-Savart kernels through AVX vectorisation)
-
-# or the convenience wrappers
-make              # configures + builds
-make test         # rebuilds and runs ctest --output-on-failure
+ctest --test-dir build --output-on-failure
 ```
-Pass extra cache entries through `CMAKE_ARGS`, e.g.
-`make CMAKE_ARGS="-DTIAGO_LIBNEO_TAG=<commit>"`.
-The standard `LIBNEO_BRANCH` CMake or environment variable overrides the
-selected libneo ref for release validation; a nonempty CMake value takes
-precedence over the environment. Removing it restores `TIAGO_LIBNEO_TAG`.
-`-DTIAGO_MATCH_LIBNEO_BRANCH=ON` optionally selects the current Tiago branch
-when the same branch exists in libneo, falling back to `TIAGO_LIBNEO_TAG`.
-Explicit `LIBNEO_BRANCH` overrides take precedence. Both branch matching and
-native CPU optimization are off by default. Native optimization uses
-`-mcpu=native` on ARM and `-march=native -mtune=native` elsewhere, and requires
-a native build.
 
-## Vacuum CLI usage
-```
+`make` and `make test` wrap the same steps. Reconstruction
+(`-DTIAGO_ENABLE_RECONSTRUCTION=ON`) additionally needs Clang with the Enzyme
+plugin and LAPACK. Build options, libneo revision selection and the Enzyme
+toolchain are described in [docs/building.md](docs/building.md).
+
+## Usage
+
+Evaluate flux loops and segmented Rogowski coils from a coil file:
+
+```bash
 ./build/tiago_vacuum_cli \
     --coils tests/data/coil_sample.neo \
     --flux tests/data/fluxloop_sample.diagno \
     --segrog tests/data/segrog_sample.diagno \
     --output-dir build/tests/output --seg-area 3.40e-4 --samples 8
 ```
-Each of `--flux`, `--segrog`, `--bprobes` and `--mse` is optional (at least one is
-needed). This command emits `tiago_flux.csv` and `tiago_segrog.csv` in the output
-directory (names via `--flux-out`, `--segrog-out`). `--samples` sets the points
-per segment (midpoint rule, as DIAGNO's `int_type='midpoint'`); `--gauss` uses
-Gauss-Legendre points instead, which converge far faster (8 Gauss points are
-typically more accurate than thousands of midpoint samples). `--nfp` matches the field-period geometry,
-while `--flux-turns` / `--segrog-turns` accept text files of `label scale`
-pairs so Tiago mirrors DIAGNO's namelist-based `flux_turns` and
-`segrog_turns` arrays. The NCSX cases in `tests/cases/` come with such files;
-their coil sets are fetched by `benchmarks/xdiagno/fetch_data.sh`:
-```
-benchmarks/xdiagno/fetch_data.sh
-./build/tiago_vacuum_cli \
-    --coils benchmarks/xdiagno/_work/data/coils.NCSX \
-    --flux tests/cases/ncsx_nfp3/fluxloop.diagno \
-    --segrog tests/cases/ncsx_nfp3/segrog.diagno \
-    --output-dir build/ncsx --seg-area 3.40e-4 --gauss --samples 8 --nfp 3 \
-    --flux-turns tests/cases/ncsx_nfp3/flux_turns.csv \
-    --segrog-turns tests/cases/ncsx_nfp3/segrog_turns.csv
-```
 
-`--coil-extcur file` sets the coil-group currents from a VMEC `&INDATA` input
-(`EXTCUR(i) = v`, `EXTCUR = a, b, ...`, slices `EXTCUR(i:j) = ...`, repeat
-counts `n*v`) or a plain list of numbers. As in DIAGNO, each group's currents
-are normalised to its first point and scaled by `EXTCUR(g)`; groups the file
-leaves out are switched off (`EXTCUR = 0`, with a warning). Without
-`--coil-extcur` the currents of the coil file are used as they are.
+This writes `tiago_flux.csv` and `tiago_segrog.csv`. Adding
+`--plasma-wout wout.nc` includes the plasma contribution of a VMEC
+equilibrium. `tiago_cli diag lint <file>` checks diagnostic files and sensor
+sets, and `tiago_reconstruct input.nml` runs a reconstruction.
 
-## Magnetic probes and response matrices
-`--bprobes file` evaluates DIAGNO magnetic probes (`x y z theta_inc phi_inc
-eff_area` per row, angles in degrees; `--rphiz` for `R phi z`), written to
-`tiago_bprobes.csv` as `eff_area * B . n`. `--response-out file` writes every
-signal per unit EXTCUR of each coil group (`kind,label,group,value`, as
-DIAGNO's `-mutual`), so for other coil currents the vacuum signals are
-`sum_g M_g EXTCUR_g` without re-running Biot–Savart; this makes fitting coil
-currents a linear least-squares problem.
+## Documentation
 
-## Dispersion interferometer
+Magnetics and reconstruction:
+- [Building](docs/building.md)
+- [Magnetic diagnostics and plasma response](docs/magnetics.md)
+- [Equilibrium reconstruction](docs/reconstruction.md)
+- [MSE](docs/mse.md), [sensor sets](docs/sensor-sets.md)
 
-The recorded dispersion-interferometer model composes the existing straight
-chord density integral with calibrated lock-in I/Q, neutral/environmental phase
-corrections and exact tangent/adjoint derivatives. An I/Q reduction propagates
-noise and unwraps bounded trace chunks. See the
-[model, calibration and verification contract](docs/dispersion-interferometer.md).
+Recorded signals and inference:
+- [Recorded signals and calibration](docs/recorded-signals.md),
+  [archive adapters](docs/online-archives.md)
+- [Recorded magnetics](docs/recorded-magnetics.md),
+  [Thomson scattering](docs/thomson.md),
+  [dispersion interferometer](docs/dispersion-interferometer.md)
+- ECE: [recorded ECE](docs/ece-recorded.md), [rays](docs/ece-rays.md),
+  [equilibrium medium](docs/ece-geometry.md), [opacity](docs/ece-opacity.md),
+  [transfer and radiometer](docs/ece-transfer.md)
+- [Profile diagnostics](docs/profile-diagnostics.md),
+  [joint inference](docs/inference.md),
+  [joint inference from recorded signals](docs/recorded-joint-inference.md)
 
-## Recorded electron cyclotron emission
+Benchmarks: [STELLOPT xdiagno](benchmarks/xdiagno/README.md),
+[reconstruction](benchmarks/reconstruction/README.md).
 
-The [recorded ECE model](docs/ece-recorded.md) composes equilibrium/profile
-sampling, cold rays, perpendicular weakly relativistic opacity, thermal
-transport and calibrated voltage/noise with forward and reverse derivatives.
-Its strict angle, density and propagation limits are part of the interface.
+Design and plans: [DESIGN.md](DESIGN.md), [ROADMAP.md](ROADMAP.md). Tiago owns
+the inverse-problem layer (diagnostic models, calibration, priors, posterior
+uncertainty); forward equilibrium and kinetic physics stay in their own codes.
 
-## MSE pitch angles
-`--mse file` evaluates point MSE pi-polarization angles at beam–sightline
-closest-approach midpoints and writes `tiago_mse.csv` in radians. Geometry,
-polarization conventions, the six derived coefficients, and an illustrative
-channel file are documented in [docs/mse.md](docs/mse.md). Coil and plasma
-response CSVs include local MSE Jacobians. The library also accepts caller-supplied
-Cartesian fields for internal-plasma measurements; the CLI's existing VMEC
-boundary-sheet model is valid only outside the plasma and cannot supply an
-internal MSE field.
+## Related projects
 
-## Plasma response
-`--plasma-wout wout.nc` adds the field of the plasma currents of a VMEC
-equilibrium to every flux loop and segmented Rogowski. The VMEC boundary is a
-flux surface, so outside it the plasma acts like the sheet current
-`mu0 K = n x B` on the boundary (virtual casing); Tiago evaluates its vector
-potential and field directly on a `--plasma-nphi` (per field period) by
-`--plasma-ntheta` grid, default 64 x 64. A warning is printed when a sensor is
-closer to the boundary than two grid spacings. As in DIAGNO, loops that link
-the plasma poloidally must be flagged `idia = 1`, which adds the plasma
-toroidal flux `phiedge`. Leave out `--coils` for plasma-only signals.
+- [libneo](https://github.com/itpplasma/libneo): coil, field and SPECTRE readers.
+- [VMEC++](https://github.com/proximafusion/vmecpp): equilibria and implicit
+  adjoint for reconstruction.
+- [fortnum](https://github.com/lazy-fortran/fortnum): profile bases and samplers.
+- [STELLOPT](https://github.com/PrincetonUniversity/STELLOPT): reference
+  `xdiagno` implementation.
 
-The default `--plasma-contravariant` mode follows DIAGNO. Two optional modes
-use VMEC's covariant boundary field instead. `--plasma-covariant` reads
-`bsubumnc`/`bsubvmnc` without changing their coefficients and reports the
-Fourier curl norm and a bound on the toroidal current ripple. Covariant output
-can retain a finite curl residual; changing representation alone does not
-ensure current conservation.
+## License
 
-`--plasma-conservative` additionally projects each Fourier pair `(B_u, B_v)`
-onto `n B_u + m B_v = 0`, with `n` including the field periodicity. This is the
-smallest correction in the unweighted Euclidean norm of the two coefficients;
-it preserves the `m = n = 0` circulation coefficients. The resulting sheet is
-closed and conserves its toroidal current. This projection changes the field
-model and can differ from DIAGNO at finite resolution. The reported projection
-norm measures the coefficient correction; `plasma_model.txt` records the mode
-and these diagnostics alongside the signal files. Field and shape responses include
-the same projection, and covariant response columns refer to the original
-`bsub*` coefficients before projection.
-
-`--plasma-response-out file` writes the derivative of every signal's plasma
-part with respect to the selected VMEC boundary field coefficients (`bsup*`
-for the default contravariant mode or `bsub*` for either covariant mode,
-extrapolated to `s = 1`, per mode `m, n`). At fixed boundary shape
-the plasma part is linear in them, so the Jacobian is exact and
-`sum(value * coefficient)` reproduces it; together with `--response-out` for
-the coil currents this is the linear part of an equilibrium reconstruction.
-`--plasma-shape-response-out file` writes the derivatives with respect to the
-boundary geometry coefficients (`rmnc`, `zmns`, and `rmns`, `zmnc` for
-`lasym`) at fixed field coefficients, computed in reverse mode through the
-sheet current and the Biot–Savart kernel.
-
-Derivatives with respect to equilibrium parameters (`PHIEDGE`, `CURTOR`,
-`PRES_SCALE`, ...) need the response of the equilibrium itself. That response
-comes from `tiago_reconstruct` (below). The `equilibrium` suite of the xdiagno
-benchmark checks the chain rule against central finite differences over VMEC
-runs.
-
-## General plasma field sources
-
-`tiago_plasma_field_source::plasma_field_source_t` is the diagnostic field
-interface. Its batch methods take Cartesian points in meters and return
-exterior **plasma** B in tesla and A in tesla meters. The existing
-`plasma_support_t` implements this interface with the unchanged VMEC virtual
-casing, including its coefficient and shape responses. A solver owns a copy
-of a source installed with `solver%set_plasma_source(source)`.
-
-SPECTRE support is optional:
-
-```bash
-cmake -S . -B build-spectre -DTIAGO_ENABLE_SPECTRE=ON
-cmake --build build-spectre -j4
-OMP_NUM_THREADS=4 ctest --test-dir build-spectre --output-on-failure
-./build-spectre/tiago_vacuum_cli --plasma-spectre equilibrium.h5 \
-    --bprobes probes.diagno --output-dir signals
-```
-
-This uses libneo's `spectre_field_t`, its coordinate inverse, and its Cartesian
-transforms. The file must pass libneo's chart validity checks; a folded
-interface blend is rejected. Exterior plasma B and A come from TIAGO's existing
-virtual-casing kernels, sampled on the outer **plasma** interface. Internal islands and
-interface currents do not require nested flux surfaces inside that boundary.
-A free-boundary file uses the vacuum-side boundary field, including a physical
-boundary sheet current. A fixed-boundary file supplies only the plasma-side
-field: interpreting it as the exterior plasma source assumes no additional
-physical current sheet on that boundary. The outer boundary must be a flux
-surface; a sampled relative normal field above `1e-6` is rejected. Sensors
-must lie outside the plasma and away from the singular sheet. Increase
-`--plasma-nphi` and `--plasma-ntheta` to check quadrature convergence.
-The inverse-map guard rejects recognized interior points; libneo currently
-does not distinguish an exterior point from failed Newton convergence.
-
-For interior B, including future MSE operators, use:
-
-```fortran
-use tiago_spectre_source, only: spectre_source_t
-! source is type(spectre_source_t); solver is type(vacuum_solver_t)
-call source%init('equilibrium.h5', 64, 64)
-call solver%set_plasma_source(source)
-call solver%sample_bfield(points, bfield, interior=.true.)
-```
-
-Initialize the solver's coils first with `solver%init(coil_file)` (or `''`).
-The interior call returns the SPECTRE **total** field directly, without adding
-coils. Exterior diagnostics add the configured coil field once. Interior A,
-VMEC interior total B, MSE geometry, and SPECTRE coefficient/shape responses
-are outside this interface's implemented scope. Libneo currently cannot
-invert the singular magnetic axis; use off-axis interior sample points.
-
-Loops with `idia=1` additionally need signed global toroidal flux metadata.
-Libneo currently reads normalized interface fluxes but omits SPECTRE's
-`phiedge`; volume-local A circulations cannot replace the missing global
-quantity. Pass `--plasma-linked-flux <signed_Wb>` for these loops, or
-`linked_flux=` to `source%init`. Use the same physical sign convention as the
-VMEC correction `phiedge * signgs`. Missing metadata is rejected for linked
-loops. Library callers apply `finalize_flux_signals` with
-`solver%plasma_flux(required=any(loops%idia == 1))`. Ordinary exterior loops,
-probes, and Rogowski paths do not need this metadata. `plasma_model.txt`
-records the SPECTRE input, grid, and supplied flux. An upstream libneo
-extension should expose the signed global flux rather than duplicating its
-reader or a volume-gauge reconstruction here.
-
-Verified tests cover analytic diagnostic integrals, exact VMEC dispatch
-identity, 90 independent SPECTRE field samples, and Cartesian finite
-differences of exterior A. The nested QA cross-check uses 512 independent
-VMEC Cartesian samples (maximum relative B tolerance `2e-3`, RMS `6e-4`)
-and exterior B/A and all three diagnostics, at 64 and 128 poloidal points
-and toroidal points per field period. See [fixture provenance](tests/data/spectre/PROVENANCE.md)
-for tolerances and limitations. This vacuum, fixed-interface control is not
-a force-relaxed island equilibrium or a nonzero-plasma-current cross-check.
-
-## Equilibrium reconstruction
-`tiago_reconstruct input.nml` fits the parameters of a VMEC input to measured
-flux loops, segmented Rogowskis and B-probes. It minimises
-
-    chi^2 = sum_i ((S_i(x) - m_i) / sigma_i)^2 + consistency + priors
-
-with Levenberg–Marquardt (in Tiago, on LAPACK), then reports the linearised covariance
-`(J^T J)^-1`. Each evaluation of `S(x)` does three things. VMEC++ solves the
-fixed-boundary equilibrium. Tiago builds the boundary sheet current from the
-edge field, and evaluates the plasma signals as described above. Coil
-contributions are added through the response matrix.
-
-**Method.** The Jacobian `J = dS/dx` is exact. It costs one factorisation per
-iterate, plus two cheap solves per residual row. It is built in three steps:
-
-1. **Signals from the edge field.** `dS/dy` comes from the plasma field and
-   shape responses. Here `y` is the selected edge field (`B^u`, `B^v` by
-   default, or `B_u`, `B_v` in either covariant mode, extrapolated to `s = 1`)
-   together with the boundary `rmnc`, `zmns`.
-2. **Edge field from the solver state.** `src/equilibrium/vmec_edge.f90`
-   computes `y` from VMEC++'s spectral state in Fortran, and runs it in
-   reverse mode. It reproduces VMEC++'s wout to 2e-14.
-3. **Solver state from the parameters.** The adapter
-   (`src/equilibrium/vmecpp_adapter.cc`) applies VMEC++'s implicit adjoint. It
-   uses the exact force Jacobian generated by Enzyme, with the m = 1 gauge
-   pinned. The profile and `PHIEDGE` chains are analytic, in Fortran.
-
-**Scaling.** VMEC's forces on one flux surface depend only on the geometry of
-that surface and its two neighbours. The one exception is the boundary, which
-enters every surface through the spectral-condensation constraint. The
-interior force Jacobian is therefore block tridiagonal in the radial surfaces,
-and the adapter uses this in three ways:
-
-- It extracts the blocks with `3 x (unknowns per surface)` forward-mode
-  Hessian-vector products, probing every third surface at once.
-- It probes the boundary columns one at a time. They give the coupling of the
-  adjoint to the prescribed entries directly, so no per-row reverse product is
-  needed.
-- It factorises the blocks with a block LU. Time and memory grow as `ns m^3`
-  and `ns m^2`, where `ns` is the number of surfaces and `m` the number of
-  unknowns per surface. A dense LU grows as `(ns m)^3` and `(ns m)^2`.
-
-Probing and the per-row passes run on thread-local copies of the VMEC++ model,
-and VMEC++ solves use its own radial threads. Full-resolution NCSX (MPOL 11,
-NTOR 6, NS 99, about 45k unknowns) would need 16 GB for a dense LU. With the
-block LU, a Jacobian takes about 28 s on 4 cores. A 6-parameter reconstruction
-finishes in under 3 minutes and needs 1.5 GB in total.
-
-Three further savings:
-
-- Solves after the first hot-restart from the last equilibrium.
-- At a fixed boundary the plasma signals are exactly `R y_B`, with the field
-  response `R` cached per boundary shape. Profile and coil fits therefore
-  evaluate the sheet once.
-- The fit stops when the predicted chi^2 decrease falls below the solver's
-  noise floor, instead of probing it with further solves.
-
-`TIAGO_VMECPP_VERIFY=1` checks every extracted block row and coupling column
-against an isolated Hessian-vector product; `ctest` runs this on LI383.
-
-**Accuracy.** The Jacobian agrees with central differences of re-solved
-equilibria to about 1e-4 on LI383 and to 1.1e-4 (NS 9) and 2.2e-4 (NS 29) on
-fixed-boundary NCSX, for every parameter kind. The NCSX reference needs tight
-re-solves: the residual left at FTOL varies smoothly with the parameters and
-biases central differences by the same amount for every step, so a step sweep
-does not reveal it. At FTOL 1e-14 the apparent NCSX NS 29 error is 3e-3 to
-3e-2; it falls to 2e-4 at FTOL 1e-18 with a 1e-3 relative step. Reproduce with
-`TIAGO_TEST_VMEC_FTOL=1e-18 test_vmecpp_equilibrium input.ncsx29 workdir 1e-3`
-([VMEC++ #954](https://github.com/proximafusion/vmecpp/issues/954)). For the
-same reason, `check_jacobian` at the default `vmec_ftol` reports this bias
-rather than a Jacobian error. The fit converges to the minimum of the exactly
-evaluated chi^2.
-
-**Parameters.** `PRES_SCALE`, `CURTOR`, `PHIEDGE`, `AM(k)`, `AI(k)`, `AC(k)`
-(power-series profiles), `RBC(n,m)`, `ZBS(n,m)` and coil currents
-`EXTCUR(g)`. The VMEC input must be fixed-boundary and stellarator-symmetric.
-Free-boundary consistency is imposed instead through `consistency_points`:
-virtual probes inside the plasma, where the coil field plus the sheet field
-must vanish.
-
-**Building.** Reconstruction is optional, because VMEC++'s exact force
-Jacobian needs Clang with the matching Enzyme plugin. The verified toolchain
-is Clang 20.1.8 and Enzyme v0.0.264, commit
-`f06646a6d8a6a69a123c7b4184f8db261c03216d`:
-```bash
-sudo apt-get install clang-20 llvm-20-dev libclang-20-dev lld-20 libomp-20-dev \
-    libzstd-dev liblapack-dev ninja-build
-git clone --depth 1 --branch v0.0.264 https://github.com/EnzymeAD/Enzyme.git
-test "$(git -C Enzyme rev-parse HEAD)" = f06646a6d8a6a69a123c7b4184f8db261c03216d
-cmake -G Ninja -S Enzyme/enzyme -B enzyme-build -DCMAKE_BUILD_TYPE=Release \
-    -DLLVM_DIR=$(llvm-config-20 --cmakedir) \
-    -DClang_DIR=$(llvm-config-20 --prefix)/lib/cmake/clang
-ninja -C enzyme-build ClangEnzyme-20
-CXX=clang++-20 cmake -S . -B build-vmecpp -G Ninja -DCMAKE_BUILD_TYPE=Release \
-    -DTIAGO_ENABLE_RECONSTRUCTION=ON \
-    -DTIAGO_ENZYME_PLUGIN=$PWD/enzyme-build/Enzyme/ClangEnzyme-20.so
-cmake --build build-vmecpp
-OMP_NUM_THREADS=1 ctest --test-dir build-vmecpp --output-on-failure
-```
-Clang 22.1.8 with the installed Enzyme 0.0.293-1 package was also verified
-with the complete test suite at one and four threads. Its tested
-`ClangEnzyme-22.so` SHA256 is
-`8878aaf985a4315922efc095cdafdb4ca8e9df799c2c78371e8463b0762d242a`.
-
-CMake accepts Clang majors 20 and 22 by default and checks that the
-plugin loads into the compiler. `TIAGO_EXPERIMENTAL_ENZYME_TOOLCHAIN=ON`
-allows another major for development; it does not establish correct
-derivatives. Even with Clang 20, use the tested Enzyme pin and run the
-derivative tests.
-CMake fetches the following at pinned commits:
-- VMEC++, built as a C++ library without its Python module;
-- fortplot, for the figures.
-
-VMEC++ also downloads HDF5 and netCDF-C. If those archives are not reachable,
-point `-DTIAGO_VMECPP_HDF5_URL=` and `-DTIAGO_VMECPP_NETCDF_URL=` at local
-copies.
-
-**Input** (namelist `&reconstruction`; only `vmec_input` and `parameters` are
-required):
-
-| variable | meaning |
-|---|---|
-| `vmec_input` | VMEC `INDATA` file (converted with VMEC++'s `indata2json`) |
-| `vmec_boundary_wout` | take the fixed boundary from this wout's last surface (e.g. a free-boundary equilibrium) |
-| `parameters` | names as above, e.g. `'PRES_SCALE', 'CURTOR', 'RBC(0,1)', 'EXTCUR(2)'` |
-| `start_values`, `parameter_scale` | start (default: input value) and scale per parameter |
-| `prior_values`, `prior_sigma` | Gaussian priors (`prior_sigma > 0` enables one) |
-| `flux`, `segrog`, `bprobes`, `seg_area`, `rphiz` | diagnostic files, as in `tiago_vacuum_cli` |
-| `coils`, `coil_extcur` | coil file and currents, needed for `EXTCUR` parameters and consistency points |
-| `measurements` | CSV `kind,label,value,sigma` (kind `flux`, `segrog` or `bprobe`) |
-| `consistency_points`, `consistency_sigma` | rows `x y z` inside the plasma, and the tolerance on the field there [T] |
-| `synthesize_measurements`, `truth_values`, `add_noise`, `seed` | synthetic data from the model at `truth_values` |
-| `sigma_relative`, `sigma_flux`, `sigma_segrog`, `sigma_bprobe` | synthetic uncertainty `sigma_relative \|S\| + sigma_<kind>` |
-| `plasma_nphi`, `plasma_ntheta`, `samples`, `gauss` | sheet grid and segment quadrature |
-| `plasma_covariant`, `plasma_conservative` | opt-in covariant field and current-conserving projection; both default false |
-| `vmec_ftol`, `vmec_niter` | VMEC++ convergence (default `1e-14`, `20000`) |
-| `max_iterations`, `check_jacobian`, `fd_step` | LM iterations; compare `J` with finite differences first |
-| `output_dir` | results directory |
-
-**Output** (in `output_dir`):
-- `summary.txt`, `parameters.csv` (with start, fitted, sigma and truth),
-  `covariance.csv`, `signals.csv`, `history.csv`;
-- `wout_initial.nc`, `wout_fit.nc` and `wout_truth.nc`;
-- figures: `signals_<kind>.png`, `residuals.png`, `convergence.png`,
-  `profiles_{pressure,iota,current}.png` (with a pressure uncertainty band)
-  and `boundary.png`.
-
-[`benchmarks/reconstruction/`](benchmarks/reconstruction/README.md) holds the
-synthetic reconstructions, with results, timings and figures:
-- LI383, including a 20-seed pull study;
-- full-resolution NCSX with coil currents and consistency points.
-
-It also compares VMEC++ with VMEC2000 and gives cost estimates against
-STELLOPT.
-
-## Uncertainty semantics
-
-The implemented reconstruction currently uses independent Gaussian measurement
-errors, independent Gaussian priors and the local Gauss--Newton/Laplace
-covariance
-
-\[
-C \simeq (J^T J)^{-1}
-\]
-
-for the whitened residual. The LI383 pull study in
-[benchmarks/reconstruction](benchmarks/reconstruction/README.md) is retained as
-evidence that this local covariance is meaningful for the tested case.
-
-The next UQ extensions are deliberately modest: support correlated measurement
-covariance and shared calibration/nuisance parameters, then keep the local
-Laplace approximation as the default. If the same data are compatible with
-several distinct equilibria, reconstruct each equilibrium separately and,
-when useful, report a finite mixture of their local Laplace/Gaussian
-approximations with explicit weights. Do not average the equilibrium states
-themselves.
-
-General HMC/SMC/MCMC is not a default roadmap requirement. Add it only when a
-concrete posterior is demonstrably non-Gaussian within one equilibrium basin or
-the finite local mixture is inadequate.
-
-TIAGO posterior/measurement/calibration uncertainty remains separate from a
-KIN6D numerical certificate and from KIN6D model-reduction error. They may be
-shown together but are not automatically combined into one error bar.
-
-## Benchmark against STELLOPT xdiagno
-A manual, reproducible accuracy and performance comparison with the reference
-code lives in [`benchmarks/xdiagno/`](benchmarks/xdiagno/README.md). It is not
-part of `ctest`.
-
-## Recorded Thomson signals
-
-[Recorded Thomson scattering](docs/thomson.md) maps real-space kinetic profiles
-to polychromator photoelectrons and voltage integrals, with optical calibration
-priors, an absolute Rayleigh calibration record, noise and trace reduction.
-
-## Directory layout
-```
-cmake/                     # Toolchain helpers
-CMakeLists.txt             # FetchContent bridge + targets
-benchmarks/xdiagno/        # Manual benchmark vs STELLOPT xdiagno
-benchmarks/reconstruction/ # Synthetic reconstructions (tiago_reconstruct)
-src/                       # Fortran diagnostics, solver, CLI
-src/equilibrium/           # VMEC++ C adapter, Fortran bindings, edge field
-src/reconstruct/           # Residuals, Jacobian, covariance, figures
-tests/                     # Sample inputs + regression drivers
-```
-
-See [joint inference from recorded signals](docs/recorded-joint-inference.md)
-for calibration, discrepancy, robustness and surrogate controls.
+MIT, see [LICENSE](LICENSE).
