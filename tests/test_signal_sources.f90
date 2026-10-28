@@ -26,7 +26,7 @@ end module
 module synthetic_adapter
     use, intrinsic :: iso_fortran_env, only: int8, dp => real64
     use tiago_signal_source, only: signal_adapter_t, signal_request_t, &
-                backend_request_t, signal_window_t, SIGNAL_OK, SIGNAL_ERROR, SIGNAL_MORE
+        backend_request_t, signal_window_t, SIGNAL_OK, SIGNAL_ERROR, SIGNAL_MORE
     implicit none
     type, extends(signal_adapter_t) :: fixture_adapter_t
         character(32) :: version = ''
@@ -91,22 +91,46 @@ contains
 end module
 
 program test_signal_sources
+    use, intrinsic :: iso_c_binding, only: c_int, c_double, c_char, c_null_char
     use, intrinsic :: iso_fortran_env, only: dp => real64, error_unit, int8
     use netcdf, only: nf90_create, nf90_close, nf90_clobber, nf90_double, &
-                  nf90_def_dim, nf90_def_var, nf90_put_att, nf90_enddef, nf90_put_var, &
-                      nf90_global
+        nf90_def_dim, nf90_def_var, nf90_put_att, nf90_enddef, nf90_put_var, &
+        nf90_global
     use tiago_signal_source, only: signal_request_t, signal_window_t, &
-                                   cached_source_t, backend_request_t, SIGNAL_MORE
+        cached_source_t, backend_request_t, SIGNAL_MORE
     use tiago_netcdf_source, only: netcdf_source_t
     use tiago_signal_reduction, only: linear_reduction_t, reduced_source_t
     use tiago_calibration, only: calibration_prior_t
     use synthetic_source, only: counting_source_t
     use synthetic_adapter, only: fixture_adapter_t
     implicit none
-    type(signal_request_t) :: request, other
+    interface
+        integer(c_int) function grouped_create(path, id) bind(C)
+            import c_int, c_char
+            character(c_char), intent(in) :: path(*)
+            integer(c_int), intent(out) :: id
+        end function
+        integer(c_int) function grouped_close(id) bind(C)
+            import c_int
+            integer(c_int), value :: id
+        end function
+        integer(c_int) function grouped_write(parent, name, channel, version, &
+                record, metadata, checksum, times, samples, variance, covariance, &
+                correlated, first, last) bind(C)
+            import c_int, c_char, c_double
+            integer(c_int), value :: parent, correlated
+            character(c_char), intent(in) :: name(*), channel(*), version(*)
+            character(c_char), intent(in) :: record(*), metadata(*), checksum(*)
+            real(c_double), intent(in) :: times(4), samples(4), variance(4)
+            real(c_double), intent(in) :: covariance(4, 4)
+            real(c_double), value :: first, last
+        end function
+    end interface
+    type(signal_request_t) :: request, other, request_b
     type(fixture_adapter_t) :: adapter
     type(backend_request_t) :: backend
     type(signal_window_t) :: raw, got, reduced, plus, minus, yp, ym
+    type(signal_window_t) :: ramp_b, corrupted
     type(netcdf_source_t), target :: file
     type(counting_source_t), target :: source
     type(cached_source_t), target :: cache
@@ -199,6 +223,84 @@ program test_signal_sources
     call file%read(request, got, status)
     call check(status /= 0, 'nonscalar validity attribute rejected')
 
+    ! netCDF-4 groups: one compact file, two deflate-compressed channels.
+    ramp_b%time = [0.0_dp, 1.0_dp, 2.0_dp, 3.0_dp]
+    ramp_b%samples = [10.0_dp, 20.0_dp, 30.0_dp, 40.0_dp]
+    ramp_b%variance = [1.0_dp, 2.0_dp, 3.0_dp, 4.0_dp]
+    allocate (ramp_b%covariance(4, 4))
+    ramp_b%covariance = 0.0_dp
+    ramp_b%covariance(1, 2) = 0.5_dp
+    ramp_b%covariance(2, 1) = 0.5_dp
+    ramp_b%units = 'V'
+    ramp_b%valid_from = 0.0_dp
+    ramp_b%valid_to = 3.0_dp
+    ramp_b%provenance%source_id = 'synthetic-source'
+    ramp_b%provenance%version = 'v2'
+    ramp_b%provenance%record_id = 'synthetic-record-b'
+    ramp_b%provenance%metadata = 'synthetic group ramp'
+    call ramp_b%seal()
+    call write_grouped_file('synthetic_groups.nc', raw, ramp_b)
+    file%path = 'synthetic_groups.nc'
+    call file%read(request, got, status)
+    call check(status /= 0, 'grouped file without group stays at root')
+    file%group = 'channel-a'
+    other = request
+    other%version = 'missing-version'
+    call file%read(other, got, status)
+    call check(status /= 0, 'group version mismatch rejected')
+    other = request
+    other%channel = 'missing-channel'
+    call file%read(other, got, status)
+    call check(status /= 0, 'group channel mismatch rejected')
+    call file%read(request, got, status)
+    call check(status == 0, 'grouped netCDF round trip')
+    if (status /= 0) error stop 'cannot continue without grouped round trip'
+    call check(all(got%samples == raw%samples), 'group samples unchanged')
+    call check(got%provenance%checksum == raw%provenance%checksum, 'group checksum')
+    call check(got%provenance%version == 'v1', 'group version resolved')
+    other = request
+    other%first = 0.5_dp
+    other%last = 2.0_dp
+    call file%read(other, got, status)
+    call check(status == 0, 'grouped partial window')
+    call check(all(got%samples == [2.0_dp, 3.0_dp]), 'grouped closed endpoints')
+    file%group = '/channel-b/nested'
+    request_b%channel = 'synthetic-trace-b'
+    request_b%version = 'v2'
+    request_b%first = 0.0_dp
+    request_b%last = 3.0_dp
+    call file%read(request_b, got, status)
+    call check(status == 0, 'second group reads its own channel')
+    call check(all(got%samples == ramp_b%samples), 'group isolation')
+    call check(all(got%covariance == ramp_b%covariance), 'group covariance read')
+    call check(got%provenance%checksum == ramp_b%provenance%checksum, &
+        'group b checksum')
+    corrupted = raw
+    corrupted%samples(2) = 99.0_dp
+    call write_grouped_file('synthetic_groups_bad.nc', corrupted, ramp_b)
+    file%path = 'synthetic_groups_bad.nc'
+    file%group = 'channel-a'
+    call file%read(request, got, status)
+    call check(status /= 0, 'grouped bad checksum rejected')
+    file%path = 'synthetic_groups.nc'
+    file%group = 'channel-missing'
+    call file%read(request, got, status)
+    call check(status /= 0, 'missing group rejected')
+    call file%read(request, got, status)
+    call check(status /= 0, 'missing group rejected twice')
+    file%group = 'channel-a'
+    call file%read(request, got, status)
+    call check(status == 0, 'valid group reads after missing group error')
+    file%path = 'synthetic_signal.nc'
+    call file%read(request, got, status)
+    call check(status /= 0, 'group on classic file rejected')
+    file%group = ''
+    call file%read(request, got, status)
+    call check(status == 0, 'empty group reads classic root')
+    deallocate (file%group)
+    call file%read(request, got, status)
+    call check(status == 0, 'classic root read restored without group')
+
     source%data = raw
     call cache%init(source, 2)
     call cache%read(request, got, status)
@@ -229,7 +331,7 @@ program test_signal_sources
     step%id = 'synthetic-integral-v1'
     step%units = 'V s'
     step%weights = reshape([1.0_dp, 0.0_dp, 1.0_dp, 0.0_dp, &
-                            0.0_dp, 1.0_dp, 0.0_dp, 1.0_dp], [2, 4])
+        0.0_dp, 1.0_dp, 0.0_dp, 1.0_dp], [2, 4])
     step%noise_covariance = reshape([0.5_dp, 0.1_dp, 0.1_dp, 0.5_dp], [2, 2])
     allocate (raw%covariance(4, 4))
     raw%covariance = 0.0_dp
@@ -242,9 +344,9 @@ program test_signal_sources
     expected = reshape([3.5_dp, 0.35_dp, 0.35_dp, 7.5_dp], [2, 2])
     covariance_error = maxval(abs(reduced%covariance - expected))
     call check(covariance_error < 1.0e-14_dp, &
-               'correlated covariance and step noise')
+        'correlated covariance and step noise')
     call check(index(reduced%provenance%metadata, raw%provenance%checksum) > 0, &
-               'reduction preserves parent checksum')
+        'reduction preserves parent checksum')
     dot = [0.3_dp, -0.2_dp, 0.7_dp, -0.4_dp]
     h = 1.0e-5_dp
     plus = raw
@@ -298,22 +400,22 @@ program test_signal_sources
     call check(status == 0, 'calibration loaded through source')
     call check(prior%record%record_id == 'synthetic-record', 'calibration record id')
     prior_error = maxval(abs(matmul(prior%factor, transpose(prior%factor)) - &
-                             prior%covariance))
+        prior%covariance))
     call check(prior_error < 1.0e-14_dp, 'prior reproduces correlated covariance')
     c = prior%physical([0.0_dp, 0.0_dp])
     call check(all(c == raw%samples), 'zero latent is prior mean')
     cdot = prior%jvp(bar)
     zbar = prior%vjp(c)
     call check(abs(dot_product(c, cdot) - dot_product(zbar, bar)) < 1.0e-14_dp, &
-               'calibration latent transpose')
+        'calibration latent transpose')
     other = request
     other%last = 4.0_dp
     call prior%load(file, other, status)
     call check(status /= 0, 'calibration validity window enforced')
     call prior%init([1.0_dp, 2.0_dp], &
-                    reshape([1.0_dp, 2.0_dp, 2.0_dp, 1.0_dp], [2, 2]), status)
+        reshape([1.0_dp, 2.0_dp, 2.0_dp, 1.0_dp], [2, 2]), status)
     call check(status /= 0, 'indefinite prior rejected')
-    do i = 1, 3
+    do i = 1, 5
         select case (i)
         case (1)
             open (newunit=unit, file='synthetic_signal.nc')
@@ -321,6 +423,10 @@ program test_signal_sources
             open (newunit=unit, file='synthetic_bad.nc')
         case (3)
             open (newunit=unit, file='synthetic_calibration.nc')
+        case (4)
+            open (newunit=unit, file='synthetic_groups.nc')
+        case (5)
+            open (newunit=unit, file='synthetic_groups_bad.nc')
         end select
         close (unit, status='delete')
     end do
@@ -347,6 +453,36 @@ contains
         end if
     end subroutine
 
+    subroutine write_grouped_file(path, a, b)
+        character(*), intent(in) :: path
+        type(signal_window_t), intent(in) :: a, b
+        integer :: id
+        call nc(grouped_create(path//c_null_char, id))
+        call write_group(id, 'channel-a', 'synthetic-trace', a)
+        call write_group(id, 'channel-b', 'synthetic-trace-b', b)
+        call nc(grouped_close(id))
+    end subroutine
+
+    subroutine write_group(parent, name, channel, data)
+        integer, intent(in) :: parent
+        character(*), intent(in) :: name, channel
+        type(signal_window_t), intent(in) :: data
+        real(c_double) :: covariance(4, 4)
+        integer(c_int) :: correlated
+        covariance = 0.0_dp
+        correlated = 0
+        if (allocated(data%covariance)) then
+            covariance = data%covariance
+            correlated = 1
+        end if
+        call nc(grouped_write(parent, name//c_null_char, channel//c_null_char, &
+            data%provenance%version//c_null_char, &
+            data%provenance%record_id//c_null_char, &
+            data%provenance%metadata//c_null_char, &
+            data%provenance%checksum//c_null_char, data%time, data%samples, &
+            data%variance, covariance, correlated, data%valid_from, data%valid_to))
+    end subroutine
+
     subroutine write_file(path, data, malformed)
         character(*), intent(in) :: path
         type(signal_window_t), intent(in) :: data
@@ -369,7 +505,7 @@ contains
         call nc(nf90_put_att(id, nf90_global, 'units', data%units))
         if (present(malformed)) then
             call nc(nf90_put_att(id, nf90_global, 'valid_from', &
-                                 [data%valid_from, data%valid_from]))
+                [data%valid_from, data%valid_from]))
         else
             call nc(nf90_put_att(id, nf90_global, 'valid_from', data%valid_from))
         end if
