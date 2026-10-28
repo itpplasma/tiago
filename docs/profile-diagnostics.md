@@ -52,12 +52,12 @@ weights: `ne = sum w_k ne_k`, `Te = sum w_k ne_k Te_k / ne`, because each part
 of the volume scatters in proportion to its density. An optional rigid
 (dR, dZ) shift of all volumes is the alignment nuisance.
 
-**ECE, cold resonance** (`tiago_ece_radiometer`). Channel `i` samples its line
-of sight from the antenna. The resonance is the first interval inside the
-plasma where `|B| - B_res` changes sign, `B_res = 2 pi m_e f_i / (n_i e)`
-(FortSym kernel `cold_resonance`); linear interpolation gives the position and
-`Te` there. The motion of the resonance enters through `q_bar(Q_B)`. The
-interpolation error is O(h^2) in the sampling step.
+**Recorded ECE** (`tiago_ece_radiometer`, `tiago_ece_recorded`). The
+[composed model](ece-recorded.md) traces cold rays through the equilibrium,
+samples the kinetic profiles, evaluates perpendicular relativistic opacity and
+thermal transport, then applies the calibrated receiver. It replaces the cold
+resonance interpolation. The composition tape includes moving-ray and
+cell-length derivatives as well as the sampled profile contract.
 
 **Interferometer and XICS** (`tiago_line_integrals`). Chords carry composite
 Gauss-Legendre rules. The interferometer returns `int ne dl`; the XICS model
@@ -71,24 +71,11 @@ the boundary limits their accuracy to O(h^2) there.
 Sampling the state (Newton per point) and the VJP reduction are
 OpenMP-parallel; the instruments themselves are cheap sums over the samples.
 
-## Extension point: radiation transport for ECE
+## ECE composition
 
-The cold-resonance model assumes an optically thick, unbroadened emission
-layer. A TRAVIS-like model (relativistic and Doppler-broadened absorption and
-emission, finite optical depth, refraction) replaces the single resonance by
-the ray integral `T_rad = int Te alpha exp(-tau) ds`, with the absorption
-coefficient `alpha(ne, Te, |B|)` and the optical depth `tau`. It is a function
-of the same sampled rows along a prescribed ray, with derivatives of `alpha`
-with respect to ne, Te and |B|. A ray that depends on these quantities also
-needs its path sensitivity. The complete transport model is not implemented.
-[Cold-ray primitives](ece-rays.md) now supply adaptive Appleton-Hartree rays
-and their endpoint derivatives through a medium callback. The
-[equilibrium medium](ece-geometry.md) extends the existing sampler with VMEC
-wout vector fields, spatial Hessians and kinetic density jets, including path
-and moving-profile derivatives. An absorption model is a separate component.
-Standalone [thermal transfer and calibrated receiver components](ece-transfer.md)
-accept prescribed absorption and ray cells, with derivatives of both transfer
-and voltage/noise. Their integration with this profile contract remains open.
+See [recorded ECE](ece-recorded.md) for the public API, calibration priors,
+provider-dependent sampling, angle and density guards, and verification limits.
+General oblique opacity remains unavailable.
 
 ## Verification
 
@@ -97,7 +84,6 @@ proportional to 1 - s, Zeff = 2) and checks, on concentric circles:
 
 - the inverse map against `rho = sqrt((R - R0)^2 + Z^2) / a`;
 - the Thomson volume averages against closed-form polynomial integrals;
-- ECE `Te` at the analytic resonance `R = n e B0 R0 / (2 pi m_e f)`;
 - `int ne dl`, the XICS brightness and the emissivity-weighted Ti on a vertical
   chord against closed-form integrals.
 
@@ -107,3 +93,7 @@ and, with a Shafranov shift, compares the JVP of the complete chain
 parameters and checks the transposition identity of the chained VJP.
 `tiago_profile_instruments_vmec` repeats the chain checks and an eval/locate
 round trip on the pinned LI383 VMEC equilibrium.
+
+The former cold-resonance ECE oracle has been replaced by the full-chain
+thick-plasma, derivative, convergence and posterior tests described in
+[ece-recorded.md](ece-recorded.md).

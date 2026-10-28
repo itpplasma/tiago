@@ -5,14 +5,23 @@ work is committed and pushed to `main`. The tested production snapshot is
 [`e14b45a`](https://github.com/itpplasma/tiago/commit/e14b45a0b0877163175b6180e01dfe47069576da).
 This status file adds the handoff record without changing production code.
 
+## Recorded ECE composition — October 28, 2026
+
+The [recorded ECE model](docs/ece-recorded.md) joins the existing cold rays,
+equilibrium/profile medium, perpendicular opacity, transport and calibrated
+receiver. It supplies sampled and composed forward/reverse derivatives and
+synthetic repeated-noise posterior validation. The documented angle, density,
+provider-chart and cold fast-branch restrictions apply. General oblique opacity
+and the solved-equilibrium input adjoint are not validated by this composition.
+
 ## Perpendicular ECE opacity — October 28, 2026
 
 The [thermal opacity component](docs/ece-opacity.md) provides generated
 weakly relativistic first/second-harmonic O/X absorption and emission with
 local derivatives, and composes with the existing transport tape. Published
 perpendicular slab limits, independent defining-integral references and finite
-differences are tested. General oblique opacity and the recorded ECE profile
-diagnostic remain outside this component.
+differences are tested. The [recorded composition](docs/ece-recorded.md) supplies the diagnostic;
+general oblique opacity remains outside this component.
 
 ## Completed work
 
