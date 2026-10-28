@@ -213,3 +213,19 @@ flux, semi-infinite constant-property thermal response and spectral Planck
 radiance with their active partial derivatives. See
 [the wall synthetic API](../docs/wall-synthetic.md#conditional-derivatives-and-regeneration)
 for regeneration and the independent native CTest oracles.
+# Regenerate the coherent harmonic mixer
+
+`gen_harmonic_lockin` emits detector affine calibration, the second-harmonic
+cosine and first-harmonic sine weights, including their partial derivatives.
+Its expressions are emitted directly without an optional simplification pass.
+The committed kernel was generated with FortSym
+`ae635c80b42c922f5f2028c5cec67859bb8d3929`. With that build configured:
+
+```sh
+cmake --build build-codegen --target gen_harmonic_lockin
+build-codegen/gen_harmonic_lockin
+ctest --test-dir build -R tiago_harmonic --output-on-failure
+```
+
+The [waveform model](../docs/harmonic-lockin.md) specifies reference calibration,
+normalization, validity and window latency.

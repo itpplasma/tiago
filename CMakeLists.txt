@@ -148,6 +148,8 @@ FetchContent_Declare(jsonfortran
 FetchContent_MakeAvailable(jsonfortran)
 add_library(tiago_signals STATIC
     src/generated/recorded_affine.f90
+    src/generated/harmonic_mixer.f90
+    src/signals/harmonic_lockin.f90
     src/signals/http_curl.c
     src/signals/http_client.f90
     src/signals/rest_adapter.f90
@@ -967,4 +969,14 @@ if(FORTSYM_BUILD)
         -DGENERATOR=$<TARGET_FILE:gen_magnetic_pickup> -DSOURCE=${TIAGO_SOURCE_DIR}
         -DOUTPUT=${TIAGO_BINARY_DIR}/tests/magnetic-pickup-codegen
         -P ${TIAGO_SOURCE_DIR}/tests/check_magnetic_pickup_codegen.cmake)
+endif()
+
+add_executable(test_harmonic_lockin tests/test_harmonic_lockin.f90)
+target_link_libraries(test_harmonic_lockin PRIVATE tiago_inference)
+add_test(NAME tiago_harmonic_lockin COMMAND test_harmonic_lockin)
+if(FORTSYM_BUILD)
+    add_test(NAME tiago_harmonic_codegen COMMAND ${CMAKE_COMMAND}
+        -DGENERATOR=$<TARGET_FILE:gen_harmonic_lockin> -DSOURCE=${CMAKE_CURRENT_SOURCE_DIR}
+        -DOUTPUT=${CMAKE_CURRENT_BINARY_DIR}/tests/harmonic-codegen
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/check_harmonic_codegen.cmake)
 endif()
