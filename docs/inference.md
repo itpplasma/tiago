@@ -121,30 +121,104 @@ noise, MAP, Laplace, PSIS, NUTS) and writes CSV files for
 
 ## Synthetic coverage study (LI383, fixed boundary)
 
-sCluster array 3369752 ran 50 seeds of `tiago_infer` at 22c28a4 (seeds
-101-150; Clang 22.1.8 / Enzyme 0.0.293, 4 threads each, about 10 min per
+sCluster array 3370173 ran 50 seeds of `tiago_infer` at c2328c8 (seeds
+101-150; Clang 22.1.8 / Enzyme 0.0.293, 4 threads each, 10 to 24 min per
 seed). Each seed draws the truth from the prior (CURTOR, PHIEDGE, 7 B-spline
 latents each for ne, Te, Ti, a (dR, dZ) probe alignment: 25 latents), adds
 noise to 54 magnetic signals and 24 profile probes (5 %), and runs MAP,
-Laplace, PSIS (400 draws) and NUTS (300 warm-up, 400 draws). Fractions of
+Laplace, PSIS (400 draws), NUTS (300 warm-up, 400 draws) and 400 re-solved
+draws for iota (flux surfaces are written for the first 40). Fractions of
 truths inside the central intervals (nominal 0.683/0.954 for +-1/2 sd,
-0.68/0.95 for quantile intervals):
+0.68/0.95 for quantile intervals; brackets are 95 % seed-bootstrap
+intervals):
 
 | | 68 % | 95 % |
 |---|---|---|
-| latents, Laplace | 0.671 | 0.941 |
-| latents, NUTS | 0.664 | 0.930 |
-| ne, Te, Ti, p at 41 s values, Laplace | 0.669 | 0.938 |
-| same, NUTS | 0.673 | 0.933 |
-| iota (40 re-solved draws) | 0.565 | 0.904 |
+| latents, Laplace | 0.671 [0.643, 0.699] | 0.938 [0.920, 0.954] |
+| latents, NUTS | 0.670 [0.643, 0.694] | 0.929 [0.911, 0.946] |
+| ne, Te, Ti, p at 41 s values, Laplace | 0.665 [0.636, 0.692] | 0.937 [0.920, 0.952] |
+| same, NUTS | 0.675 [0.646, 0.703] | 0.940 [0.923, 0.955] |
+| iota, 400 re-solved draws | 0.724 [0.641, 0.804] | 0.949 [0.908, 0.983] |
 
-Values within a seed are correlated, so the binomial intervals of
-`tools/inference_coverage.py` understate the uncertainty. NUTS had no
-divergences, mean acceptance 0.80-0.86, tree depth 3 and E-BFMI 0.9-1.3;
-PSIS k-hat had median 0.42 and exceeded 0.7 in one seed. The iota bands come
-from only 40 solves per seed and iota is dominated by the single CURTOR
-latent, so its coverage is nearly all-or-nothing per seed; whether the
-under-coverage is sampling noise or a bias has not been established.
+The empirical quantile band of N independent draws contains a calibrated
+truth with probability 0.676/0.946 for N = 400 (Monte Carlo), so the
+expected values for the draw-based rows are 0.676/0.945 (NUTS) and
+0.676/0.945 (iota); all intervals contain them. Values within a seed are
+correlated, so `tools/inference_coverage.py` resamples whole seeds, and
+binomial intervals over all counted values understate the uncertainty, most
+for iota, whose values at all s follow CURTOR. Per latent (one trial per
+seed, Wilson 95 % intervals of roughly +-0.13) the Laplace coverage lies
+between 0.54 and 0.82 at 68 % and between 0.84 and 1.00 at 95 %. The lowest
+is the alignment latent align_1 (0.54 [0.40, 0.67], 0.84 [0.71, 0.92]),
+which is the one outlier expected among 25 latents at this precision;
+CURTOR has 0.64 [0.50, 0.76] and 0.92 [0.81, 0.97].
+`tools/inference_coverage.py` writes this table (`coverage_parameters.txt`)
+and the per-latent calibration figure. NUTS had no divergences, mean
+acceptance 0.80-0.85, tree depth 3 and E-BFMI 0.9-1.4; PSIS k-hat had
+median 0.43 and exceeded 0.7 in one seed.
+
+The magnetics constrain CURTOR strongly: the median Laplace sd is 0.0185 of
+the prior sd (about 370 A of the 2e4 A prior), and the joint Fisher
+information from the magnetic rows equals that of `tiago_reconstruction`.
+Consequently the iota posterior sd is small (median over seeds 0.002 at the
+sixth and 0.005 at the third-last of the 15 half-grid surfaces, against about
+0.02 before the fix) and the remaining profile uncertainty is that of the
+kinetic latents: the posterior sd is 0.17 of the prior sd for the leading
+B-spline latent of each of ne, Te, Ti, but 0.5 to 1.0 for the others, so the
+profile diagnostics, not the magnetics, limit ne, Te, Ti at mid radius and
+the edge, and PHIEDGE keeps 0.60 of its prior sd. The synthetic magnetics
+must be whitened with the sigmas that `synthesize_magnetics` sets, which the
+joint model now does (a regression test compares the joint magnetic Fisher
+information with the reconstruction rows). `tools/inference_plots.py`
+writes, for one seed, flux surfaces at three toroidal angles with 68/95 %
+bands of the displacement from the truth, profiles (p, ne, Te, Ti, iota,
+enclosed current) with bands, and the corner plot.
+
+## Diagnostic calibration as nuisance parameters
+
+Planned, not yet implemented. A Thomson scattering system predicts the pair
+(ne, Te) per scattering volume, and a calibration factor multiplies every
+spectral channel. Thomson data alone therefore fix only the product of the
+factor and ne, while Te from channel ratios is calibration independent
+(Fischer, Dinklage and Pasch 2003, PPCF 45, 1095). The calibration is
+modelled as latent parameters beside the profile latents, so that its
+uncertainty propagates into the posterior of the profiles and the equilibrium:
+
+    ne_obs = exp(lc + a) ne + noise,    Te_obs unchanged.
+
+- Campaign scale: lc has a broad Gaussian prior in the logarithm, wide enough
+  to cover a factor of about two in either direction, with heavier
+  (Student-t) tails.
+- Per-laser offsets: a small zero-sum offset per laser on top of the campaign
+  scale.
+- One-sided overlap loss: a is not positive. Laser misalignment lowers the
+  inferred density and changes it per laser and per volume (Merlo et al. 2023,
+  JINST 18, P11012, Nelde et al., arXiv:2111.03562). It is modelled as a
+  transformed smooth function of radius and time, or of the measured beam
+  shift where available, with the extra per-channel scatter as a latent.
+- Cross-calibration: a line-integral interferometer along a nearly identical
+  chord (Kwak et al. 2024, Nucl. Fusion 64, 106022), the diamagnetic energy
+  with the temperature profiles and the dilution, and absolute cutoffs such as
+  the ECE cutoff in a density ramp. The interferometer constrains the scale
+  only up to the unobserved edge density, and the diamagnetic energy depends
+  on Ti and fast ions, so these anchors have independent systematics. Pooling
+  several shots needs one shared interferometer systematic, otherwise the
+  campaign scale gets a false precision below that floor.
+- Identifiability: with Thomson data alone the posterior of lc equals its prior.
+  The contraction of the posterior relative to the prior, a leave-one-diagnostic-out
+  predictive check and the evidence of fixed against free scale quantify what
+  the other diagnostics pin down. A shape discrepancy, if added, needs zero
+  mean, small amplitude and no constant mode, because an unconstrained
+  discrepancy absorbs the scale (Kennedy and O'Hagan 2001, JRSS-B 63, 425).
+
+Planned synthetic test: inject a scale error in both directions, laser offsets
+and a one-sided overlap loss in the truth, and run diagnostic sets from
+Thomson alone through the interferometer, the diamagnetic energy, edge beam
+data and an ECE cutoff ramp up to a multi-shot hierarchy. The Thomson-only set
+must return the prior for lc, and the richer sets must show small bias and
+nominal 68 % and 95 % coverage over at least 50 seeds with flat
+simulation-based-calibration ranks (Talts et al. 2018, arXiv:1804.06788), using
+the coverage machinery of the study below.
 
 ## References and reference implementations
 
