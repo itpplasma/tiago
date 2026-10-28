@@ -179,6 +179,8 @@ add_library(tiago_inference STATIC
     src/inference/point_probe.f90
     src/inference/recorded_diagnostic.f90
     src/inference/integrator_diagnostic.f90
+    src/inference/magnetic_pickup.f90
+    src/generated/magnetic_pickup_leaf.f90
     src/inference/magnetic_response.f90
     src/generated/diamagnetic_energy.f90
     src/generated/thermal_energy_density.f90
@@ -948,3 +950,18 @@ set_tests_properties(tiago_simple_wall_fixture PROPERTIES FIXTURES_SETUP simple_
 add_test(NAME tiago_simple_wall_source COMMAND test_simple_wall_source
     ${CMAKE_CURRENT_BINARY_DIR}/tests/simple-wall)
 set_tests_properties(tiago_simple_wall_source PROPERTIES FIXTURES_REQUIRED simple_wall_file)
+
+add_executable(test_magnetic_pickup tests/test_magnetic_pickup.f90)
+target_link_libraries(test_magnetic_pickup PRIVATE tiago_inference)
+add_test(NAME tiago_magnetic_pickup COMMAND test_magnetic_pickup)
+
+add_executable(benchmark_magnetic_pickup EXCLUDE_FROM_ALL
+    benchmarks/benchmark_magnetic_pickup.f90)
+target_link_libraries(benchmark_magnetic_pickup PRIVATE tiago_inference)
+
+if(FORTSYM_BUILD)
+    add_test(NAME tiago_magnetic_pickup_codegen COMMAND ${CMAKE_COMMAND}
+        -DGENERATOR=$<TARGET_FILE:gen_magnetic_pickup> -DSOURCE=${TIAGO_SOURCE_DIR}
+        -DOUTPUT=${TIAGO_BINARY_DIR}/tests/magnetic-pickup-codegen
+        -P ${TIAGO_SOURCE_DIR}/tests/check_magnetic_pickup_codegen.cmake)
+endif()
