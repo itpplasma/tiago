@@ -14,11 +14,12 @@ contains
         implicit none
         real(dp), intent(in) :: h
         real(dp), intent(out) :: value, row(1)
-        real(dp) :: t1
+        real(dp) :: t1, t2
 
-        t1 = sqrt(-h*2 + 1)
-        value = t1
-        row(1) = -1*2/(t1*2)
+        t1 = -h*2 + 1
+        t2 = sqrt(t1)
+        value = t2
+        row(1) = -1*2/(t2*2)
 
     end subroutine ece_launch_scale
 

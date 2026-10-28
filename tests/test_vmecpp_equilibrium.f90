@@ -31,6 +31,8 @@ program test_vmecpp_equilibrium
     integer :: ios
     real(dp), allocatable :: xp(:), yhot(:), bm(:, :), bmp(:, :), bmm(:, :), bcot(:, :), bbar(:, :)
     real(dp), allocatable :: jacb(:, :), fdb(:)
+    real(dp), allocatable :: bu(:, :), bv(:, :), bup(:, :), bum(:, :), bvp(:, :), bvm(:, :)
+    real(dp), allocatable :: ucot(:, :), vcot(:, :), jacv(:, :), fdv(:)
     integer :: failures, k, ns, nb, ng, mnq, mnmax
     logical :: ok
 
@@ -111,6 +113,16 @@ program test_vmecpp_equilibrium
     b = reshape(eq%vmec%wout('bmnc', ns * mnq), [mnq, ns])
     call check_vector('|B| (bmnc, all half surfaces) vs VMEC++ wout', &
         reshape(bm, [size(bm)]), reshape(b(:, 2:), [size(bm)]), 1.0e-9_dp)
+
+    allocate (bu(nb, ns - 1), bv(nb, ns - 1))
+    call eq%edge%modb(eq%coef, eq%phip_full, eq%phip_half, eq%iota_half, &
+                      eq%current_half, bm, bu, bv)
+    b = reshape(eq%vmec%wout('bsupumnc', ns*mnq), [mnq, ns])
+    call check_vector('B^u vs VMEC++ wout', reshape(bu, [size(bu)]), &
+                      reshape(b(:, 2:), [size(bu)]), 1.e-9_dp)
+    b = reshape(eq%vmec%wout('bsupvmnc', ns*mnq), [mnq, ns])
+    call check_vector('B^v vs VMEC++ wout', reshape(bv, [size(bv)]), &
+                      reshape(b(:, 2:), [size(bv)]), 1.e-9_dp)
 
     ! 2. edge VJP vs finite differences along a random geometry direction
     allocate(ybar(size(eq%y)))
@@ -229,6 +241,15 @@ program test_vmecpp_equilibrium
         1.0e-3_dp * maxval(abs(b))), 2, 2)
     call eq%jacobian(x0, 0.0_dp * cot(1:2, :), jacb, bmnc_cot=bcot)
     if (.not. all(ieee_is_finite(jacb))) error stop 'nonfinite |B| Jacobian'
+    allocate (ucot(size(bcot, 1), 2), vcot(size(bcot, 1), 2))
+    call random_number(ucot); call random_number(vcot)
+    ucot = (ucot - .5_dp)/spread(max(abs(reshape(bu, [size(bu)])), &
+                                     1.e-3_dp*maxval(abs(bu))), 2, 2)
+    vcot = (vcot - .5_dp)/spread(max(abs(reshape(bv, [size(bv)])), &
+                                     1.e-3_dp*maxval(abs(bv))), 2, 2)
+    call eq%jacobian(x0, 0._dp*cot(1:2, :), jacv, bsupu_cot=ucot, bsupv_cot=vcot)
+    if (.not. all(ieee_is_finite(jacv))) error stop 'nonfinite vector-field Jacobian'
+
     if (trim(mode) == 'adjoint-only') then
         t0 = wall()
         call eq%jacobian(x0, cot, jac)
@@ -248,6 +269,8 @@ program test_vmecpp_equilibrium
         if (.not. all(ieee_is_finite(yp))) error stop 'nonfinite positive FD edge'
         b = reshape(eq%vmec%wout('bmnc', ns * mnq), [mnq, ns])
         bmp = b(:, 2:)
+        b = reshape(eq%vmec%wout('bsupumnc', ns*mnq), [mnq, ns]); bup = b(:, 2:)
+        b = reshape(eq%vmec%wout('bsupvmnc', ns*mnq), [mnq, ns]); bvp = b(:, 2:)
         x(k) = x0(k) - h
         call eq%solve(x, ok)
         if (.not. ok) error stop 'negative FD equilibrium failed'
@@ -255,6 +278,15 @@ program test_vmecpp_equilibrium
         if (.not. all(ieee_is_finite(ym))) error stop 'nonfinite negative FD edge'
         b = reshape(eq%vmec%wout('bmnc', ns * mnq), [mnq, ns])
         bmm = b(:, 2:)
+        b = reshape(eq%vmec%wout('bsupumnc', ns*mnq), [mnq, ns]); bum = b(:, 2:)
+        b = reshape(eq%vmec%wout('bsupvmnc', ns*mnq), [mnq, ns]); bvm = b(:, 2:)
+        fdv = (matmul(transpose(ucot), reshape(bup - bum, [size(bup)])) + &
+               matmul(transpose(vcot), reshape(bvp - bvm, [size(bvp)])))/(2*h)
+        if (maxval(abs(fdv)) <= tiny(1._dp)) error stop 'zero vector-field FD oracle'
+        err = maxval(abs(jacv(:, k) - fdv))/maxval(abs(fdv))
+        print '(A,A12,A,ES10.3)', 'vector-field Jacobian ', trim(names(k)), &
+            ': max |adjoint - FD| / max |FD| = ', err
+        if (err > 2.e-3_dp) failures = failures + 1
         fd = matmul(cot, yp - ym) / (2.0_dp * h)
         if (.not. all(ieee_is_finite(fd))) error stop 'nonfinite physical FD oracle'
         if (maxval(abs(fd)) <= tiny(1.0_dp)) error stop 'zero physical FD oracle'

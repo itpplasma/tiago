@@ -14,19 +14,20 @@ contains
         implicit none
         real(dp), intent(in) :: te, ratio, mu, lambda0, k2, depol
         real(dp), intent(out) :: value, d1, d5, d6
-        real(dp) :: t1, t2, t3, t4, t5, t6, t7
+        real(dp) :: t1, t2, t3, t4, t5, t6, t7, t8
 
         t1 = ratio*(-mu + 1)*2
         t2 = (ratio - 1)**2
-        t3 = exp(-t2*5.1099895069000003E+005_dp/te/t1/(sqrt(t2/t1 + 1) + 1))
-        t4 = sqrt(t2 + t1)
-        t5 = ratio**2
-        t6 = k2*lambda0*t4*t5*2
-        t7 = depol + 1
-        value = t3*t7/t6
-        d1 = t3*t2*t7*1*5.1099895069000003E+005_dp/te**2/t6/t1/(sqrt(t2/t1 + 1) + 1)
-        d5 = -lambda0*t3*t4*t5*t7*1*2/t6**2
-        d6 = t3*1/t6
+        t3 = sqrt(t2/t1 + 1) + 1
+        t4 = exp(-t2*5.1099895069000003E+005_dp/te/t1/t3)
+        t5 = sqrt(t2 + t1)
+        t6 = ratio**2
+        t7 = k2*lambda0*t5*t6*2
+        t8 = depol + 1
+        value = t4*t8/t7
+        d1 = t4*t2*t8*1*5.1099895069000003E+005_dp/te**2/t7/t1/t3
+        d5 = -lambda0*t4*t5*t6*t8*1*2/t7**2
+        d6 = t4*1/t7
 
     end subroutine ts_spectral
 

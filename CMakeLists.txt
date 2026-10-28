@@ -49,7 +49,7 @@ option(TIAGO_ENABLE_OPENMP "Enable OpenMP parallelism inside Tiago loops" ON)
 
 # fortnum: B-spline profile bases, NUTS and PSIS for the inference core. Declared
 # before libneo, whose numerics reuse an existing fortnum target.
-set(TIAGO_FORTNUM_TAG "a66afdc936e38b8e6ad2c6cea2a0e1125ed88cb9" CACHE STRING "fortnum commit used by Tiago")
+set(TIAGO_FORTNUM_TAG "ef26a189d39078200f981cbec62bed2515df493a" CACHE STRING "fortnum commit used by Tiago")
 if(NOT TARGET fortnum)
     FetchContent_Declare(fortnum
         GIT_REPOSITORY https://github.com/lazy-fortran/fortnum.git
@@ -170,6 +170,10 @@ endif()
 # profile-diagnostic contract and the reference point probe.
 add_library(tiago_inference STATIC
     src/generated/kinetic_pressure.f90
+    src/generated/student_residual.f90
+    src/generated/student_residual_small.f90
+    src/inference/robust_signals.f90
+    src/inference/calibration_campaign.f90
     src/inference/kinetic_profiles.f90
     src/inference/profile_diagnostic.f90
     src/inference/point_probe.f90
@@ -319,7 +323,12 @@ if(TIAGO_ENABLE_RECONSTRUCTION)
     # the GOMP ABI of gfortran's OpenMP code. Executables link libomp ahead of
     # libgomp, so its symbols serve both (LLVM also ships libgomp.so.1 as a
     # link to libomp; CMake warns that it hides GCC's libgomp, as intended).
-    execute_process(COMMAND ${CMAKE_CXX_COMPILER} -print-file-name=libomp.so
+    if(APPLE)
+        set(_tiago_omp_name libomp.dylib)
+    else()
+        set(_tiago_omp_name libomp.so)
+    endif()
+    execute_process(COMMAND ${CMAKE_CXX_COMPILER} -print-file-name=${_tiago_omp_name}
         OUTPUT_VARIABLE TIAGO_LIBOMP OUTPUT_STRIP_TRAILING_WHITESPACE)
     if(NOT EXISTS "${TIAGO_LIBOMP}")
         message(FATAL_ERROR "libomp for ${CMAKE_CXX_COMPILER} not found (e.g. apt install libomp-20-dev)")
@@ -340,11 +349,15 @@ if(TIAGO_ENABLE_RECONSTRUCTION)
     # defers its pass to link time and leaves __enzyme_* unresolved unless lld
     # loads LLDEnzyme; compiling the two Enzyme translation units without LTO
     # runs the pass at compile time with every toolchain.
+    set(_tiago_enzyme_arch "")
+    if(CMAKE_SYSTEM_PROCESSOR MATCHES "x86_64|AMD64")
+        set(_tiago_enzyme_arch "-march=x86-64")
+    endif()
     set_source_files_properties(
         ${vmecpp_SOURCE_DIR}/src/vmecpp/cpp/vmecpp/vmec/ideal_mhd_model/exact_force_jvp.cc
         ${vmecpp_SOURCE_DIR}/src/vmecpp/cpp/vmecpp/vmec/ideal_mhd_model/exact_force_vjp.cc
         DIRECTORY ${vmecpp_SOURCE_DIR}
-        PROPERTIES COMPILE_OPTIONS "-march=x86-64;-O2;-fno-lto;-fplugin=${TIAGO_ENZYME_PLUGIN}")
+        PROPERTIES COMPILE_OPTIONS "${_tiago_enzyme_arch};-O2;-fno-lto;-fplugin=${TIAGO_ENZYME_PLUGIN}")
     FetchContent_GetProperties(eigen)
     FetchContent_GetProperties(abseil-cpp)
     FetchContent_GetProperties(abscab-cpp)
@@ -385,8 +398,12 @@ end module tiago_vmecpp_paths
     # Dependency sorting can place libneo's libgomp before libomp. Force libomp
     # into DT_NEEDED first, so generic omp_* and Clang's __kmpc_* calls use the
     # same runtime. LLVM also supplies the GOMP entry points used by gfortran.
-    target_link_options(tiago_reconstruction INTERFACE
-        "LINKER:--no-as-needed" "${TIAGO_LIBOMP}" "LINKER:--as-needed")
+    if(APPLE)
+        target_link_options(tiago_reconstruction INTERFACE "${TIAGO_LIBOMP}")
+    else()
+        target_link_options(tiago_reconstruction INTERFACE
+            "LINKER:--no-as-needed" "${TIAGO_LIBOMP}" "LINKER:--as-needed")
+    endif()
     set_target_properties(tiago_reconstruction PROPERTIES LINKER_LANGUAGE Fortran)
     add_dependencies(tiago_reconstruction indata2json)
     add_executable(test_vmecpp_equilibrium tests/test_vmecpp_equilibrium.f90)
@@ -848,3 +865,27 @@ add_test(NAME tiago_ece_posterior COMMAND test_ece_posterior
     ${CMAKE_BINARY_DIR}/tests/ece-posterior.csv)
 add_executable(benchmark_ece_recorded EXCLUDE_FROM_ALL benchmarks/ece/benchmark_recorded.f90)
 target_link_libraries(benchmark_ece_recorded PRIVATE tiago_ece_recorded_fixture)
+
+add_executable(test_robust_signals tests/test_robust_signals.f90)
+target_link_libraries(test_robust_signals PRIVATE tiago_inference)
+add_test(NAME tiago_robust_signals COMMAND test_robust_signals)
+if(TARGET gen_robust_signals)
+    add_test(NAME tiago_robust_codegen COMMAND ${CMAKE_COMMAND}
+        -DGENERATOR=$<TARGET_FILE:gen_robust_signals> -DSOURCE=${CMAKE_SOURCE_DIR}
+        -DOUTPUT=${CMAKE_BINARY_DIR}/tests/robust-codegen
+        -P ${CMAKE_SOURCE_DIR}/tests/check_robust_codegen.cmake)
+endif()
+
+if(TIAGO_ENABLE_RECONSTRUCTION)
+    add_library(tiago_joint_recorded_fixture STATIC
+        tests/joint_recorded_fixture.f90 tests/joint_signal_io.f90
+        tests/joint_validation.f90)
+    target_link_libraries(tiago_joint_recorded_fixture PUBLIC tiago_reconstruction tiago_signals)
+    add_executable(test_joint_recorded tests/test_joint_recorded.f90)
+    target_link_libraries(test_joint_recorded PRIVATE tiago_joint_recorded_fixture)
+    add_test(NAME tiago_joint_recorded COMMAND ${CMAKE_SOURCE_DIR}/tests/joint_recorded.sh
+        $<TARGET_FILE:test_joint_recorded> ${TIAGO_INPUT_LI383}
+        ${CMAKE_SOURCE_DIR}/benchmarks/reconstruction/sensors.awk
+        ${CMAKE_BINARY_DIR}/tests/joint-recorded)
+    set_tests_properties(tiago_joint_recorded PROPERTIES FIXTURES_REQUIRED input_li383 TIMEOUT 3600)
+endif()

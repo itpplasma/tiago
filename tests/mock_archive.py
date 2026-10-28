@@ -85,6 +85,12 @@ def serve(root):
                 times = [first + (last-first)*i/(n-1) for i in range(n)]
                 values = [2*t+1 for t in times]
                 result = dict(data=dict(time=times, values=values, variance=[0.25]*n), version=version)
+                if mode.startswith('recorded-'):
+                    saved = json.loads((root / (mode + '.json')).read_text())
+                    data = saved['data']
+                    keep = [i for i, t in enumerate(data['time']) if first <= t <= last]
+                    result = dict(version='v1', data={key: [array[i] for i in keep]
+                                                     for key, array in data.items()})
                 if mode == 'wrongversion':
                     result['version'] = 'unexpected'
                 if mode == 'malformed':
@@ -146,6 +152,12 @@ def serve(root):
                      units='eV', time_path='data.time', value_path='data.values',
                      variance_path='data.variance', version_path='version',
                      version='latest' if mode == 'versioned' else 'v1', scale=2.0, offset=1.0) for mode in modes]
+    for name, units in [('ts', 'V s'), ('di', 'V'), ('ece', 'V'), ('mag', 'Wb')]:
+        logical = 'recorded-' + name
+        channels.append(dict(logical=logical, url=base+'/'+logical+'?first={first}&last={last}',
+                             units=units, time_path='data.time', value_path='data.values',
+                             variance_path='data.variance', version_path='version',
+                             version='v1', scale=1.0, offset=0.0))
     config = dict(source_id='synthetic-loopback', channels=channels,
                   policy=dict(min_interval=0.01, backoff=0.02, max_backoff=0.2,
                               jitter=0.2, max_window=1.0, timeout=2.0, max_elapsed=10.0))

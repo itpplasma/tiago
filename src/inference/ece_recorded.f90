@@ -354,6 +354,16 @@ contains
         integer :: j, k
         carry = 0
         pb = 0
+        block
+            integer :: first, last
+            first = self%diagnostic%first(c)
+            last = first + size(self%paths(c)%segment) - 1
+            ! An unobserved ray contributes exactly zero to a selected receiver row.
+            if (all(qb(rows, first:last) == 0) .and. all(lb(first:last) == 0)) then
+                call status_set(status, 0, '')
+                return
+            end if
+        end block
         do j = size(self%paths(c)%segment), 1, -1
             k = self%diagnostic%first(c) + j - 1
             xb = matmul(self%qx(:, :, k), qb(rows, k))/2

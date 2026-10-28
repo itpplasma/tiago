@@ -14,13 +14,14 @@ contains
         implicit none
         real(dp), intent(in) :: bx, by, bz
         real(dp), intent(out) :: value, row(3)
-        real(dp) :: t1
+        real(dp) :: t1, t2
 
         t1 = sqrt(bx**2 + by**2 + bz**2)
+        t2 = t1*2
         value = t1
-        row(1) = bx*1*2/(t1*2)
-        row(2) = by*1*2/(t1*2)
-        row(3) = bz*1*2/(t1*2)
+        row(1) = bx*1*2/t2
+        row(2) = by*1*2/t2
+        row(3) = bz*1*2/t2
 
     end subroutine ece_field_norm
 

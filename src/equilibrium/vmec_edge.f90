@@ -560,7 +560,7 @@ contains
         call edge_geometry_vjp(self, ybar(2 * nb + 1:), coef_bar)
     end subroutine edge_vjp
 
-    subroutine edge_modb(self, coef, phip_full, phip_half, iota_half, current_half, bmnc)
+    subroutine edge_modb(self, coef, phip_full, phip_half, iota_half, current_half, bmnc, bsupu, bsupv)
         !! |B| on the half surfaces 2 ... ns as VMEC++ writes it (wout bmnc
         !! without the axis column): |B|^2 = B^u B_u + B^v B_v from half_field
         !! with the half-grid metric of VMEC's bcovar, Fourier-analysed to the
@@ -569,6 +569,7 @@ contains
         real(dp), intent(in) :: coef(0:, 0:, :, :), phip_full(:), phip_half(:)
         real(dp), intent(in) :: iota_half(:), current_half(:)
         real(dp), intent(out) :: bmnc(:, :)                  !! (mnmax_nyq, ns - 1)
+        real(dp), intent(out), optional :: bsupu(:, :), bsupv(:, :)
         type(vmec_edge_t) :: cov
         type(surface_t) :: a, b
         real(dp), allocatable :: bu(:, :), bv(:, :), parts(:, :, :), modb(:, :)
@@ -589,12 +590,14 @@ contains
             modb = sqrt(parts(:, :, 13) * bu + parts(:, :, 12) * bv)
             do mn = 1, self%mnmax_nyq
                 bmnc(mn, h) = sum(self%kernel(mn, :, :) * modb)
+                if (present(bsupu)) bsupu(mn, h) = sum(self%kernel(mn, :, :)*parts(:, :, 13))
+                if (present(bsupv)) bsupv(mn, h) = sum(self%kernel(mn, :, :)*parts(:, :, 12))
             end do
         end do
     end subroutine edge_modb
 
     subroutine edge_modb_vjp(self, coef, phip_full, phip_half, iota_half, current_half, &
-            bmnc_bar, coef_bar, iota_bar, current_bar)
+                             bmnc_bar, coef_bar, iota_bar, current_bar, bsupu_bar, bsupv_bar)
         !! Reverse of edge_modb (direct dependence on the geometry blocks and
         !! on the half-grid iota and current). Accumulates into coef_bar,
         !! iota_bar and current_bar. With |B|^2 = B^i g_ij B^j, the cotangent
@@ -605,6 +608,7 @@ contains
         real(dp), intent(in) :: coef(0:, 0:, :, :), phip_full(:), phip_half(:)
         real(dp), intent(in) :: iota_half(:), current_half(:), bmnc_bar(:, :)
         real(dp), intent(inout) :: coef_bar(0:, 0:, :, :), iota_bar(:), current_bar(:)
+        real(dp), intent(in), optional :: bsupu_bar(:, :), bsupv_bar(:, :)
         type(vmec_edge_t) :: cov
         type(surface_t), allocatable :: s(:), sb(:)
         real(dp), allocatable :: bu(:, :), bv(:, :), parts(:, :, :), modb(:, :), fb(:, :)
@@ -644,6 +648,12 @@ contains
             extra = 0.0_dp
             extra(:, :, 1) = fb * bu
             extra(:, :, 5) = fb * bv
+            do mn = 1, self%mnmax_nyq
+                if (present(bsupu_bar)) extra(:, :, 1) = extra(:, :, 1) + &
+                                                         bsupu_bar(mn, h)*self%kernel(mn, :, :)
+                if (present(bsupv_bar)) extra(:, :, 5) = extra(:, :, 5) + &
+                                                         bsupv_bar(mn, h)*self%kernel(mn, :, :)
+            end do
             call half_field_vjp(cov, s(h), s(h + 1), sb(h), sb(h + 1), h, parts(:, :, 12), &
                 chip, parts, bub, bvb, iota_bar(h), current_bar(h), phip_half(h), extra)
         end do

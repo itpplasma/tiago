@@ -14,19 +14,20 @@ contains
         implicit none
         real(dp), intent(in) :: x0, y0, z0, x1, y1, z1
         real(dp), intent(out) :: value, row(6)
-        real(dp) :: t1, t2, t3, t4
+        real(dp) :: t1, t2, t3, t4, t5
 
         t1 = x1 - x0
         t2 = y1 - y0
         t3 = z1 - z0
         t4 = sqrt(t1**2 + t2**2 + t3**2)
+        t5 = t4*2
         value = t4
-        row(1) = -t1*1*2/(t4*2)
-        row(2) = -t2*1*2/(t4*2)
-        row(3) = -t3*1*2/(t4*2)
-        row(4) = t1*1*2/(t4*2)
-        row(5) = t2*1*2/(t4*2)
-        row(6) = t3*1*2/(t4*2)
+        row(1) = -t1*1*2/t5
+        row(2) = -t2*1*2/t5
+        row(3) = -t3*1*2/t5
+        row(4) = t1*1*2/t5
+        row(5) = t2*1*2/t5
+        row(6) = t3*1*2/t5
 
     end subroutine ece_segment_length
 

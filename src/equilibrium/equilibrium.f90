@@ -293,7 +293,7 @@ contains
         vb%zmns = self%y(2 * nb + ng + 1:)
     end subroutine equilibrium_boundary
 
-    subroutine equilibrium_jacobian(self, x, cot, jac, coef_cot, bmnc_cot)
+    subroutine equilibrium_jacobian(self, x, cot, jac, coef_cot, bmnc_cot, bsupu_cot, bsupv_cot)
         !! jac = cot (dy/dx) at the last solve (which must be at x); cot(k, n_y).
         !! coef_cot(size(coef), k) adds cotangents on the geometry coefficients
         !! (layout of tiago_vmecpp%geometry) to row k, bmnc_cot(mnmax_nyq *
@@ -304,8 +304,9 @@ contains
         real(dp), intent(in) :: x(:), cot(:, :)
         real(dp), allocatable, intent(out) :: jac(:, :)
         real(dp), intent(in), optional :: coef_cot(:, :), bmnc_cot(:, :)
+        real(dp), intent(in), optional :: bsupu_cot(:, :), bsupv_cot(:, :)
         real(dp), allocatable :: coef_bar(:, :, :, :), gbar(:, :), bbar(:, :), pbar(:, :)
-        real(dp), allocatable :: bmnc(:, :), bmnc_dot(:)
+        real(dp), allocatable :: bmnc(:, :), bmnc_dot(:), bu(:, :), bv(:, :), mb(:, :), ub(:, :), vb(:, :)
         real(dp), allocatable :: iota_d(:, :), current_d(:, :), ps_col(:), cur_col(:), yb(:)
         real(dp), allocatable :: g_mass_ps(:), g_mass_am(:, :), g_iota_ai(:, :), g_cur(:, :)
         real(dp) :: pres_scale, curtor, phiedge
@@ -324,21 +325,36 @@ contains
         end do
         if (present(coef_cot)) gbar = gbar + coef_cot
         if (present(bmnc_cot)) then
-            if (size(bmnc_cot, 1) /= self%edge%mnmax_nyq * nh .or. size(bmnc_cot, 2) /= nrow) &
+            if (any(shape(bmnc_cot) /= [self%edge%mnmax_nyq*nh, nrow])) &
                 error stop 'equilibrium_jacobian: bmnc_cot shape'
-            do r = 1, nrow
-                coef_bar = 0.0_dp
-                call self%edge%modb_vjp(self%coef, self%phip_full, self%phip_half, &
-                    self%iota_half, self%current_half, &
-                    reshape(bmnc_cot(:, r), [self%edge%mnmax_nyq, nh]), coef_bar, &
-                    iota_d(:, r), current_d(:, r))
-                gbar(:, r) = gbar(:, r) + reshape(coef_bar, [size(coef_bar)])
-            end do
-            ! |B| is linear in phi' at fixed geometry, pressure / phi'^2 and current / phi'
-            allocate(bmnc(self%edge%mnmax_nyq, nh))
+        end if
+        if (present(bsupu_cot)) then
+            if (any(shape(bsupu_cot) /= [self%edge%mnmax_nyq*nh, nrow])) &
+                error stop 'equilibrium_jacobian: bsupu_cot shape'
+        end if
+        if (present(bsupv_cot)) then
+            if (any(shape(bsupv_cot) /= [self%edge%mnmax_nyq*nh, nrow])) &
+                error stop 'equilibrium_jacobian: bsupv_cot shape'
+        end if
+        if (present(bmnc_cot) .or. present(bsupu_cot) .or. present(bsupv_cot)) then
+            allocate (mb(self%edge%mnmax_nyq, nh), ub(self%edge%mnmax_nyq, nh), &
+                      vb(self%edge%mnmax_nyq, nh), bmnc(self%edge%mnmax_nyq, nh), &
+                      bu(self%edge%mnmax_nyq, nh), bv(self%edge%mnmax_nyq, nh), bmnc_dot(nrow))
+            bmnc_dot = 0
             call self%edge%modb(self%coef, self%phip_full, self%phip_half, self%iota_half, &
-                self%current_half, bmnc)
-            bmnc_dot = matmul(reshape(bmnc, [size(bmnc)]), bmnc_cot)
+                                self%current_half, bmnc, bu, bv)
+            do r = 1, nrow
+                mb = 0; ub = 0; vb = 0
+                if (present(bmnc_cot)) mb = reshape(bmnc_cot(:, r), shape(mb))
+                if (present(bsupu_cot)) ub = reshape(bsupu_cot(:, r), shape(ub))
+                if (present(bsupv_cot)) vb = reshape(bsupv_cot(:, r), shape(vb))
+                coef_bar = 0
+                call self%edge%modb_vjp(self%coef, self%phip_full, self%phip_half, &
+                                        self%iota_half, self%current_half, mb, coef_bar, iota_d(:, r), &
+                                        current_d(:, r), ub, vb)
+                gbar(:, r) = gbar(:, r) + reshape(coef_bar, [size(coef_bar)])
+                bmnc_dot(r) = sum(bmnc*mb) + sum(bu*ub) + sum(bv*vb)
+            end do
         end if
         call self%vmec%adjoint(gbar, bbar, pbar, self%max_block)
         call system_clock(finish)
@@ -382,7 +398,7 @@ contains
                 yb = self%y
                 yb(2 * self%edge%mnmax_nyq + 1:) = 0.0_dp
                 jac(:, k) = matmul(cot, yb) - 2.0_dp * pres_scale * ps_col
-                if (present(bmnc_cot)) jac(:, k) = jac(:, k) + bmnc_dot
+                if (allocated(bmnc_dot)) jac(:, k) = jac(:, k) + bmnc_dot
                 if (self%ncurr == 1) jac(:, k) = jac(:, k) - curtor * cur_col
                 jac(:, k) = jac(:, k) / phiedge
             end select

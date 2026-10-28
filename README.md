@@ -464,3 +464,6 @@ src/equilibrium/           # VMEC++ C adapter, Fortran bindings, edge field
 src/reconstruct/           # Residuals, Jacobian, covariance, figures
 tests/                     # Sample inputs + regression drivers
 ```
+
+See [joint inference from recorded signals](docs/recorded-joint-inference.md)
+for calibration, discrepancy, robustness and surrogate controls.
