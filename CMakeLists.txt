@@ -157,6 +157,8 @@ add_library(tiago_signals STATIC
     src/signals/signal_source.f90
     src/signals/netcdf_source.f90
     src/generated/integrator_signal.f90
+    src/generated/digitizer_signal.f90
+    src/signals/adc.f90
     src/signals/integrated_drift.f90
     src/signals/signal_reduction.f90
     src/signals/calibration.f90
@@ -183,6 +185,7 @@ add_library(tiago_inference STATIC
     src/inference/point_probe.f90
     src/inference/recorded_diagnostic.f90
     src/inference/integrator_diagnostic.f90
+    src/inference/digitizer_diagnostic.f90
     src/inference/magnetic_pickup.f90
     src/generated/magnetic_pickup_leaf.f90
     src/inference/magnetic_response.f90
@@ -759,6 +762,9 @@ set_tests_properties(tiago_recorded_magnetics PROPERTIES FIXTURES_REQUIRED wout_
 add_executable(test_integrated_drift tests/test_integrated_drift.f90)
 target_link_libraries(test_integrated_drift PRIVATE tiago_signals)
 add_test(NAME tiago_integrated_drift COMMAND $<TARGET_FILE:test_integrated_drift>)
+add_executable(test_digitizer tests/test_digitizer.f90)
+target_link_libraries(test_digitizer PRIVATE tiago_inference)
+add_test(NAME tiago_digitizer COMMAND $<TARGET_FILE:test_digitizer>)
 
 set(TIAGO_FORTSYM_BUILD "" CACHE PATH "FortSym build for kernel regeneration checks")
 set(FORTSYM_BUILD "" CACHE PATH "FortSym build for optional kernel regeneration tests")
@@ -779,6 +785,10 @@ if(FORTSYM_BUILD)
         -DGENERATOR=$<TARGET_FILE:gen_magnetics> -DSOURCE=${TIAGO_SOURCE_DIR}
         -DOUTPUT=${TIAGO_BINARY_DIR}/tests/magnetic-codegen
         -P ${TIAGO_SOURCE_DIR}/tests/check_magnetic_codegen.cmake)
+    add_test(NAME tiago_digitizer_codegen COMMAND ${CMAKE_COMMAND}
+        -DGENERATOR=$<TARGET_FILE:gen_digitizer> -DSOURCE=${TIAGO_SOURCE_DIR}
+        -DOUTPUT=${TIAGO_BINARY_DIR}/tests/digitizer-codegen
+        -P ${TIAGO_SOURCE_DIR}/tests/check_digitizer_codegen.cmake)
     add_test(NAME tiago_interferometer_generated COMMAND ${CMAKE_COMMAND}
         -DGENERATOR=$<TARGET_FILE:gen_interferometer>
         -DSOURCE=${TIAGO_SOURCE_DIR}

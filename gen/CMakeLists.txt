@@ -24,6 +24,10 @@ add_executable(gen_magnetics gen_magnetics.f90)
 target_include_directories(gen_magnetics PRIVATE "${FORTSYM_BUILD}/include")
 target_link_libraries(gen_magnetics PRIVATE "${FORTSYM_LIBRARY}")
 
+add_executable(gen_digitizer gen_digitizer.f90)
+target_include_directories(gen_digitizer PRIVATE "${FORTSYM_BUILD}/include")
+target_link_libraries(gen_digitizer PRIVATE "${FORTSYM_LIBRARY}")
+
 add_executable(gen_ece gen_ece.f90)
 target_include_directories(gen_ece PRIVATE "${FORTSYM_BUILD}/include")
 target_link_libraries(gen_ece PRIVATE "${FORTSYM_LIBRARY}")
