@@ -274,11 +274,12 @@ contains
     end subroutine state_param_vjp
 
 
-    subroutine state_vector_jets(self, u, jet, status)
+    subroutine state_vector_jets(self, u, jet, status, parameters)
         class(vmecpp_state_t), intent(in)::self
         real(dp), intent(in)::u(3)
         type(vector_jets_t), intent(out)::jet
         integer, intent(out)::status
+        logical, intent(in), optional::parameters
         type(vmec_state_t)::wout
         type(vector_jets_t)::local
         real(dp)::rc(2), zs(2), rr(2, 4), zr(2, 4)
@@ -314,7 +315,7 @@ contains
                 end do
             end do
         end do
-        call wout%vector_jets(u, local, status)
+        call wout%vector_jets(u, local, status, parameters)
         if (status /= locate_ok) return
         jet%x = local%x
         jet%xu = local%xu
@@ -322,6 +323,10 @@ contains
         jet%b = local%b
         jet%bu = local%bu
         jet%buu = local%buu
+        if (size(local%xp, 2) == 0) then
+            allocate (jet%xp(3, 0), jet%xup(3, 3, 0), jet%bp(3, 0), jet%bup(3, 3, 0))
+            return
+        end if
         ng = size(self%coef)
         nb = size(self%bmnc)
         nr = wout%mnmax*self%ns

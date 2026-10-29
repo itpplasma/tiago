@@ -99,11 +99,14 @@ module tiago_real_space_state
 
 contains
 
-    subroutine unsupported_vector_jets(self, u, jet, status)
+    subroutine unsupported_vector_jets(self, u, jet, status, parameters)
+        !! parameters = .false. leaves the parameter columns (xp, xup, bp, bup)
+        !! empty in every override.
         class(real_space_state_t), intent(in) :: self
         real(dp), intent(in) :: u(3)
         type(vector_jets_t), intent(out) :: jet
         integer, intent(out) :: status
+        logical, intent(in), optional :: parameters
         status = locate_unsupported
         call self%eval(u, jet%x, jet%xu, jet%b(1), jet%bu(1, :))
     end subroutine

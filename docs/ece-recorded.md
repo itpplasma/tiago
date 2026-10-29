@@ -151,7 +151,9 @@ is a transport-weighted value and need not equal Te at the cold resonance.
 `tiago_ece_posterior` performs 128 repeated independent noise realizations
 with six synthetic frequency channels, a known common gain error and a shifted
 magnetic resonance. It jointly fits one temperature-profile direction, the
-common gain and the field shift with standard-normal priors. The likelihood
+common gain and the field shift with standard-normal priors. Each fit starts
+at the maximum for the averaged data, which is found from the prior mean, and
+iterates to the same convergence criterion as a cold start. The likelihood
 retains parameter-dependent thermal noise and its normalization. Intervals
 use the local Fisher/Laplace covariance. This is conditional synthetic recovery
 in a three-dimensional subspace, not coverage of every B-spline coefficient,

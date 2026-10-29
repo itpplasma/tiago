@@ -28,7 +28,8 @@ module tiago_ece_ray
             class(cold_medium_t), intent(in) :: self
             real(dp), intent(in) :: x(3)
             real(dp), intent(out) :: q(4), dq(3, 4), d2q(3, 3, 4)
-            real(dp), intent(out) :: qp(:, :), dqp(:, :, :)
+            !! Absent qp and dqp request no parameter derivatives.
+            real(dp), intent(out), optional :: qp(:, :), dqp(:, :, :)
         end subroutine
     end interface
     type, public :: cold_ray_t
@@ -64,22 +65,31 @@ contains
         real(dp), intent(in) :: frequency, y(6)
         integer, intent(in) :: np, mode
         real(dp), intent(out) :: f(6), jac(6, 6)
-        real(dp), intent(out) :: pj(6, np + 1), h
+        !! Without pj the medium is sampled without parameter derivatives,
+        !! which the ray itself and its state tangents do not need.
+        real(dp), intent(out), optional :: pj(6, np + 1)
+        real(dp), intent(out) :: h
         logical, intent(out) :: valid
         real(dp) :: q(4), dq(3, 4), d2q(3, 3, 4), dh(8), d2h(8, 8)
         real(dp) :: qp(4, medium%n_params()), dqp(3, 4, medium%n_params())
         real(dp) :: a(8, 6), ap(8, medium%n_params() + 1)
         integer :: i, j
-        call medium%sample(y(:3), q, dq, d2q, qp, dqp)
+        if (present(pj)) then
+            call medium%sample(y(:3), q, dq, d2q, qp, dqp)
+        else
+            call medium%sample(y(:3), q, dq, d2q)
+        end if
         valid = all(ieee_is_finite(q)) .and. all(ieee_is_finite(y))
         valid = valid .and. all(ieee_is_finite(dq))
         valid = valid .and. all(ieee_is_finite(d2q))
-        valid = valid .and. all(ieee_is_finite(qp))
-        valid = valid .and. all(ieee_is_finite(dqp))
+        if (present(pj)) then
+            valid = valid .and. all(ieee_is_finite(qp))
+            valid = valid .and. all(ieee_is_finite(dqp))
+            pj = 0.0_dp
+        end if
         valid = valid .and. q(4) >= 0.0_dp
         f = 0.0_dp
         jac = 0.0_dp
-        pj = 0.0_dp
         h = 0.0_dp
         if (.not. valid) return
         if (norm2(q(:3)) > 0.0_dp .and. norm2(y(4:)) == 0.0_dp) then
@@ -104,6 +114,7 @@ contains
                 jac(i + 3, j) = jac(i + 3, j) - dot_product(dh(4:7), d2q(i, j, :))
             end do
         end do
+        if (.not. present(pj)) return
         ap = 0.0_dp
         ap(4:7, :np) = qp
         ap(8, np + 1) = 1.0_dp
@@ -194,10 +205,10 @@ contains
             real(dp), intent(in) :: t, y(:)
             real(dp), intent(out) :: dydt(:)
             class(*), intent(in), optional :: ctx
-            real(dp) :: a(6, 6), p(6, medium%n_params() + 1), hh
+            real(dp) :: a(6, 6), hh
             logical :: ok
             call ray_rhs(medium, medium%n_params(), frequency, mode, y, &
-                dydt, a, p, ok, hh)
+                dydt, a, valid=ok, h=hh)
             if (.not. ok) failed = .true.
         end subroutine
     end subroutine
@@ -265,10 +276,10 @@ contains
             real(dp), intent(in) :: t, y(:)
             real(dp), intent(out) :: dydt(:)
             class(*), intent(in), optional :: ctx
-            real(dp) :: a(6, 6), p(6, medium%n_params() + 1), h
+            real(dp) :: a(6, 6), h
             logical :: ok
             call ray_rhs(medium, medium%n_params(), ray%frequency, ray%mode, &
-                y, dydt, a, p, ok, h)
+                y, dydt, a, valid=ok, h=h)
             if (.not. ok) failed = .true.
         end subroutine
         subroutine tangent(t, y, s, ds, ctx)
@@ -322,20 +333,20 @@ contains
             real(dp), intent(in) :: t, y(:)
             real(dp), intent(out) :: dydt(:)
             class(*), intent(in), optional :: ctx
-            real(dp) :: a(6, 6), p(6, medium%n_params() + 1), h
+            real(dp) :: a(6, 6), h
             logical :: ok
             call ray_rhs(medium, medium%n_params(), ray%frequency, ray%mode, &
-                y, dydt, a, p, ok, h)
+                y, dydt, a, valid=ok, h=h)
             if (.not. ok) failed = .true.
         end subroutine
         subroutine adjoint(t, y, s, ds, ctx)
             real(dp), intent(in) :: t, y(:), s(:)
             real(dp), intent(out) :: ds(:)
             class(*), intent(in), optional :: ctx
-            real(dp) :: f(6), a(6, 6), p(6, medium%n_params() + 1), h
+            real(dp) :: f(6), a(6, 6), h
             logical :: ok
             call ray_rhs(medium, medium%n_params(), ray%frequency, ray%mode, &
-                y, f, a, p, ok, h)
+                y, f, a, valid=ok, h=h)
             ds = matmul(transpose(a), s)
             if (.not. ok) failed = .true.
         end subroutine

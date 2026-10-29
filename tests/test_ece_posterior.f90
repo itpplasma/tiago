@@ -17,7 +17,7 @@ program test_ece_posterior
     type(fortnum_status_t) :: status
     type(rng_t) :: rng
     real(dp), allocatable :: p0(:), pd(:, :), ed(:, :), zd(:)
-    real(dp) :: theta(nd), true_theta(nd), noise, sd(nd), pull(nd), &
+    real(dp) :: theta(nd), start(nd), true_theta(nd), noise, sd(nd), pull(nd), &
         mean_pull(nd), mean_square(nd), error(nd), estimate(nd), &
         reported_sd(nd), truth_signal(nc), truth_variance(nc), gain, te, &
         data(nc, trials), estimates(nd, trials), widths(nd, trials)
@@ -76,10 +76,13 @@ program test_ece_posterior
                 .002_dp**2)*noise
         end do
     end do
+    ! Starting every trial at the maximum for the averaged data, itself found
+    ! from the prior mean, saves the far-field Fisher steps of a cold start.
+    call fit(sum(data, 2)/trials, [(0.0_dp, j=1, nd)], start, sd)
     !$omp parallel do default(shared) private(i, theta, sd, error, pull) &
     !$omp reduction(+:count, mean_pull, mean_square, estimate, reported_sd)
     do i = 1, trials
-        call fit(data(:, i), theta, sd)
+        call fit(data(:, i), start, theta, sd)
         estimates(:, i) = theta
         widths(:, i) = sd
         error = theta - true_theta
@@ -118,16 +121,17 @@ contains
         end if
     end subroutine
 
-    subroutine fit(observations, theta, sd)
-        real(dp), intent(in) :: observations(nc)
+    subroutine fit(observations, initial, theta, sd)
+        real(dp), intent(in) :: observations(nc), initial(nd)
         real(dp), intent(out) :: theta(nd), sd(nd)
         real(dp) :: covariance(nd, nd), fisher(nd, nd), gradient(nd), &
-            next_gradient(nd), step(nd, 1), inverse(nd, nd), value, &
-            next_value, fraction
+            next_gradient(nd), next_fisher(nd, nd), step(nd, 1), &
+            inverse(nd, nd), value, next_value, fraction
+        type(recorded_ece_t) :: tape
         integer :: iteration, j, k, info
-        theta = 0
+        theta = initial
+        call objective(theta, observations, value, gradient, fisher)
         do iteration = 1, 24
-            call objective(theta, observations, value, gradient, fisher)
             covariance = fisher
             step(:, 1) = -gradient
             call dposv('L', nd, 1, covariance, nd, step, nd, info)
@@ -137,24 +141,28 @@ contains
             ! near the root; require the score to decrease there instead.
             if (abs(dot_product(gradient, step(:, 1))) < 1.0e-8_dp) then
                 call objective(theta + step(:, 1), observations, next_value, &
-                    next_gradient)
+                    next_gradient, next_fisher)
                 if (norm2(next_gradient) < norm2(gradient)) then
                     theta = theta + step(:, 1)
+                    value = next_value
+                    gradient = next_gradient
+                    fisher = next_fisher
                     cycle
                 end if
             end if
             fraction = 1
             do k = 1, 16
-                call objective(theta + fraction*step(:, 1), observations, &
+                call evaluate(theta + fraction*step(:, 1), observations, tape, &
                     next_value)
                 if (next_value <= value) exit
                 fraction = fraction/2
             end do
             call require(k <= 16, 'posterior line search')
             theta = theta + fraction*step(:, 1)
+            value = next_value
+            call derivatives(tape, theta, observations, gradient, fisher)
         end do
         call require(iteration <= 24, 'posterior convergence')
-        call objective(theta, observations, value, gradient, fisher)
         inverse = 0
         do j = 1, nd
             inverse(j, j) = 1
@@ -203,9 +211,16 @@ contains
         real(dp), intent(out) :: result
         real(dp), intent(out), optional :: g(nd), f(nd, nd)
         type(recorded_ece_t) :: tape
+        call evaluate(t, data, tape, result)
+        if (present(g)) call derivatives(tape, t, data, g, f)
+    end subroutine
+
+    subroutine evaluate(t, data, tape, result)
+        real(dp), intent(in) :: t(nd), data(nc)
+        type(recorded_ece_t), intent(out) :: tape
+        real(dp), intent(out) :: result
         type(fortnum_status_t) :: st
-        real(dp) :: v(nc), r(nc), jv(nc, nd), jn(nc, nd)
-        integer :: j, k
+        real(dp) :: v(nc), r(nc)
         call forward(t, tape, st)
         if (st%code /= 0) print *, st%msg
         call require(st%code == 0, 'posterior forward')
@@ -213,7 +228,18 @@ contains
         r = tape%voltage - data
         ! The normalization is essential for parameter-dependent noise.
         result = .5_dp*(sum(r**2/v + log(v)) + sum(t**2))
-        if (.not. present(g)) return
+    end subroutine
+
+    subroutine derivatives(tape, t, data, g, f)
+        type(recorded_ece_t), intent(in) :: tape
+        real(dp), intent(in) :: t(nd), data(nc)
+        real(dp), intent(out) :: g(nd)
+        real(dp), intent(out), optional :: f(nd, nd)
+        type(fortnum_status_t) :: st
+        real(dp) :: v(nc), r(nc), jv(nc, nd), jn(nc, nd)
+        integer :: j, k
+        v = tape%variance + .002_dp**2
+        r = tape%voltage - data
         do j = 1, nd
             call tape%jvp(pd(:, j), ed(:, j), jv(:, j), jn(:, j), st)
             call require(st%code == 0, 'posterior sensitivity')
