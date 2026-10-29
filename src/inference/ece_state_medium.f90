@@ -22,7 +22,8 @@ contains
     subroutine state_medium_sample(self, x, q, dq, d2q, qp, dqp)
         class(state_medium_t), intent(in) :: self
         real(dp), intent(in) :: x(3)
-        real(dp), intent(out) :: q(4), dq(3, 4), d2q(3, 3, 4), qp(:, :), dqp(:, :, :)
+        real(dp), intent(out) :: q(4), dq(3, 4), d2q(3, 3, 4)
+        real(dp), intent(out), optional :: qp(:, :), dqp(:, :, :)
         integer :: status
         call sample_medium(self%state, self%profiles, self%z, x, q, dq, d2q, qp, dqp, &
                            status)

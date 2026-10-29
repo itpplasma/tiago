@@ -18,9 +18,12 @@ contains
         class(polynomial_medium_t), intent(in) :: self
         real(dp), intent(in) :: x(3)
         real(dp), intent(out) :: q(4), dq(3, 4), d2q(3, 3, 4)
-        real(dp), intent(out) :: qp(:, :), dqp(:, :, :)
+        real(dp), intent(out), optional :: qp(:, :), dqp(:, :, :)
+        real(dp) :: p(4, 8), dp_(3, 4, 8)
         call ece_test_medium(x(1), x(2), x(3), &
                              self%p(1), self%p(2), self%p(3), self%p(4), &
-                        self%p(5), self%p(6), self%p(7), self%p(8), q, dq, d2q, qp, dqp)
+            self%p(5), self%p(6), self%p(7), self%p(8), q, dq, d2q, p, dp_)
+        if (present(qp)) qp = p
+        if (present(dqp)) dqp = dp_
     end subroutine
 end module

@@ -122,7 +122,8 @@ contains
         type(kinetic_profiles_t), intent(in) :: profiles
         real(dp), intent(in) :: z(:), x(3)
         real(dp), intent(out) :: q(4), dq(3, 4), d2q(3, 3, 4)
-        real(dp), intent(out) :: qp(:, :), dqp(:, :, :)
+        !! Without qp and dqp the parameter derivatives are skipped.
+        real(dp), intent(out), optional :: qp(:, :), dqp(:, :, :)
         integer, intent(out) :: status
         type(located_t) :: loc
         type(vector_jets_t) :: jet
@@ -131,22 +132,26 @@ contains
         real(dp) :: xp(3), xup(3, 3), fp, gup(3), unused, unused3(3)
         real(dp) :: unused33(3, 3), zero3(3), zero33(3, 3)
         integer :: np, nz, i, j
+        logical :: columns
+        columns = present(qp) .and. present(dqp)
         q = ieee_value(0.0_dp, ieee_quiet_nan)
         dq = q(1)
         d2q = q(1)
-        qp = q(1)
-        dqp = q(1)
         np = state%n_params()
         nz = profiles%n_latent
         status = locate_singular
         if (size(z) /= nz) return
-        if (size(qp, 1) /= 4 .or. size(qp, 2) /= np + nz) return
-        if (size(dqp, 1) /= 3 .or. size(dqp, 2) /= 4 .or. size(dqp, &
-                                                               3) /= np + nz) return
+        if (columns) then
+            qp = q(1)
+            dqp = q(1)
+            if (size(qp, 1) /= 4 .or. size(qp, 2) /= np + nz) return
+            if (size(dqp, 1) /= 3 .or. size(dqp, 2) /= 4 .or. size(dqp, &
+                3) /= np + nz) return
+        end if
         call state%locate(x, loc)
         status = loc%status
         if (status /= locate_ok) return
-        call state%vector_jets(loc%u, jet, status)
+        call state%vector_jets(loc%u, jet, status, columns)
         if (status /= locate_ok) return
         call profiles%density_jet(z, loc%u(1), ne, nr, nrr, nep, nrp)
         q(:3) = jet%b
@@ -165,6 +170,7 @@ contains
             call medium_pullback(loc%jinv, jet%xuu, gu(:, i), hu(:, :, i), &
                                  zero3, zero33, 0.0_dp, zero3, dq(:, i), d2q(:, :, i), &
                                  unused, unused3)
+            if (.not. columns) cycle
             do j = 1, np + nz
                 xp = 0
                 xup = 0

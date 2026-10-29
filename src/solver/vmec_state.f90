@@ -36,6 +36,7 @@ module tiago_vmec_state
         procedure :: get_params => vmec_get_params
         procedure :: set_params => vmec_set_params
         procedure :: eval => vmec_eval
+        procedure :: initial_guess => vmec_initial_guess
         procedure :: param_jvp => vmec_param_jvp
         procedure :: param_vjp => vmec_param_vjp
     end type vmec_state_t
@@ -225,6 +226,44 @@ contains
         dxdu(2, 3) = dxdu(2, 3) + r * cp
     end subroutine vmec_eval
 
+    pure subroutine vmec_initial_guess(self, x, u)
+        !! The grid search of default_initial_guess, with the radial
+        !! interpolation done once per grid radius instead of per point.
+        class(vmec_state_t), intent(in) :: self
+        real(dp), intent(in) :: x(3)
+        real(dp), intent(out) :: u(3)
+        real(dp), parameter :: pi = acos(-1.0_dp)
+        real(dp) :: wf(max_weights), dwf(max_weights), cr(self%mnmax), &
+            cz(self%mnmax), v(3), xv(3), r, z, ang, best, d
+        integer :: ff, nf, i, j, mn
+
+        best = huge(1.0_dp)
+        u = [0.5_dp, 0.0_dp, atan2(x(2), x(1))]
+        do i = 1, 4
+            call hermite_weights(self%rho_full, 0.25_dp * i, .true., ff, nf, wf, dwf)
+            do mn = 1, self%mnmax
+                cr(mn) = dot_product(wf(:nf), self%rmnc(mn, ff:ff + nf - 1))
+                cz(mn) = dot_product(wf(:nf), self%zmns(mn, ff:ff + nf - 1))
+            end do
+            do j = 0, 15
+                v = [0.25_dp * i, 2.0_dp * pi * j / 16.0_dp, atan2(x(2), x(1))]
+                r = 0.0_dp
+                z = 0.0_dp
+                do mn = 1, self%mnmax
+                    ang = self%xm(mn) * v(2) - self%xn(mn) * v(3)
+                    r = r + cr(mn) * cos(ang)
+                    z = z + cz(mn) * sin(ang)
+                end do
+                xv = [r * cos(v(3)), r * sin(v(3)), z]
+                d = sum((xv - x)**2)
+                if (d < best) then
+                    best = d
+                    u = v
+                end if
+            end do
+        end do
+    end subroutine vmec_initial_guess
+
     pure subroutine vmec_param_jvp(self, u, dp_, dx, db)
         class(vmec_state_t), intent(in) :: self
         real(dp), intent(in) :: u(3), dp_(:)
@@ -284,21 +323,27 @@ contains
         end do
     end subroutine vmec_param_vjp
 
-    subroutine vmec_vector_jets(self, u, jet, status)
+    subroutine vmec_vector_jets(self, u, jet, status, parameters)
         class(vmec_state_t), intent(in) :: self
         real(dp), intent(in) :: u(3)
         type(vector_jets_t), intent(out) :: jet
         integer, intent(out) :: status
+        logical, intent(in), optional :: parameters
         real(dp) :: wf(max_weights, 4), wh(max_weights, 4), radial(4)
         real(dp) :: val, d(3), d2(3, 3), d3(3, 3, 3), x3(3, 3, 3, 3)
         real(dp) :: v(2), vu(3, 2), vuu(3, 3, 2), vp(2), vup(3, 2)
         real(dp) :: junk2(3, 3), zero3(3, 3, 3), zero2(3, 3, 2)
         real(dp), allocatable :: x2p(:, :, :, :), cp(:, :), cup(:, :, :)
         integer :: ff, nf, fh, nh, mn, k, i, j, nr, nb, np, col
+        real(dp) :: basis
+        logical :: columns
         status = locate_singular
         if (.not. allocated(self%bsupumnc)) return
         if (.not. allocated(self%bsupvmnc)) return
-        np = self%n_params()
+        columns = .true.
+        if (present(parameters)) columns = parameters
+        np = 0
+        if (columns) np = self%n_params()
         nr = self%mnmax*self%ns
         nb = self%mnmax_nyq*(self%ns - 1)
         allocate (jet%xp(3, np), jet%xup(3, 3, np), jet%bp(3, np), jet%bup(3, 3, np), &
@@ -338,17 +383,20 @@ contains
                         call vmec_z(wf(k, :), self%xm(mn), self%xn(mn), u(2), u(3), &
                                     val, d, d2, d3)
                     end select
-                    j = col
-                    if (i == 3) j = nr + col
-                    jet%xp(i, j) = val
-                    jet%xup(i, :, j) = d
-                    x2p(i, :, :, j) = d2
+                    basis = val
+                    if (columns) then
+                        j = col
+                        if (i == 3) j = nr + col
+                        jet%xp(i, j) = val
+                        jet%xup(i, :, j) = d
+                        x2p(i, :, :, j) = d2
+                    end if
                     if (i == 3) then
                         val = self%zmns(mn, ff + k - 1)
                     else
                         val = self%rmnc(mn, ff + k - 1)
                     end if
-                    jet%x(i) = jet%x(i) + jet%xp(i, j)*val
+                    jet%x(i) = jet%x(i) + basis*val
                     jet%xu(i, :) = jet%xu(i, :) + d*val
                     jet%xuu(i, :, :) = jet%xuu(i, :, :) + d2*val
                     x3(i, :, :, :) = x3(i, :, :, :) + d3*val
@@ -360,9 +408,11 @@ contains
                 call vmec_cos(wh(k, :), self%xm_nyq(mn), self%xn_nyq(mn), &
                               u(2), u(3), val, d, d2, d3)
                 do i = 1, 2
-                    col = 2*nr + i*nb + mn + (fh + k - 2)*self%mnmax_nyq
-                    cp(i, col) = val
-                    cup(:, i, col) = d
+                    if (columns) then
+                        col = 2*nr + i*nb + mn + (fh + k - 2)*self%mnmax_nyq
+                        cp(i, col) = val
+                        cup(:, i, col) = d
+                    end if
                     if (i == 1) then
                         radial(1) = self%bsupumnc(mn, fh + k - 1)
                     else
