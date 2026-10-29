@@ -53,6 +53,16 @@ contains
         call check(c(3) == lo .and. sat(3), 'below full scale saturates low')
         call adc_quantize(voff + real(lo, dp)*vres, vres, voff, bits, c(4), sat(4))
         call check(c(4) == lo .and. .not. sat(4), 'negative code limit is exact')
+        ! Far beyond int32 codes: must still clip to the matching limit.
+        v(1) = voff + 1.0e9_dp*vres*real(m, dp)
+        v(2) = voff - 1.0e9_dp*vres*real(m, dp)
+        call adc_quantize(v(1), vres, voff, bits, c(1), sat(1))
+        call check(c(1) == hi .and. sat(1), 'large overload saturates high')
+        call adc_quantize(v(2), vres, voff, bits, c(2), sat(2))
+        call check(c(2) == lo .and. sat(2), 'large underload saturates low')
+        call adc_quantize(v(1:2), [vres, vres], [voff, voff], bits, c(1:2), sat(1:2))
+        call check(all(c(1:2) == [hi, lo]) .and. all(sat(1:2)), &
+            'array quantize clips large overloads')
         call check(abs(adc_quantization_variance(vres) - vres*vres/12.0_dp) &
             < tiny(1.0_dp), 'quantisation variance is vres^2/12')
         print '(A,ES12.4)', 'adc round trip max error [V]: ', round_trip

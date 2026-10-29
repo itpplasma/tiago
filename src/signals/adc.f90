@@ -45,11 +45,14 @@ contains
         integer(int32), intent(out) :: counts
         logical, intent(out), optional :: saturated
         integer(int32) :: lo, hi
+        real(dp) :: x
         lo = shiftl(-1_int32, bits - 1)
         hi = shiftl(1_int32, bits - 1) - 1_int32
-        counts = nint((volts - voff)/vres)
-        if (present(saturated)) saturated = counts < lo .or. counts > hi
-        counts = min(max(counts, lo), hi)
+        ! Clip before nint: its result is undefined beyond the int32 range.
+        x = (volts - voff)/vres
+        if (present(saturated)) saturated = x <= real(lo, dp) - 0.5_dp &
+            .or. x >= real(hi, dp) + 0.5_dp
+        counts = nint(min(max(x, real(lo, dp)), real(hi, dp)), int32)
     end subroutine
 
     pure subroutine adc_quantize_array(volts, vres, voff, bits, counts, saturated)
@@ -58,13 +61,15 @@ contains
         integer(int32), intent(out) :: counts(:)
         logical, intent(out), optional :: saturated(:)
         integer(int32) :: lo, hi
+        real(dp) :: x
         integer :: i
         lo = shiftl(-1_int32, bits - 1)
         hi = shiftl(1_int32, bits - 1) - 1_int32
         do i = 1, size(volts)
-            counts(i) = nint((volts(i) - voff(i))/vres(i))
-            if (present(saturated)) saturated(i) = counts(i) < lo .or. counts(i) > hi
-            counts(i) = min(max(counts(i), lo), hi)
+            x = (volts(i) - voff(i))/vres(i)
+            if (present(saturated)) saturated(i) = x <= real(lo, dp) - 0.5_dp &
+                .or. x >= real(hi, dp) + 0.5_dp
+            counts(i) = nint(min(max(x, real(lo, dp)), real(hi, dp)), int32)
         end do
     end subroutine
 
