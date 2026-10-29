@@ -72,6 +72,7 @@ Recorded signals and inference:
 - [Recorded signals and calibration](docs/recorded-signals.md),
   [archive adapters](docs/online-archives.md)
 - [Recorded magnetics](docs/recorded-magnetics.md),
+  [digitiser stage](docs/digitizer.md),
   [Thomson scattering](docs/thomson.md),
   [dispersion interferometer](docs/dispersion-interferometer.md)
 - ECE: [recorded ECE](docs/ece-recorded.md), [rays](docs/ece-rays.md),
