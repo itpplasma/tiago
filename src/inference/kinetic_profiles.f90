@@ -34,11 +34,14 @@ module tiago_kinetic_profiles
     !! The prior acts on the log value, not on the log gradient as in
     !! surroBIER's PCA prior, so flat regions (plateaus from islands) have
     !! non-zero prior density. A profile that is not latent keeps fixed
-    !! coefficients c = m.
+    !! coefficients c = m. The optional AR(1) Te prior instead acts on
+    !! physical coefficients; see docs/multifidelity-profile.md.
     use, intrinsic :: iso_fortran_env, only: dp => real64
+    use, intrinsic :: ieee_arithmetic, only: ieee_value, ieee_quiet_nan
     use fortnum_status, only: fortnum_status_t, FORTNUM_OK
     use fortnum_bspline, only: bspline_workspace_t, bspline_init, bspline_set_knots, &
         bspline_eval_deriv
+    use tiago_multifidelity_profile, only: ar1_profile_t
     use tiago_kinetic_pressure, only: kinetic_pressure
     use tiago_density_label_jet, only: density_label_jet
     implicit none
@@ -66,10 +69,13 @@ module tiago_kinetic_profiles
         real(dp) :: z_imp = 6.0_dp
         real(dp) :: sol_decay = 0.05_dp !! e-folding length in s beyond s = 1
         type(profile_t) :: p(N_PROFILES)
+        type(ar1_profile_t) :: te_ar1
+        logical :: low_fidelity_te = .false.
         integer :: n_latent = 0
     contains
         procedure :: init => profiles_init
         procedure :: set_profile => profiles_set
+        procedure :: set_multifidelity_te => profiles_set_ar1
         procedure :: coefficients => profiles_coefficients
         procedure :: evaluate => profiles_evaluate
         procedure :: density_jet => profiles_density_jet
@@ -154,6 +160,18 @@ contains
         call layout(self)
     end subroutine profiles_set
 
+    subroutine profiles_set_ar1(self, prior)
+        class(kinetic_profiles_t), intent(inout) :: self
+        type(ar1_profile_t), intent(in) :: prior
+        if (.not. prior%active) error stop 'AR1 Te: prior is not initialized'
+        if (prior%n /= self%ncoef) error stop 'AR1 Te: one coefficient per Greville node'
+        if (any(abs(prior%nodes-self%greville) > 1.e-14_dp)) &
+            error stop 'AR1 Te: prior nodes must be the Greville nodes'
+        self%te_ar1 = prior
+        self%p(P_TE)%latent = .false.
+        call layout(self)
+    end subroutine
+
     subroutine layout(self)
         type(kinetic_profiles_t), intent(inout) :: self
         integer :: i
@@ -162,6 +180,10 @@ contains
             self%p(i)%offset = self%n_latent
             if (self%p(i)%latent) self%n_latent = self%n_latent + self%ncoef
         end do
+        if (self%te_ar1%active) then
+            self%te_ar1%offset = self%n_latent
+            self%n_latent = self%n_latent+self%te_ar1%n_params
+        end if
     end subroutine layout
 
     pure real(dp) function gibbs_kernel(a, b, sigma_f, l_core, l_edge, s0, sw, kind) result(k)
@@ -186,7 +208,20 @@ contains
         class(kinetic_profiles_t), intent(in) :: self
         real(dp), intent(in) :: z(:)
         integer, intent(in) :: which
-        real(dp) :: c(self%ncoef)
+        real(dp) :: c(self%ncoef), low(self%ncoef), high(self%ncoef)
+        type(fortnum_status_t) :: status
+        integer :: o
+        if (which == P_TE .and. self%te_ar1%active) then
+            o = self%te_ar1%offset
+            call self%te_ar1%coefficients(z(o+1:o+self%te_ar1%n_params),low,high,status)
+            if (status%code /= 0) then
+                c = ieee_value(0._dp,ieee_quiet_nan)
+                return
+            end if
+            c = high
+            if (self%low_fidelity_te) c = low
+            return
+        end if
         associate (p => self%p(which))
             c = p%mean
             if (p%latent) c = c + matmul(p%chol, z(p%offset + 1:p%offset + self%ncoef))
@@ -209,6 +244,12 @@ contains
         do j = 1, size(s)
             call basis_at(self, s(j), b)
             do i = 1, N_PROFILES
+                if (i == P_TE .and. self%te_ar1%active) then
+                    call physical_at(self,s(j),b,c(:,i),g,du,dg)
+                    f(i,j) = g
+                    df_ds(i,j) = du
+                    cycle
+                end if
                 call u_at(self, i, s(j), b, c(:, i), u, du)
                 call transform(self, i, u, g, dg)
                 f(i, j) = g
@@ -237,6 +278,12 @@ contains
             call basis_at(self, s(j), b)
             s_bar(j) = 0.0_dp
             do i = 1, N_PROFILES
+                if (i == P_TE .and. self%te_ar1%active) then
+                    call physical_at(self,s(j),b,c(:,i),g,du,dg)
+                    c_bar(:,i) = c_bar(:,i)+f_bar(i,j)*dg*b(0,:)
+                    s_bar(j) = s_bar(j)+f_bar(i,j)*du
+                    cycle
+                end if
                 call u_at(self, i, s(j), b, c(:, i), u, du)
                 call transform(self, i, u, g, dg)
                 c_bar(:, i) = c_bar(:, i) + f_bar(i, j) * dg * b(0, :)
@@ -250,6 +297,20 @@ contains
                     z_bar(p%offset + 1:p%offset + self%ncoef) + matmul(c_bar(:, i), p%chol)
             end associate
         end do
+        if (self%te_ar1%active) then
+            block
+                integer :: o, np
+                real(dp) :: low(self%ncoef), high(self%ncoef)
+                real(dp), allocatable :: lj(:,:), hj(:,:)
+                type(fortnum_status_t) :: status
+                o = self%te_ar1%offset; np = self%te_ar1%n_params
+                allocate(lj(self%ncoef,np),hj(self%ncoef,np))
+                call self%te_ar1%coefficients(z(o+1:o+np),low,high,status,lj,hj)
+                if (status%code /= 0) error stop 'AR1 Te VJP: '//trim(status%msg)
+                if (self%low_fidelity_te) hj = lj
+                z_bar(o+1:o+np) = z_bar(o+1:o+np)+matmul(c_bar(:,P_TE),hj)
+            end block
+        end if
     end subroutine profiles_vjp
 
     subroutine profiles_pressure(self, z, s, p, dp_ds)
@@ -371,6 +432,17 @@ contains
         type(fortnum_status_t) :: st
         call bspline_eval_deriv(self%basis, min(max(s, 0.0_dp), 1.0_dp), 1, b, st)
     end subroutine basis_at
+
+    subroutine physical_at(self,s,b,c,value,slope,scale)
+        type(kinetic_profiles_t), intent(in) :: self
+        real(dp), intent(in) :: s, b(0:,:), c(:)
+        real(dp), intent(out) :: value, slope, scale
+        scale = 1
+        if (s > 1) scale = exp(-(s-1)/self%sol_decay)
+        value = dot_product(b(0,:),c)*scale
+        slope = dot_product(b(1,:),c)
+        if (s > 1) slope = -value/self%sol_decay
+    end subroutine
 
     pure subroutine u_at(self, which, s, b, c, u, du)
         !! Spline value and s derivative, with the scrape-off continuation.

@@ -52,6 +52,13 @@ constraint motivated by [Kennedy and O'Hagan (2001)](https://doi.org/10.1111/146
 it does not establish global nonlinear identifiability. Protect sensitivities
 across the intended parameter region and validate on independent truths.
 
+For two-fidelity electron temperature, install the
+[AR(1) profile prior](multifidelity-profile.md) before joint setup. Thomson and
+kinetic pressure use the physical high level; recorded ECE uses the low level,
+linked by its temperature calibration scale and a constrained shape GP. Kernel
+hyperparameters are posterior parameters, with sourced lognormal priors. Local
+Laplace evidence uses the observed Hessian in standard-normal coordinates.
+
 For a cheap proposal model, call `train_surrogate` with paired exact design
 sites, fixed input lengths, correction amplitude, autoregression coefficient
 and nugget standard deviation. Its inexpensive level is the joint tangent

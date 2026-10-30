@@ -204,9 +204,76 @@ program test_joint_model
     print '(A,*(F8.3))', 'pull of truth (theta* - truth)/sd: ', &
         [((theta(i) - theta_true(i)) / sqrt(lap%cov(i, i)), i = 1, model%n)]
     call check_surrogate_priors()
+    call check_multifidelity()
     if (fails > 0) error stop 1
     print '(A)', 'joint model: all checks passed'
 contains
+    subroutine check_multifidelity()
+        use tiago_multifidelity_profile, only: ar1_profile_t
+        use tiago_calibration, only: calibration_prior_t
+        type(ar1_profile_t) :: prior
+        type(calibration_prior_t) :: calibration
+        type(diagnostic_slot_t), allocatable :: old(:)
+        real(dp), allocatable :: t(:), direction(:), rr(:), rp(:), rm(:), jj(:, :), reference(:)
+        real(dp) :: error, initial_chi2
+        integer :: code, o, np, steps, j, nd
+        character(:), allocatable :: message
+        logical :: valid
+        call calibration%init([1.2_dp], reshape([.1_dp**2], [1, 1]), code)
+        call expect(code == 0, 'joint AR1 calibration')
+        calibration%record%record_id = 'synthetic-ECE-scale'
+        call prior%init(model%prof%greville, &
+            (2500*(1 - model%prof%greville) + 50)/1.2_dp, calibration, &
+            log([100._dp, .12_dp, 50._dp, .1_dp]), [.2_dp, .2_dp, .2_dp, .2_dp], &
+            'synthetic', 'constant and calibration tangent', code)
+        call expect(code == 0, 'joint AR1 prior')
+        call model%prof%set_multifidelity_te(prior)
+        call move_alloc(model%diags, old)
+        nd = size(old)
+        allocate (model%diags(nd + 1))
+        model%diags(:nd) = old
+        model%diags(nd + 1) = old(1)
+        model%diags(nd + 1)%low_fidelity_te = .true.
+        call model%setup()
+        allocate (t(model%n), direction(model%n), rr(model%n_residuals()), &
+            rp(model%n_residuals()), rm(model%n_residuals()))
+        t = 0; t(:model%n_rec) = rec%prior/rec%scale
+        o = model%n_rec + model%prof%te_ar1%offset
+        np = model%prof%te_ar1%n_params
+        t(o + 1:o + np) = [(0.2_dp*sin(.4_dp*j), j=1, np)]
+        call model%residual(t, rr, valid)
+        call expect(valid, 'joint AR1 physical pressure equilibrium')
+        direction = t
+        direction(o+prior%hyper_index()+1) = 1.e5_dp
+        call model%residual(direction,rr,valid)
+        call expect(.not. valid, 'invalid AR1 covariance rejected before equilibrium solve')
+        call expect(all(rr == huge(1._dp)), 'invalid AR1 residual initialized')
+        call synthesize_magnetics(model, t(:model%n_rec)*rec%scale, &
+            .01_dp, 1.e-4_dp, 1.e-8_dp, 1.e-7_dp, rng, .false.)
+        call synthesize_profiles(model, t, .02_dp, [0._dp, 0._dp, 0._dp], rng, .false.)
+        direction = 0
+        direction(o + 1:o + np) = [(cos(.7_dp*j), j=1, np)]
+        call model%jacobian(t, jj)
+        call model%residual(t + 1.e-4_dp*direction, rp, valid)
+        call expect(valid, 'joint AR1 plus equilibrium')
+        call model%residual(t - 1.e-4_dp*direction, rm, valid)
+        call expect(valid, 'joint AR1 minus equilibrium')
+        reference = (rp - rm)/2.e-4_dp
+        error = maxval(abs(reference - matmul(jj, direction)))/maxval(abs(reference))
+        print '(A,ES14.6)', 'AR1 joint finite-difference relative error=', error
+        call expect(error < 2.e-4_dp, 'joint AR1 pressure and both fidelity derivatives')
+        t(o + 1:o + np) = 0
+        call model%residual(t, rr, valid)
+        initial_chi2 = sum(rr**2)
+        call map_fit(model, t, 60, steps, message)
+        call model%residual(t, rr, valid)
+        call expect(valid .and. sum(rr**2) < initial_chi2, 'joint AR1 MAP')
+        call laplace(model, t, lap)
+        call expect(lap%info == 0, 'joint AR1 observed Hessian positive')
+        call expect(lap%proper .and. abs(lap%log_evidence) < huge(1._dp), &
+            'joint AR1 normalized Laplace evidence')
+    end subroutine
+
     subroutine check_surrogate_priors()
         real(dp) :: design(model%n, 3), direction(model%n), length(model%n)
         real(dp), allocatable :: exact(:), approximate(:), exact_jac(:, :), approximate_jac(:, :)
@@ -232,9 +299,9 @@ contains
         print '(A,ES14.6)', 'surrogate reconstruction prior error=', &
             maxval(abs(exact(first:last) - approximate(first:last)))
         call expect(maxval(abs(exact(first:last) - approximate(first:last))) < 1.e-14_dp, &
-                    'surrogate retains exact reconstruction priors with rho /= 1 and nugget')
+            'surrogate retains exact reconstruction priors with rho /= 1 and nugget')
         call expect(maxval(abs(exact_jac(first:last, :) - approximate_jac(first:last, :))) < 1.e-14_dp, &
-                    'surrogate retains exact reconstruction prior derivatives')
+            'surrogate retains exact reconstruction prior derivatives')
         model%use_surrogate = .false.
     end subroutine
 
@@ -246,7 +313,7 @@ contains
         type(diagnostic_slot_t), allocatable :: old(:)
         integer :: j
         select type (q => model%diags(2)%d)
-        type is (point_probe_t)
+            type is (point_probe_t)
             allocate(ti, source=q)
         end select
         bp%x0 = ti%x0

@@ -3,9 +3,9 @@ module tiago_inference_engines
     !!   map_fit         Levenberg-Marquardt on the whitened residual (the
     !!                   algorithm of tiago_reconstruction's fit; VMEC++
     !!                   hot-restarts from the last equilibrium);
-    !!   laplace         Gauss-Newton covariance (J^T J)^-1 at the MAP and the
-    !!                   Laplace log evidence
-    !!                   log Z = log p(d, theta*) + n/2 log 2 pi - 1/2 log det(J^T J);
+    !!   laplace         local covariance and normalized Laplace evidence;
+    !!                   observed curvature for hierarchical AR(1) profiles,
+    !!                   Gauss-Newton curvature otherwise;
     !!   sample_nuts     fortnum NUTS with the Laplace covariance as metric and
     !!                   gradients -J^T r from the implicit-adjoint chain;
     !!   psis_validate   importance sampling from the Laplace Gaussian with
@@ -48,7 +48,7 @@ contains
         integer, intent(in) :: max_iterations
         integer, intent(out) :: steps
         character(len=:), allocatable, intent(out) :: message
-        real(dp), parameter :: floor = 1.0e-3_dp
+        real(dp) :: floor
         real(dp), allocatable :: r(:), r_trial(:), jac(:, :), a(:, :), m(:, :), g(:), h(:), d(:)
         real(dp), allocatable :: theta_trial(:)
         real(dp) :: chi2, chi2_trial, predicted, rho, mu, nu
@@ -57,6 +57,8 @@ contains
         external :: dposv
 
         n = size(theta)
+        floor = 1.e-3_dp
+        if (model%prof%te_ar1%active) floor = 1.e-10_dp
         allocate(r(model%n_residuals()), r_trial(model%n_residuals()))
         call model%residual(theta, r, ok)
         steps = 0
@@ -134,6 +136,13 @@ contains
         end if
         call model%jacobian(theta, jac)
         h = matmul(transpose(jac), jac)
+        if (model%prof%te_ar1%active) then
+            call observed_hessian(model,theta,h,ok)
+            if (.not. ok) then
+                lap%info = -2
+                return
+            end if
+        end if
         call dpotrf('U', n, h, n, lap%info)
         if (lap%info /= 0) return
         lap%log_det_hessian = 2.0_dp * sum([(log(h(i, i)), i = 1, n)])
@@ -156,6 +165,34 @@ contains
             0.5_dp * n * log(2.0_dp * acos(-1.0_dp)) - 0.5_dp * lap%log_det_hessian
     end subroutine laplace
 
+    subroutine observed_hessian(model, theta, h, ok)
+        !! Hyperparameters require residual curvature beyond Gauss-Newton.
+        type(joint_model_t), intent(inout) :: model
+        real(dp), intent(in) :: theta(:)
+        real(dp), intent(out) :: h(:, :)
+        logical, intent(out) :: ok
+        real(dp) :: shifted(size(theta)), plus(size(theta)), minus(size(theta)), step
+        real(dp), allocatable :: r(:), jac(:, :)
+        integer :: i
+        allocate (r(model%n_residuals()))
+        do i = 1, size(theta)
+            step = 2.e-5_dp*max(1._dp, abs(theta(i)))
+            shifted = theta; shifted(i) = shifted(i) + step
+            call model%residual(shifted, r, ok)
+            if (.not. ok) return
+            call model%jacobian(shifted, jac)
+            plus = matmul(r, jac)
+            shifted(i) = shifted(i) - 2*step
+            call model%residual(shifted, r, ok)
+            if (.not. ok) return
+            call model%jacobian(shifted, jac)
+            minus = matmul(r, jac)
+            h(:, i) = (plus - minus)/(2*step)
+        end do
+        h = (h + transpose(h))/2
+        call model%residual(theta, r, ok)
+    end subroutine
+
     subroutine log_posterior(n, x, f, g, context, status)
         !! fortnum NUTS callback: f = -|r|^2 / 2, g = -J^T r.
         integer, intent(in) :: n
@@ -170,7 +207,7 @@ contains
         f = 0.0_dp
         g = 0.0_dp
         select type (c => context)
-        type is (context_t)
+            type is (context_t)
             allocate(r(c%model%n_residuals()))
             call c%model%residual(x, r, ok)
             if (.not. ok) then
