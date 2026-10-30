@@ -81,6 +81,12 @@ Optionally compute consistent local evidence/Laplace weights and expose a
 finite Gaussian mixture over the local parameter posteriors. Do not average the
 physical equilibria. Do not add a general branch-discovery engine to TIAGO.
 
+The [local-mixture implementation](docs/inference.md#several-local-modes)
+provides prior and candidate starts, covariance-based deduplication, local
+Laplace evidence weights and per-mode PSIS reports for joint and magnetic
+reconstruction. Synthetic separated-mode and unimodal controls are included;
+this does not certify branch completeness in a physical case.
+
 ## T5 — diagnostic breadth
 
 Add diagnostics only with concrete experimental consumers. Magnetic diagnostics

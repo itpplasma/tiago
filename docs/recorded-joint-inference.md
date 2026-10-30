@@ -78,3 +78,15 @@ case already used by reconstruction tests; all signals and geometry are
 synthetic. It checks the complete derivative and source parity. Extended
 coverage and ablation studies use the same fixture and must report the tested
 parameter/prior range and the limitations of a Laplace approximation.
+
+The joint model also implements the
+[finite local-mixture interface](inference.md#several-local-modes). Supply
+candidate latent vectors or leave starts unallocated for independent prior
+draws; retain each mode's equilibrium and inspect its individual PSIS k-hat.
+Use the preparation callback for different pressure families or initial
+branches, with explicit discrete prior probabilities. Final mode evaluations,
+Laplace weights and PSIS use the exact model. For the synthetic `tiago_infer`
+CLI, `prior_starts` adds prior draws, while `candidate_count` reads that many
+latent vectors (one per line) from `candidate_file`; `mode_distance` controls
+deduplication. Per-mode files are under `output_dir/modes`; the existing
+single-mode summaries and optional NUTS run describe the largest-weight mode.

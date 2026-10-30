@@ -1,5 +1,5 @@
 module tiago_inference_engines
-    !! Inference engines on a joint_model_t:
+    !! Shared inference engines for joint and magnetic reconstruction:
     !!   map_fit         Levenberg-Marquardt on the whitened residual (the
     !!                   algorithm of tiago_reconstruction's fit; VMEC++
     !!                   hot-restarts from the last equilibrium);
@@ -12,16 +12,17 @@ module tiago_inference_engines
     !!                   Pareto smoothing (k-hat) and the importance-weighted
     !!                   posterior moments.
     use, intrinsic :: iso_fortran_env, only: dp => real64, int64
+    use, intrinsic :: ieee_arithmetic, only: ieee_is_finite
     use fortnum_status, only: fortnum_status_t, status_set, FORTNUM_OK, FORTNUM_DOMAIN_ERROR
     use fortnum_rng, only: rng_t, rng_seed, rng_normal
     use fortnum_nuts, only: nuts_options_t, nuts_result_t, nuts_sample
     use fortnum_psis, only: psis_smooth
-    use tiago_joint_model, only: joint_model_t
+    use tiago_local_posterior, only: local_posterior_t
     implicit none
     private
 
     type :: context_t
-        type(joint_model_t), pointer :: model => null()
+        class(local_posterior_t), pointer :: model => null()
     end type context_t
 
     type, public :: laplace_t
@@ -42,13 +43,15 @@ module tiago_inference_engines
 
 contains
 
-    subroutine map_fit(model, theta, max_iterations, steps, message)
-        type(joint_model_t), intent(inout) :: model
+    subroutine map_fit(model, theta, max_iterations, steps, message, converged, decrease_tolerance)
+        class(local_posterior_t), intent(inout) :: model
         real(dp), intent(inout) :: theta(:)
         integer, intent(in) :: max_iterations
         integer, intent(out) :: steps
         character(len=:), allocatable, intent(out) :: message
-        real(dp), parameter :: floor = 1.0e-3_dp
+        logical, intent(out), optional :: converged
+        real(dp), intent(in), optional :: decrease_tolerance
+        real(dp) :: floor
         real(dp), allocatable :: r(:), r_trial(:), jac(:, :), a(:, :), m(:, :), g(:), h(:), d(:)
         real(dp), allocatable :: theta_trial(:)
         real(dp) :: chi2, chi2_trial, predicted, rho, mu, nu
@@ -56,22 +59,41 @@ contains
         logical :: ok
         external :: dposv
 
+        floor = 1.0e-3_dp
+        if (present(decrease_tolerance)) floor = decrease_tolerance
+        if (present(converged)) converged = .false.
         n = size(theta)
         allocate(r(model%n_residuals()), r_trial(model%n_residuals()))
         call model%residual(theta, r, ok)
         steps = 0
+        if (ok) ok = all(ieee_is_finite(r))
         if (.not. ok) then
             message = 'no equilibrium at the start values'
             return
         end if
         chi2 = sum(r**2)
         call model%jacobian(theta, jac)
+        if (.not. all(ieee_is_finite(jac))) then
+            message = 'nonfinite Jacobian'
+            return
+        end if
         a = matmul(transpose(jac), jac)
         g = matmul(transpose(jac), r)
         mu = 1.0e-3_dp
         nu = 2.0_dp
         message = 'iteration limit reached'
         do while (steps < max_iterations)
+            ! Damping must not turn an infeasible step into false convergence.
+            m = a
+            h = -g
+            call dposv('U', n, 1, m, n, h, n, info)
+            if (info == 0) then
+                if (-dot_product(h, g) <= floor) then
+                    message = 'converged (predicted chi^2 decrease below the solver noise floor)'
+                    if (present(converged)) converged = .true.
+                    exit
+                end if
+            end if
             d = [(max(a(i, i), tiny(1.0_dp)), i = 1, n)]
             m = a
             do i = 1, n
@@ -82,16 +104,25 @@ contains
             if (info /= 0) then
                 mu = mu * nu
                 nu = 2.0_dp * nu
+                if (mu > 1.0e12_dp) then
+                    message = 'damped system factorization failed'
+                    return
+                end if
                 cycle
             end if
             predicted = -2.0_dp * dot_product(h, g) - dot_product(h, matmul(a, h))
-            if (predicted <= floor) then
-                message = 'converged (predicted chi^2 decrease below the solver noise floor)'
+            if (.not. ieee_is_finite(predicted)) then
+                message = 'nonfinite predicted decrease'
+                return
+            end if
+            if (predicted <= 0) then
+                message = 'stalled (nonpositive predicted decrease)'
                 exit
             end if
             theta_trial = theta + h
             call model%residual(theta_trial, r_trial, ok)
             chi2_trial = huge(1.0_dp)
+            if (ok) ok = all(ieee_is_finite(r_trial))
             if (ok) chi2_trial = sum(r_trial**2)
             rho = -1.0_dp
             if (ok) rho = (chi2 - chi2_trial) / predicted
@@ -101,6 +132,10 @@ contains
                 chi2 = chi2_trial
                 steps = steps + 1
                 call model%jacobian(theta, jac)
+                if (.not. all(ieee_is_finite(jac))) then
+                    message = 'nonfinite Jacobian'
+                    return
+                end if
                 a = matmul(transpose(jac), jac)
                 g = matmul(transpose(jac), r)
                 mu = mu * max(1.0_dp / 3.0_dp, 1.0_dp - (2.0_dp * rho - 1.0_dp)**3)
@@ -109,7 +144,7 @@ contains
                 mu = mu * nu
                 nu = 2.0_dp * nu
                 if (mu > 1.0e12_dp) then
-                    message = 'converged (no further decrease of chi^2)'
+                    message = 'stalled (no further decrease of chi^2)'
                     exit
                 end if
             end if
@@ -117,7 +152,7 @@ contains
     end subroutine map_fit
 
     subroutine laplace(model, theta, lap)
-        type(joint_model_t), intent(inout) :: model
+        class(local_posterior_t), intent(inout) :: model
         real(dp), intent(in) :: theta(:)
         type(laplace_t), intent(out) :: lap
         real(dp), allocatable :: r(:), jac(:, :), h(:, :)
@@ -128,17 +163,23 @@ contains
         n = size(theta)
         allocate(r(model%n_residuals()))
         call model%residual(theta, r, ok)
+        if (ok) ok = all(ieee_is_finite(r))
         if (.not. ok) then
             lap%info = -1
             return
         end if
         call model%jacobian(theta, jac)
+        if (.not. all(ieee_is_finite(jac))) then
+            lap%info = -2
+            return
+        end if
         h = matmul(transpose(jac), jac)
         call dpotrf('U', n, h, n, lap%info)
         if (lap%info /= 0) return
         lap%log_det_hessian = 2.0_dp * sum([(log(h(i, i)), i = 1, n)])
         lap%cov = h
         call dpotri('U', n, lap%cov, n, lap%info)
+        if (lap%info /= 0) return
         do j = 1, n
             do i = j + 1, n
                 lap%cov(i, j) = lap%cov(j, i)
@@ -146,6 +187,7 @@ contains
         end do
         lap%chol = lap%cov
         call dpotrf('L', n, lap%chol, n, lap%info)
+        if (lap%info /= 0) return
         do j = 2, n
             lap%chol(1:j - 1, j) = 0.0_dp
         end do
@@ -184,7 +226,7 @@ contains
     end subroutine log_posterior
 
     subroutine sample_nuts(model, lap, opts, seed, result, status)
-        type(joint_model_t), intent(inout), target :: model
+        class(local_posterior_t), intent(inout), target :: model
         type(laplace_t), intent(in) :: lap
         type(nuts_options_t), intent(in) :: opts
         integer, intent(in) :: seed
@@ -205,7 +247,7 @@ contains
         !! log w = log p(theta | d) - log q(theta) up to a constant. Draws for
         !! which VMEC++ finds no equilibrium get the smallest finite weight
         !! minus 50 and are counted in failures.
-        type(joint_model_t), intent(inout) :: model
+        class(local_posterior_t), intent(inout) :: model
         type(laplace_t), intent(in) :: lap
         integer, intent(in) :: draws, seed
         type(psis_result_t), intent(out) :: result
@@ -227,6 +269,7 @@ contains
             end do
             theta(:, k) = lap%mean + matmul(lap%chol, zeta)
             call model%residual(theta(:, k), r, ok)
+            if (ok) ok = all(ieee_is_finite(r))
             good(k) = ok
             lw(k) = 0.0_dp
             if (ok) lw(k) = -0.5_dp * sum(r**2) + 0.5_dp * dot_product(zeta, zeta)
