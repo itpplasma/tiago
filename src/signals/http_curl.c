@@ -28,7 +28,7 @@ void tiago_http_sleep(double seconds) {
 typedef struct host_gate {
     char *host;
     pthread_mutex_t mutex;
-    double last_start, interval, embargo;
+    double last_end, interval, embargo;
     struct host_gate *next;
 } host_gate;
 static pthread_mutex_t hosts_mutex = PTHREAD_MUTEX_INITIALIZER;
@@ -72,7 +72,7 @@ void *tiago_http_acquire(const char *url, double interval, double deadline) {
         tiago_http_sleep(0.001);
     }
     double spacing = interval > g->interval ? interval : g->interval;
-    double ready = g->last_start + spacing;
+    double ready = g->last_end + spacing;
     if (g->embargo > ready) ready = g->embargo;
     double now = tiago_http_clock();
     if (ready >= deadline || now >= deadline) {
@@ -80,13 +80,15 @@ void *tiago_http_acquire(const char *url, double interval, double deadline) {
         return NULL;
     }
     tiago_http_sleep(ready - now);
-    g->last_start = tiago_http_clock();
     g->interval = interval;
     return g;
 }
 void tiago_http_release(void *gate, double delay) {
     host_gate *g = gate;
-    if (delay > 0) g->embargo = tiago_http_clock() + delay;
+    /* A server that answered has received the request by now, so latency
+       cannot shorten the spacing it observes. */
+    g->last_end = tiago_http_clock();
+    if (delay > 0) g->embargo = g->last_end + delay;
     pthread_mutex_unlock(&g->mutex);
 }
 int tiago_curl_setup(void *handle, const char *url, const char *agent,
