@@ -20,6 +20,7 @@ program test_joint_model
     use tiago_point_probe, only: point_probe_t
     use tiago_profile_diagnostic, only: Q_B
     use tiago_inference_engines, only: map_fit, laplace, laplace_t
+    use tiago_local_mixture, only: mode_start_t, mixture_options_t, local_mixture_t, multi_start_map
     use fortnum_rng, only: rng_t, rng_seed
     use fortnum_status, only: fortnum_status_t
     implicit none
@@ -27,6 +28,9 @@ program test_joint_model
     type(joint_model_t), target :: model
     type(rng_t) :: rng
     type(fortnum_status_t) :: st
+    type(mode_start_t) :: starts(2)
+    type(mixture_options_t) :: mixture_opts
+    type(local_mixture_t) :: mixture
     type(laplace_t) :: lap
     type(located_t) :: loc(3)
     real(dp), allocatable :: theta0(:), theta_true(:), theta(:), r(:), rp(:), rm(:), jac(:, :)
@@ -203,6 +207,15 @@ program test_joint_model
     print '(A,F12.3,A,F10.3)', 'log evidence ', lap%log_evidence, ', chi^2 ', lap%chi2
     print '(A,*(F8.3))', 'pull of truth (theta* - truth)/sd: ', &
         [((theta(i) - theta_true(i)) / sqrt(lap%cov(i, i)), i = 1, model%n)]
+    starts(1)%theta = theta
+    starts(2)%theta = theta
+    mixture_opts%psis_draws = 20
+    call multi_start_map(model, starts, model%n, trim(work), mixture_opts, mixture, st)
+    call expect(st%code == 0 .and. size(mixture%modes) == 1, 'joint multi-start deduplicates repeated MAP')
+    call expect(mixture%evidence_valid, 'joint normalized evidence weights')
+    call expect(abs(mixture%modes(1)%weight - 1.0_dp) < 1.0e-12_dp, 'joint single-mode weight')
+    call model%draw_prior(rng, theta0, ok)
+    call expect(ok .and. size(theta0) == model%n, 'joint prior draw coordinates')
     call check_surrogate_priors()
     if (fails > 0) error stop 1
     print '(A)', 'joint model: all checks passed'

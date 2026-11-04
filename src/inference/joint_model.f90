@@ -26,6 +26,8 @@ module tiago_joint_model
     !! an additive model-error term (emulator or convergence error).
     use, intrinsic :: iso_fortran_env, only: dp => real64
     use, intrinsic :: ieee_arithmetic, only: ieee_is_finite, ieee_value, ieee_quiet_nan
+    use tiago_local_posterior, only: local_posterior_t
+    use fortnum_rng, only: rng_t, rng_normal
     use tiago_reconstruction, only: rec, residual_at, jacobian_at, invalidate_caches, n_rows
     use tiago_kinetic_profiles, only: kinetic_profiles_t, N_PROFILES, P_NE, P_TE, P_TI, P_ZEFF
     use tiago_profile_diagnostic, only: profile_diagnostic_t, plasma_sample_t, N_QUANTITIES, &
@@ -63,7 +65,7 @@ module tiago_joint_model
         integer :: eta_offset = 0, gain_index = 0, row_offset = 0
     end type diagnostic_slot_t
 
-    type, public :: joint_model_t
+    type, extends(local_posterior_t), public :: joint_model_t
         type(kinetic_profiles_t) :: prof
         type(diagnostic_slot_t), allocatable :: diags(:)
         real(dp), allocatable :: mag_covariance(:, :)   !! of the magnetic signals (n_meas)
@@ -88,6 +90,9 @@ module tiago_joint_model
         integer :: state_solve = -1
         integer :: evaluations = 0, jacobians = 0
     contains
+        procedure :: draw_prior => joint_draw_prior
+        procedure :: exact => joint_exact
+        procedure :: save_equilibrium => joint_save_equilibrium
         procedure :: setup => joint_setup
         procedure :: train_surrogate => joint_train_surrogate
         procedure :: jvp => joint_jvp
@@ -104,6 +109,35 @@ module tiago_joint_model
     end type joint_model_t
 
 contains
+
+    subroutine joint_exact(self)
+        class(joint_model_t), intent(inout) :: self
+        self%use_surrogate = .false.
+        self%state_solve = -1
+        call invalidate_caches()
+    end subroutine
+
+    subroutine joint_draw_prior(self, rng, theta, ok)
+        class(joint_model_t), intent(in) :: self
+        type(rng_t), intent(inout) :: rng
+        real(dp), intent(out) :: theta(:)
+        logical, intent(out) :: ok
+        integer :: i
+        ok = self%proper_prior() .and. size(theta) == self%n
+        if (.not. ok) return
+        do i = 1, size(theta)
+            call rng_normal(rng, theta(i))
+        end do
+        theta(:self%n_rec) = (rec%prior + rec%prior_sigma*theta(:self%n_rec))/rec%scale
+    end subroutine
+
+    subroutine joint_save_equilibrium(self, prefix, path)
+        class(joint_model_t), intent(inout) :: self
+        character(len=*), intent(in) :: prefix
+        character(len=:), allocatable, intent(out) :: path
+        path = prefix//'.nc'
+        call rec%eq%write_wout(path)
+    end subroutine
 
     subroutine joint_setup(self)
         !! Latent layout and covariance factors; call after rec, prof and the

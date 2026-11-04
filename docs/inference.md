@@ -158,3 +158,122 @@ under-coverage is sampling noise or a bias has not been established.
   VMEC++ solver and its implicit adjoint inside the inference instead.
 
 Chris&AI
+
+## Several local modes
+
+`tiago_local_mixture::multi_start_map` searches supplied candidates and prior
+starts independently, then returns `local_mixture_t%modes`. It accepts either
+`joint_model_t` or `tiago_reconstruction_posterior::reconstruction_posterior_t`.
+Both use the existing MAP, Gauss–Newton Laplace and PSIS engines; NUTS remains
+available separately for each mode through `sample_nuts`. Equilibrium solves
+are serial because the reconstruction provider has shared mutable state.
+
+```fortran
+type(mode_start_t) :: starts(10)
+type(mixture_options_t) :: options
+type(local_mixture_t) :: mixture
+! Set up model, measurements and priors first; create results/modes.
+starts(1)%theta = candidate_a
+starts(2)%theta = candidate_b
+! An unallocated theta requests one independent draw from the active prior.
+call multi_start_map(model, starts, size(candidate_a), 'results/modes', &
+    options, mixture, status)
+```
+
+Candidate vectors use the same coordinates as `map_fit`: reconstruction
+parameters divided by `rec%scale`, followed, for the joint model, by the
+standard-normal profile and instrument latents. Prior starts draw reconstruction
+parameters from their declared Gaussian priors in these scaled coordinates and
+all joint latents from independent standard normals. Correlated physical
+profile/calibration priors are already represented by their latent transforms.
+A prior draw with no solvable equilibrium is recorded as a failed start; it is
+not redrawn or silently used to truncate or renormalize the prior.
+
+For alternative pressure models or equilibrium branches, give each distinct
+model/branch and parameter chart its own `mode_start_t%family`. Supply the
+optional `prepare(index, model, ok)` callback to activate that start's complete
+model and initial equilibrium before either drawing its prior or optimizing.
+The callback must restore all model configuration, data and priors, including
+a branch-specific solver initial state when required. The engine invalidates
+caches and disables the joint proposal surrogate after activation. All starts
+in one call have the same parameter dimension; their interpretations may differ
+between families. A family must have the same posterior and coordinate chart
+for every start. Distinct equilibria that share parameter values need distinct
+family identifiers. There is no automatic physical branch discovery.
+
+Assign `log_family_prior` the logarithm of the prior probability of its discrete
+model/branch. Probabilities over distinct families must sum to one; the default
+zero is appropriate for a single family. Repeated starts in a family must use
+the same probability. An optimizer start is not itself a model, and finding a
+mode repeatedly never increases its posterior weight. Families with different
+observations, signal units or likelihood measures cannot be compared by these
+weights. Comparisons must include the same data and their complete likelihood
+normalizations.
+
+Within a family, two fits are duplicates if the displacement of their means
+has Mahalanobis distance at most `dedup_distance` (default 1) under **both**
+local covariance matrices. The lower-chi-squared fit is retained. The two
+metrics prevent a broad approximation from swallowing a narrow one. An
+iteration limit, a stalled optimizer, a failed equilibrium or a failed Laplace
+factorization is reported in `starts.csv` and excluded. Convergence uses the
+existing predicted chi-squared decrease threshold (default 0.001); set
+`decrease_tolerance` with regard to the forward solver's numerical accuracy.
+This search does not certify that all modes have been found.
+
+Each mode has a Gaussian with its own mean, covariance and Cholesky factor.
+The reported Hessian is the existing Gauss–Newton approximation `H = J^T J`
+of the whitened posterior residual, rather than the full nonlinear Hessian.
+Its log evidence is
+
+    log Z_k = -chi2_k/2 + c_k + n/2 log(2 pi) - log det(H_k)/2.
+
+Here `c_k = log_normalization()` includes the normalized measurement
+likelihoods, consistency rows and priors. In particular, a reconstruction
+prior contributes `-log(sigma_prior/scale) - log(2 pi)/2`, and each
+standard-normal latent contributes `-log(2 pi)/2`. Instrument transformations
+act inside the forward model; evidence is integrated in the declared latent
+coordinates. The mode weights are the normalized exponentials of
+`log Z_k + log_family_prior`, computed after subtracting the largest value.
+The mixture evidence is their log-sum-exp, conditional on the modes found.
+Improper reconstruction priors leave local Gaussians available but set
+`evidence_valid` false and mixture weights and evidence to NaN. The raw local
+evidence column is then only a formal value with the proper-prior flag false.
+A large PSIS k-hat warns about the local Gaussian; it does not correct its
+Laplace evidence or establish that no other mode exists.
+
+The output directory must exist. `modes.csv` records each mode's source start,
+family, weight, local evidence, discrete prior, log Hessian determinant, joint
+normalization, proper-prior flag, total posterior chi-squared, residual count,
+maximum absolute posterior gradient, iteration count, PSIS k-hat, effective
+sample size, failed draws and equilibrium filename. `starts.csv` records every
+attempt and its convergence message. `mode_<k>_parameters.csv` and
+`mode_<k>_covariance.csv` contain the MAP and covariance in inference coordinates.
+`mode_<k>_residuals.csv` contains its whitened posterior residual rows.
+Each physical mode has a separate `mode_<k>.nc`, saved at its MAP after PSIS.
+Repeated calls overwrite these report names; only rows in the current
+`modes.csv` identify retained modes.
+
+`sample_local_mixture` draws a mode according to its evidence weight and then
+a parameter vector from that mode's Gaussian. Its returned mode index selects
+the family and saved equilibrium to activate before a physical prediction;
+`modes(k)%start` identifies the corresponding preparation callback. Predictions
+and uncertainty bands may be combined with their weights. Equilibria themselves
+are never averaged, and the API supplies no averaged equilibrium.
+
+The public `tiago_local_mixture` test uses a synthetic measurement of `abs(x)`
+with Gaussian noise, a datum of 6, noise standard deviation 0.25 and prior
+`x ~ N(0.5, 3^2)` (all dimensionless). Its two separated local posteriors are
+Gaussian up to negligible half-line tails. Their analytic positive/negative
+evidence ratio is `exp(2*6*0.5/(3^2 + 0.25^2)) = 1.93879950`.
+The test checks both modes, their absolute evidence and covariance, duplicate
+and prior-only starts, state restoration after PSIS, discrete family priors,
+failed starts and the unimodal signed-measurement limit. It does not validate
+discovery of competing experimental equilibria.
+
+![Synthetic folded-measurement posterior and mode probabilities](figures/local-mixture.png)
+
+The figure compares one local Gaussian with the evidence-weighted mixture and
+the normalized analytic posterior. Reproduce it with
+`python tools/local_mixture_plot.py build/tests/local_mixture/two_mode docs/figures/local-mixture.png`
+after running the test. The synthetic observations and prior are stated above;
+no experimental data enter this check.

@@ -252,11 +252,15 @@ add_library(tiago_inference STATIC
     src/generated/dispersion_iq.f90
     src/generated/dispersion_atan.f90
     src/inference/dispersion_interferometer.f90
-    src/signals/iq_phase_reduction.f90)
+    src/signals/iq_phase_reduction.f90
+    src/inference/local_posterior.f90
+    src/inference/inference_engines.f90
+    src/inference/local_mixture.f90)
 set_target_properties(tiago_inference PROPERTIES
     Fortran_STANDARD 2018
     Fortran_STANDARD_REQUIRED YES)
-target_link_libraries(tiago_inference PUBLIC fortnum tiago_diagnostics tiago_signals tiago_solver)
+find_package(LAPACK REQUIRED)
+target_link_libraries(tiago_inference PUBLIC ${LAPACK_LIBRARIES} fortnum tiago_diagnostics tiago_signals tiago_solver)
 if(TIAGO_ENABLE_OPENMP AND OpenMP_Fortran_FOUND)
     target_link_libraries(tiago_inference PUBLIC OpenMP::OpenMP_Fortran)
 endif()
@@ -416,7 +420,7 @@ end module tiago_vmecpp_paths
         src/reconstruct/reconstruction.f90
         src/reconstruct/reconstruction_plots.f90
         src/inference/joint_model.f90
-        src/inference/inference_engines.f90
+        src/reconstruct/reconstruction_posterior.f90
         src/inference/synthetic_case.f90)
     set_target_properties(tiago_reconstruction PROPERTIES
         Fortran_STANDARD 2018
@@ -672,6 +676,13 @@ target_link_libraries(test_profile_diagnostic PRIVATE tiago_inference)
 add_test(NAME tiago_profile_diagnostic COMMAND $<TARGET_FILE:test_profile_diagnostic>)
 add_executable(test_kinetic_profiles tests/test_kinetic_profiles.f90)
 target_link_libraries(test_kinetic_profiles PRIVATE tiago_inference)
+add_executable(test_local_mixture tests/test_local_mixture.f90)
+target_link_libraries(test_local_mixture PRIVATE tiago_inference)
+file(MAKE_DIRECTORY "${TIAGO_BINARY_DIR}/tests/local_mixture/two_mode")
+add_test(NAME tiago_local_mixture COMMAND test_local_mixture
+    ${TIAGO_BINARY_DIR}/tests/local_mixture)
+set_tests_properties(tiago_local_mixture PROPERTIES TIMEOUT 60)
+
 add_test(NAME tiago_kinetic_profiles COMMAND $<TARGET_FILE:test_kinetic_profiles>)
 
 add_test(NAME tiago_diag_lint_flux
@@ -725,6 +736,12 @@ if(TIAGO_ENABLE_RECONSTRUCTION)
     set_tests_properties(tiago_vmecpp_equilibrium tiago_reconstruct_exact
         tiago_reconstruct_conservative PROPERTIES
         FIXTURES_REQUIRED input_li383 TIMEOUT 600)
+    add_test(NAME tiago_reconstruct_mixture
+        COMMAND ${TIAGO_SOURCE_DIR}/tests/reconstruct_exact.sh $<TARGET_FILE:tiago_reconstruct>
+                ${TIAGO_INPUT_LI383} ${TIAGO_SOURCE_DIR}/benchmarks/reconstruction/sensors.awk
+                ${TIAGO_BINARY_DIR}/tests/reconstruct_mixture mixture)
+    set_tests_properties(tiago_reconstruct_mixture PROPERTIES
+        FIXTURES_REQUIRED input_li383 TIMEOUT 300)
     add_test(NAME tiago_joint_model
         COMMAND $<TARGET_FILE:test_joint_model> ${TIAGO_INPUT_LI383}
                 ${TIAGO_SOURCE_DIR}/benchmarks/reconstruction/sensors.awk

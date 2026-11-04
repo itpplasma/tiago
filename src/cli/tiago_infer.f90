@@ -13,6 +13,7 @@ program tiago_infer
     use tiago_kinetic_profiles, only: P_NE, P_TE, P_TI, P_ZEFF, N_PROFILES
     use tiago_inference_engines, only: map_fit, laplace, laplace_t, sample_nuts, psis_validate, &
         psis_result_t
+    use tiago_local_mixture, only: mode_start_t, mixture_options_t, local_mixture_t, multi_start_map
     use fortnum_rng, only: rng_t, rng_seed, rng_normal, rng_split
     use fortnum_status, only: fortnum_status_t, FORTNUM_OK
     use fortnum_nuts, only: nuts_options_t, nuts_result_t
@@ -22,6 +23,9 @@ program tiago_infer
     character(len=512) :: vmec_input = '', sensors_awk = '', output_dir = 'infer'
     integer :: seed = 1, max_iterations = 30, n_warmup = 200, n_samples = 300, max_depth = 6
     integer :: psis_draws = 0, posterior_solves = 40, laplace_draws = 400
+    integer :: prior_starts = 0, candidate_count = 0
+    character(len=512) :: candidate_file = ''
+    real(dp) :: mode_distance = 1.0_dp
     logical :: noise = .true., truth_from_prior = .true.
     real(dp) :: breakpoints(maxk) = -1.0_dp
     real(dp) :: sigma_f = 0.3_dp, l_core = 0.4_dp, l_edge = 0.2_dp, s0 = 0.6_dp, sw = 0.2_dp
@@ -32,9 +36,14 @@ program tiago_infer
     namelist /infer/ vmec_input, sensors_awk, output_dir, seed, max_iterations, n_warmup, n_samples, &
         max_depth, psis_draws, posterior_solves, laplace_draws, noise, truth_from_prior, breakpoints, &
         sigma_f, l_core, l_edge, s0, sw, ne0, te0, ti0, zeff, probe_rho, probe_theta, align_sigma, &
-        sigma_profile_rel, vmec_ftol, curtor_prior, phiedge_prior
+        sigma_profile_rel, vmec_ftol, curtor_prior, phiedge_prior, prior_starts, candidate_count, &
+        candidate_file, mode_distance
 
     type(joint_model_t), target :: model
+    type(local_mixture_t) :: mixture
+    type(mixture_options_t) :: mixture_opts
+    type(mode_start_t), allocatable :: starts(:)
+    integer :: selected_mode
     type(laplace_t) :: lap
     type(psis_result_t) :: ps
     type(nuts_result_t) :: chain
@@ -119,7 +128,36 @@ program tiago_infer
     call model%residual(theta, r, ok)
     chi2_start = sum(r**2)
     t0 = wall()
-    call map_fit(model, theta, max_iterations, steps, message)
+    if (prior_starts < 0 .or. candidate_count < 0) error stop 'negative mixture start count'
+    if (prior_starts + candidate_count > 0) then
+        call execute_command_line('mkdir -p "'//out//'/modes"')
+        allocate(starts(1 + candidate_count + prior_starts))
+        starts(1)%theta = theta0
+        if (candidate_count > 0) then
+            open(newunit=unit, file=trim(candidate_file), status='old', iostat=ios)
+            if (ios /= 0) error stop 'cannot open candidate_file'
+            do i = 1, candidate_count
+                allocate(starts(i + 1)%theta(model%n))
+                read(unit, *, iostat=ios) starts(i + 1)%theta
+                if (ios /= 0) error stop 'candidate_file requires one complete latent vector per line'
+            end do
+            close(unit)
+        end if
+        mixture_opts%max_iterations = max_iterations
+        mixture_opts%psis_draws = max(20, psis_draws)
+        mixture_opts%seed = seed
+        mixture_opts%dedup_distance = mode_distance
+        call multi_start_map(model, starts, model%n, out//'/modes', mixture_opts, mixture, st)
+        if (st%code /= FORTNUM_OK) error stop 'multi-start MAP failed: '//trim(st%msg)
+        selected_mode = minloc(mixture%modes%gaussian%chi2, dim=1)
+        if (mixture%evidence_valid) selected_mode = maxloc(mixture%modes%weight, dim=1)
+        theta = mixture%modes(selected_mode)%gaussian%mean
+        steps = mixture%modes(selected_mode)%steps
+        message = mixture%modes(selected_mode)%message
+        call model%exact()
+    else
+        call map_fit(model, theta, max_iterations, steps, message)
+    end if
     t1 = wall()
     t_map = t1 - t0
     call laplace(model, theta, lap)
