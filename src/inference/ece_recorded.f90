@@ -6,7 +6,7 @@ module tiago_ece_recorded
     use tiago_ece_opacity_coordinates, only: ece_opacity_coordinates
     use tiago_ece_ray, only: ECE_X_MODE
     use tiago_ece_state_medium, only: state_medium_t
-    use tiago_ece_ray, only: cold_ray_t, trace_cold_ray, cold_ray_jvp, &
+    use tiago_ece_ray, only: cold_ray_t, trace_cold_ray, cold_ray_jvp_multi, &
         cold_ray_vjp, &
         cold_hamiltonian
     use tiago_profile_diagnostic, only: plasma_sample_t, N_QUANTITIES, Q_B, &
@@ -39,6 +39,7 @@ module tiago_ece_recorded
         real(dp), allocatable, public :: voltage(:), variance(:)
     contains
         procedure :: jvp => recorded_jvp
+        procedure :: jvp_multi => recorded_jvp_multi
         procedure :: vjp => recorded_vjp
         procedure :: sampled => recorded_sampled
     end type
@@ -168,7 +169,7 @@ contains
                         coordinate_rows)
                     if (coordinates(3) > .2_dp*coordinates(1)) then
                         call status_set(status, FORTNUM_DOMAIN_ERROR, &
-                       'ECE: first-harmonic X mode requires the tenuous density regime')
+                            'ECE: first-harmonic X mode requires the tenuous density regime')
                         return
                     end if
                 end if
@@ -254,20 +255,37 @@ contains
     end subroutine
 
     subroutine recorded_jvp(self, parameter_dot, eta_dot, voltage_dot, &
-        variance_dot, status)
+            variance_dot, status)
         class(recorded_ece_t), intent(in) :: self
         real(dp), intent(in) :: parameter_dot(:), eta_dot(:)
         real(dp), intent(out) :: voltage_dot(:), variance_dot(:)
         type(fortnum_status_t), intent(out) :: status
-        real(dp), allocatable :: qdot(:, :), ld(:)
+        real(dp) :: vd(size(voltage_dot), 1), wd(size(variance_dot), 1)
+        call recorded_jvp_multi(self, &
+            reshape(parameter_dot, [size(parameter_dot), 1]), &
+            reshape(eta_dot, [size(eta_dot), 1]), vd, wd, status)
+        voltage_dot = vd(:, 1)
+        variance_dot = wd(:, 1)
+    end subroutine
+
+    !! Columns are tangent directions; the rays are replayed once for all.
+    subroutine recorded_jvp_multi(self, parameter_dot, eta_dot, voltage_dot, &
+            variance_dot, status)
+        class(recorded_ece_t), intent(in) :: self
+        real(dp), intent(in) :: parameter_dot(:, :), eta_dot(:, :)
+        real(dp), intent(out) :: voltage_dot(:, :), variance_dot(:, :)
+        type(fortnum_status_t), intent(out) :: status
+        real(dp), allocatable :: qdot(:, :, :), ld(:, :)
         type(fortnum_status_t), allocatable :: codes(:)
-        integer :: c, code
+        integer :: c, d, code, m
         call status_set(status, FORTNUM_DOMAIN_ERROR, &
             'ECE: invalid composition tangent')
         if (.not. self%valid) return
-        if (size(parameter_dot) /= self%medium%n_params()) return
-        if (size(eta_dot) /= size(self%eta)) return
-        allocate (qdot(N_QUANTITIES, self%sample%n), ld(self%sample%n), &
+        m = size(parameter_dot, 2)
+        if (size(parameter_dot, 1) /= self%medium%n_params()) return
+        if (size(eta_dot, 1) /= size(self%eta) .or. size(eta_dot, 2) /= m) return
+        if (size(voltage_dot, 2) /= m .or. size(variance_dot, 2) /= m) return
+        allocate (qdot(N_QUANTITIES, self%sample%n, m), ld(self%sample%n, m), &
             codes(size(self%paths)))
         qdot = 0
         !$omp parallel do default(shared) private(c) schedule(dynamic, 1)
@@ -280,35 +298,40 @@ contains
             status = codes(c)
             return
         end do
-        call self%diagnostic%record_jvp(self%sample, self%eta, qdot, eta_dot, &
-            ld, voltage_dot, variance_dot, code)
-        if (code == 0) call status_set(status, 0, '')
+        do d = 1, m
+            call self%diagnostic%record_jvp(self%sample, self%eta, qdot(:, :, d), &
+                eta_dot(:, d), ld(:, d), voltage_dot(:, d), variance_dot(:, d), code)
+            if (code /= 0) return
+        end do
+        call status_set(status, 0, '')
     end subroutine
 
     subroutine path_jvp(self, c, pd, qdot, ld, status)
         class(recorded_ece_t), intent(in) :: self
         integer, intent(in) :: c
-        real(dp), intent(in) :: pd(:)
-        real(dp), intent(inout) :: qdot(:, :), ld(:)
+        real(dp), intent(in) :: pd(:, :)
+        real(dp), intent(inout) :: qdot(:, :, :), ld(:, :)
         type(fortnum_status_t), intent(out) :: status
-        real(dp) :: previous(6), final(6), xdot(3)
+        real(dp), dimension(6, size(pd, 2)) :: previous, final
+        real(dp) :: xdot(3, size(pd, 2))
         integer :: j, k
         previous = matmul(self%paths(c)%launch_row, pd)
         do j = 1, size(self%paths(c)%segment)
             k = self%diagnostic%first(c) + j - 1
-            call cold_ray_jvp(self%medium, self%paths(c)%segment(j), previous, pd, &
-                0.0_dp, final, status)
+            call cold_ray_jvp_multi(self%medium, self%paths(c)%segment(j), &
+                previous, pd, spread(0.0_dp, 1, size(pd, 2)), final, status)
             if (status%code /= 0) return
-            xdot = (previous(:3) + final(:3))/2
-            qdot(rows, k) = matmul(self%qp(:, :, k), pd) + &
+            xdot = (previous(:3, :) + final(:3, :))/2
+            qdot(rows, k, :) = matmul(self%qp(:, :, k), pd) + &
                 matmul(transpose(self%qx(:, :, k)), xdot)
-            ld(k) = dot_product(self%length_row(:, k), [previous(:3), final(:3)])
+            ld(k, :) = matmul(self%length_row(:3, k), previous(:3, :)) + &
+                matmul(self%length_row(4:, k), final(:3, :))
             previous = final
         end do
     end subroutine
 
     subroutine recorded_vjp(self, voltage_bar, variance_bar, parameter_bar, &
-        eta_bar, status)
+            eta_bar, status)
         class(recorded_ece_t), intent(in) :: self
         real(dp), intent(in) :: voltage_bar(:), variance_bar(:)
         real(dp), intent(out) :: parameter_bar(:), eta_bar(:)

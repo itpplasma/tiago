@@ -240,10 +240,8 @@ contains
         integer :: j, k
         v = tape%variance + .002_dp**2
         r = tape%voltage - data
-        do j = 1, nd
-            call tape%jvp(pd(:, j), ed(:, j), jv(:, j), jn(:, j), st)
-            call require(st%code == 0, 'posterior sensitivity')
-        end do
+        call tape%jvp_multi(pd, ed, jv, jn, st)
+        call require(st%code == 0, 'posterior sensitivity')
         g = matmul(r/v, jv) + .5_dp*matmul((1 - r**2/v)/v, jn) + t
         if (.not. present(f)) return
         do j = 1, nd

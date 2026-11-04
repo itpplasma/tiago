@@ -4,7 +4,7 @@ module tiago_ece_ray
     use fortnum_status, only: fortnum_status_t, status_set, &
         FORTNUM_DOMAIN_ERROR
     use fortnum_ode, only: ode_problem_t, ode_workspace_t, ode_solution_t, &
-        ode_integrate, ode_integrate_jvp, ode_integrate_parameter_vjp
+        ode_integrate, ode_integrate_jvp_multi, ode_integrate_parameter_vjp
     use tiago_ece_hamiltonian_o, only: ece_hamiltonian_o
     use tiago_ece_hamiltonian_x, only: ece_hamiltonian_x
     use tiago_ece_hamiltonian_unmagnetized, &
@@ -42,7 +42,7 @@ module tiago_ece_ray
         real(dp) :: max_index = 0.0_dp
     end type
     public :: cold_hamiltonian, trace_cold_ray, trace_cold_rays, cold_ray_jvp, &
-        cold_ray_vjp
+        cold_ray_jvp_multi, cold_ray_vjp
 contains
     subroutine cold_hamiltonian(n, b, ne, frequency, mode, h, dh, d2h)
         real(dp), intent(in) :: n(3), b(3), ne, frequency
@@ -251,20 +251,45 @@ contains
         real(dp), intent(in) :: initial_dot(6), parameter_dot(:), frequency_dot
         real(dp), intent(out) :: final_dot(6)
         type(fortnum_status_t), intent(out) :: status
+        real(dp) :: column(6, 1)
+        call cold_ray_jvp_multi(medium, ray, reshape(initial_dot, [6, 1]), &
+            reshape(parameter_dot, [size(parameter_dot), 1]), [frequency_dot], &
+            column, status)
+        final_dot = column(:, 1)
+    end subroutine
+
+    !! Tangents for the columns of the seeds in one replay of the trace, so
+    !! the state and parameter Jacobians are built once per stage.
+    subroutine cold_ray_jvp_multi(medium, ray, initial_dot, parameter_dot, &
+            frequency_dot, final_dot, status)
+        class(cold_medium_t), intent(in) :: medium
+        type(cold_ray_t), intent(in) :: ray
+        real(dp), intent(in) :: initial_dot(:, :), parameter_dot(:, :), &
+            frequency_dot(:)
+        real(dp), intent(out) :: final_dot(:, :)
+        type(fortnum_status_t), intent(out) :: status
         type(ode_problem_t) :: problem
-        real(dp), allocatable :: result(:)
+        real(dp), allocatable :: result(:, :), direction(:, :)
         logical :: failed
+        integer :: m
         final_dot = 0.0_dp
         call status_set(status, FORTNUM_DOMAIN_ERROR, &
             'invalid cold-ray tangent input')
-        if (size(parameter_dot) /= medium%n_params()) return
+        m = size(initial_dot, 2)
+        if (size(initial_dot, 1) /= 6) return
+        if (size(parameter_dot, 1) /= medium%n_params()) return
+        if (size(parameter_dot, 2) /= m .or. size(frequency_dot) /= m) return
+        if (any(shape(final_dot) /= [6, m])) return
         if (.not. ray%valid) return
         if (.not. ray%derivatives_valid) return
         if (ray%trace%status%code /= 0) return
         if (.not. allocated(ray%trace%y)) return
+        allocate (direction(medium%n_params() + 1, m))
+        direction(:medium%n_params(), :) = parameter_dot
+        direction(medium%n_params() + 1, :) = frequency_dot
         problem%rhs => rhs
         failed = .false.
-        call ode_integrate_jvp(problem, tangent, initial_dot, ray%trace, &
+        call ode_integrate_jvp_multi(problem, tangent, initial_dot, ray%trace, &
             result, status)
         if (failed) then
             call status_set(status, FORTNUM_DOMAIN_ERROR, &
@@ -283,14 +308,14 @@ contains
             if (.not. ok) failed = .true.
         end subroutine
         subroutine tangent(t, y, s, ds, ctx)
-            real(dp), intent(in) :: t, y(:), s(:)
-            real(dp), intent(out) :: ds(:)
+            real(dp), intent(in) :: t, y(:), s(:, :)
+            real(dp), intent(out) :: ds(:, :)
             class(*), intent(in), optional :: ctx
             real(dp) :: f(6), a(6, 6), p(6, medium%n_params() + 1), h
             logical :: ok
             call ray_rhs(medium, medium%n_params(), ray%frequency, ray%mode, &
                 y, f, a, p, ok, h)
-            ds = matmul(a, s) + matmul(p, [parameter_dot, frequency_dot])
+            ds = matmul(a, s) + matmul(p, direction)
             if (.not. ok) failed = .true.
         end subroutine
     end subroutine

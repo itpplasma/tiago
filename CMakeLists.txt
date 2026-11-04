@@ -49,7 +49,7 @@ option(TIAGO_ENABLE_OPENMP "Enable OpenMP parallelism inside Tiago loops" ON)
 
 # fortnum: B-spline profile bases, NUTS and PSIS for the inference core. Declared
 # before libneo, whose numerics reuse an existing fortnum target.
-set(TIAGO_FORTNUM_TAG "ef26a189d39078200f981cbec62bed2515df493a" CACHE STRING "fortnum commit used by Tiago")
+set(TIAGO_FORTNUM_TAG "8de7c25990eb65f298e92523adcc15c7d2e0f889" CACHE STRING "fortnum commit used by Tiago")
 if(NOT TARGET fortnum)
     FetchContent_Declare(fortnum
         GIT_REPOSITORY https://github.com/lazy-fortran/fortnum.git
