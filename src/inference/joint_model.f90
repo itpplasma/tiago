@@ -316,7 +316,8 @@ contains
             call rec%eq%set_pressure(p)
             call invalidate_caches()
         end if
-        call residual_at(x, r_rec)
+        call residual_at(x, r_rec, ok)
+        if (.not. ok) return
         ok = all(ieee_is_finite(r_rec))
         if (.not. ok) return
         if (self%state_solve /= rec%eq%solves) then
@@ -432,7 +433,7 @@ contains
         allocate(r_rec(n_rows()))
         call prepare(self, theta, r_rec, ok)
         if (.not. ok) then
-            r = r_rec(1)
+            r = ieee_value(1.0_dp, ieee_quiet_nan)
             return
         end if
         nm = self%n_mag
