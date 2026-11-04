@@ -11,7 +11,8 @@ program test_joint_model
     !!     finite.
     !! Usage: test_joint_model <VMEC input> <sensors.awk> <workdir>
     use, intrinsic :: iso_fortran_env, only: dp => real64, int64, error_unit
-    use tiago_reconstruction, only: rec, jacobian_at
+    use, intrinsic :: ieee_arithmetic, only: ieee_is_finite
+    use tiago_reconstruction, only: rec, jacobian_at, invalidate_caches, n_rows
     use tiago_joint_model, only: joint_model_t, diagnostic_slot_t
     use tiago_synthetic_case, only: setup_magnetics, place_probes, synthesize_magnetics, &
         synthesize_profiles
@@ -204,9 +205,53 @@ program test_joint_model
     print '(A,*(F8.3))', 'pull of truth (theta* - truth)/sd: ', &
         [((theta(i) - theta_true(i)) / sqrt(lap%cov(i, i)), i = 1, model%n)]
     call check_surrogate_priors()
+    call check_profile_only_failure()
     if (fails > 0) error stop 1
     print '(A)', 'joint model: all checks passed'
 contains
+    subroutine check_profile_only_failure()
+        type(joint_model_t) :: profile_only
+        real(dp), allocatable :: values(:), residual(:)
+        logical :: valid
+        integer :: state_solve
+
+        ! The profile-only consumer has no reconstruction residual to carry NaN.
+        rec%n_meas = 0
+        rec%n_fb = 0
+        rec%n_prior = 0
+        call invalidate_caches()
+        profile_only%prof = model%prof
+        profile_only%diags = model%diags
+        call profile_only%setup()
+        call expect(n_rows() == 0, 'profile-only reconstruction rows are empty')
+        values = theta
+        allocate(residual(profile_only%n_residuals()))
+        call profile_only%residual(values, residual, valid)
+        call expect(valid .and. all(ieee_is_finite(residual)), 'profile-only successful equilibrium')
+        call profile_only%residual(values, residual, valid)
+        call expect(valid .and. all(ieee_is_finite(residual)), 'profile-only cached equilibrium')
+        state_solve = profile_only%state_solve
+
+        ! One cold iteration cannot converge the perturbed synthetic equilibrium.
+        call rec%eq%vmec%set_input('hot_restart', 0.0_dp)
+        call rec%eq%vmec%set_input('niter', 1.0_dp)
+        values(1) = values(1) + 0.1_dp
+        residual = 0.0_dp
+        call profile_only%residual(values, residual, valid)
+        call expect(.not. rec%eq%solved, 'profile-only forced native solve failure')
+        call expect(.not. valid, 'profile-only failed equilibrium rejected')
+        call expect(all(.not. ieee_is_finite(residual)), 'profile-only full failed residual is nonfinite')
+        call expect(profile_only%state_solve == state_solve, 'failed equilibrium leaves flux map untouched')
+
+        ! Restore the iteration budget installed by setup_magnetics.
+        call rec%eq%vmec%set_input('niter', 20000.0_dp)
+        values = theta
+        call profile_only%residual(values, residual, valid)
+        call expect(valid .and. all(ieee_is_finite(residual)), 'profile-only equilibrium recovers after failure')
+        call expect(rec%eq%solved, 'recovered residual restores native equilibrium')
+        call expect(profile_only%state_solve == rec%eq%solves, 'recovered residual restores flux map')
+    end subroutine check_profile_only_failure
+
     subroutine check_surrogate_priors()
         real(dp) :: design(model%n, 3), direction(model%n), length(model%n)
         real(dp), allocatable :: exact(:), approximate(:), exact_jac(:, :), approximate_jac(:, :)

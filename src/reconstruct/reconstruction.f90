@@ -200,18 +200,20 @@ contains
         end select
     end function signal_value
 
-    subroutine residual_at(x, r)
+    subroutine residual_at(x, r, success)
         !! Whitened residuals at x; a repeated x returns the last result without
         !! counting a new evaluation.
         real(dp), intent(in) :: x(:)
         real(dp), intent(out) :: r(:)
+        logical, intent(out), optional :: success
         real(dp), allocatable :: flux(:), seg(:), probe(:)
         integer :: i, k
         logical :: ok
 
+        if (present(success)) success = .true.
         if (allocated(cache_rx)) then
             if (size(cache_rx) == size(x)) then
-                if (all(cache_rx == x)) then
+                if (all(cache_rx == x) .and. rec%eq%solved) then
                     r = cache_r
                     return
                 end if
@@ -219,6 +221,7 @@ contains
         end if
         call model_signals(x, flux, seg, probe, ok)
         rec%evaluations = rec%evaluations + 1
+        if (present(success)) success = ok
         if (.not. ok) then
             ! the fit rejects a step to non-finite residuals
             r = ieee_value(1.0_dp, ieee_quiet_nan)
