@@ -58,7 +58,7 @@ contains
     subroutine edge_init(self, ns, mpol, ntor, nfp, ncurr, ntheta_input, &
             nzeta_input, covariant)
         !! Grid and mode sizes as VMEC++'s Sizes::computeDerivedSizes.
-        class(vmec_edge_t), intent(inout) :: self
+        class(vmec_edge_t), intent(out) :: self
         integer, intent(in) :: ns, mpol, ntor, nfp, ncurr, ntheta_input, nzeta_input
         logical, intent(in), optional :: covariant
         real(dp), allocatable :: cosmui(:, :), sinmui(:, :), cosnv(:, :), sinnv(:, :)

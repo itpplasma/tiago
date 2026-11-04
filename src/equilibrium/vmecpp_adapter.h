@@ -28,10 +28,13 @@ void tiago_vmecpp_destroy(tiago_vmecpp* handle);
 
 /* Input values by name: scalars (pres_scale, curtor, phiedge, bloat,
  * spres_ped, gamma), 1-based index i into arrays (am, ai, ac, aphi: i = k + 1
- * for coefficient k; am_aux_s, am_aux_f: knot i of a spline/line-segment pressure), (i, j) = (m + 1, n + ntor + 1) for rbc and zbs. Setting
+ * for coefficient k; extcur: coil group i; am_aux_s, am_aux_f: pressure knot i),
+ * (i, j) = (m + 1, n + ntor + 1) for rbc and zbs. Setting
  * an array element beyond its length extends the array with zeros. Setting
  * "ftol" or "niter" sets every entry of ftol_array or niter_array;
- * "hot_restart" = 0 disables starting solves from the last equilibrium. */
+ * "hot_restart" = 0 disables starting solves from the last equilibrium.
+ * "pin_restart" = 1 fixes a common seed for finite-difference probes;
+ * "restore_pinned" restores its outputs, then "pin_restart" = 0 releases it. */
 int tiago_vmecpp_get_input(const tiago_vmecpp* handle, const char* name, int i,
                            int j, double* value);
 int tiago_vmecpp_set_input(tiago_vmecpp* handle, const char* name, int i, int j,

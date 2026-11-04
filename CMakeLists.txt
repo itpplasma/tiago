@@ -176,6 +176,7 @@ endif()
 # profile-diagnostic contract and the reference point probe.
 add_library(tiago_inference STATIC
     src/generated/kinetic_pressure.f90
+    src/generated/nonthermal_pressure.f90
     src/generated/student_residual.f90
     src/generated/student_residual_small.f90
     src/inference/robust_signals.f90
@@ -439,6 +440,8 @@ end module tiago_vmecpp_paths
     endif()
     set_target_properties(tiago_reconstruction PROPERTIES LINKER_LANGUAGE Fortran)
     add_dependencies(tiago_reconstruction indata2json)
+    add_executable(test_free_boundary tests/test_free_boundary.f90)
+    target_link_libraries(test_free_boundary PRIVATE tiago_reconstruction)
     add_executable(test_vmecpp_equilibrium tests/test_vmecpp_equilibrium.f90)
     target_link_libraries(test_vmecpp_equilibrium PRIVATE tiago_reconstruction)
     add_executable(test_joint_model tests/test_joint_model.f90)
@@ -675,6 +678,10 @@ add_test(NAME tiago_recorded_diagnostic COMMAND $<TARGET_FILE:test_recorded_diag
 add_executable(test_profile_diagnostic tests/test_profile_diagnostic.f90)
 target_link_libraries(test_profile_diagnostic PRIVATE tiago_inference)
 add_test(NAME tiago_profile_diagnostic COMMAND $<TARGET_FILE:test_profile_diagnostic>)
+add_executable(benchmark_pressure_reference EXCLUDE_FROM_ALL
+    benchmarks/reconstruction/pressure_reference.f90)
+target_link_libraries(benchmark_pressure_reference PRIVATE tiago_inference)
+
 add_executable(test_kinetic_profiles tests/test_kinetic_profiles.f90)
 target_link_libraries(test_kinetic_profiles PRIVATE tiago_inference)
 add_executable(test_local_mixture tests/test_local_mixture.f90)
@@ -710,6 +717,40 @@ add_test(NAME tiago_w7x_sensor_set
 set_tests_properties(tiago_w7x_sensor_set PROPERTIES SKIP_RETURN_CODE 77)
 
 if(TIAGO_ENABLE_RECONSTRUCTION)
+    find_package(Python3 COMPONENTS Interpreter REQUIRED)
+    set(_cth_public ${TIAGO_BINARY_DIR}/tests/cases/cth-public)
+    set(_cth_fixture ${TIAGO_BINARY_DIR}/tests/cases/cth-free)
+    set(_cth_path src/vmecpp/cpp/vmecpp/test_data)
+    set(_cth_revision 860df56938ea6aaf7a1775c89d51069bab4120b3)
+    foreach(_cth_file IN ITEMS cth_like_free_bdy.json coils.cth_like mgrid_cth_like.nc)
+        set(_cth_host https://raw.githubusercontent.com)
+        if(_cth_file STREQUAL "mgrid_cth_like.nc")
+            set(_cth_host https://media.githubusercontent.com/media)
+        endif()
+        add_test(NAME tiago_download_cth_${_cth_file}
+            COMMAND ${CMAKE_COMMAND}
+                -DURL=${_cth_host}/proximafusion/vmecpp/${_cth_revision}/${_cth_path}/${_cth_file}
+                -DDEST=${_cth_public}/${_cth_file} -P ${TIAGO_SOURCE_DIR}/cmake/DownloadFile.cmake)
+        set_tests_properties(tiago_download_cth_${_cth_file} PROPERTIES FIXTURES_SETUP cth_public TIMEOUT 120)
+    endforeach()
+    add_test(NAME tiago_prepare_cth_free
+        COMMAND ${Python3_EXECUTABLE} ${TIAGO_SOURCE_DIR}/tests/prepare_free_boundary.py
+            ${_cth_public} ${_cth_fixture})
+    set_tests_properties(tiago_prepare_cth_free PROPERTIES FIXTURES_REQUIRED cth_public FIXTURES_SETUP cth_free)
+    foreach(_free_mode IN ITEMS magnetic joint thermal)
+        add_test(NAME tiago_free_boundary_${_free_mode}
+            COMMAND $<TARGET_FILE:test_free_boundary> ${_cth_fixture}
+                ${TIAGO_SOURCE_DIR}/benchmarks/reconstruction/sensors.awk
+                ${TIAGO_BINARY_DIR}/tests/free_boundary_${_free_mode} ${_free_mode})
+        set_tests_properties(tiago_free_boundary_${_free_mode} PROPERTIES FIXTURES_REQUIRED cth_free
+            TIMEOUT 1800 LABELS free-boundary ENVIRONMENT "OMP_NUM_THREADS=4;OPENBLAS_NUM_THREADS=1;MPLBACKEND=Agg")
+    endforeach()
+    add_test(NAME tiago_free_boundary_cli
+        COMMAND bash ${TIAGO_SOURCE_DIR}/tests/reconstruct_free.sh $<TARGET_FILE:tiago_reconstruct>
+            ${_cth_fixture} ${TIAGO_SOURCE_DIR}/benchmarks/reconstruction/sensors.awk
+            ${TIAGO_BINARY_DIR}/tests/free_boundary_cli)
+    set_tests_properties(tiago_free_boundary_cli PROPERTIES FIXTURES_REQUIRED cth_free
+        TIMEOUT 1800 LABELS free-boundary ENVIRONMENT "OMP_NUM_THREADS=4;OPENBLAS_NUM_THREADS=1;MPLBACKEND=Agg")
     # VMEC++ equilibrium chain (edge field, edge reverse mode, full Jacobian vs
     # re-solved equilibria) and a noise-free reconstruction on LI383 (pinned input).
     set(TIAGO_INPUT_LI383 ${TIAGO_BINARY_DIR}/tests/cases/input.li383_low_res)

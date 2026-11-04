@@ -1,6 +1,6 @@
 module tiago_equilibrium
-    !! Fixed-boundary VMEC++ equilibria as functions of named input parameters,
-    !! the edge vector y Tiago's plasma model reads, and the exact Jacobian
+    !! Fixed- and free-boundary VMEC++ equilibria as functions of named input parameters,
+    !! the edge vector y Tiago's plasma model reads, and its Jacobian
     !! C (dy/dx) for a cotangent matrix C = dS/dy:
     !!
     !!   edge VJP (tiago_vmec_edge)          C -> geometry and direct profile cotangents
@@ -9,6 +9,9 @@ module tiago_equilibrium
     !!   power-series profiles (here)        -> PRES_SCALE, AM(k), AI(k), AC(k), CURTOR
     !!   MHD scaling (here)                  -> PHIEDGE
     !!
+    !! Free-boundary inputs use re-solved central differences from cold
+    !! starts, including the moving boundary and all output field spectra.
+    !! The adjoint and scaling identities below apply to fixed boundaries.
     !! PHIEDGE is not an input VMEC++ differentiates. Ideal-MHD equilibria are
     !! invariant under B -> l B, p -> l^2 p, I -> l I at fixed geometry and iota,
     !! so d y / d ln(phiedge) = y_B - 2 d y / d ln(PRES_SCALE) - d y / d ln(CURTOR)
@@ -31,7 +34,11 @@ module tiago_equilibrium
         character(len=16), allocatable :: key(:)     !! adapter input name
         integer, allocatable :: kind(:), i1(:), i2(:)
         integer :: ns = 0, mpol = 0, ntor = 0, nfp = 1, ncurr = 0
-        logical :: solved = .false., conservative = .false.
+        logical :: solved = .false., conservative = .false., free_boundary = .false.
+        character(len=64) :: derivative_method = 'implicit adjoint'
+        real(dp) :: fd_relative = 1.0e-3_dp
+        logical :: fd_valid = .false.
+        real(dp), allocatable :: fd_x(:, :), fd_pressure(:, :)
         integer :: max_block = 8000
         ! the last solve
         real(dp), allocatable :: coef(:, :, :, :), y(:)
@@ -80,7 +87,13 @@ contains
         if (present(covariant)) use_covariant = use_covariant .or. covariant
         json = json_input(input_path, workdir)
         call self%vmec%create(json)
-        if (self%vmec%get_int('lfreeb') /= 0) error stop 'VMEC input must be fixed-boundary'
+        self%solved = .false.
+        self%kinetic = .false.
+        self%fd_valid = .false.
+        self%derivative_method = 'implicit adjoint'
+        if (allocated(self%pressure_half)) deallocate(self%pressure_half)
+        self%free_boundary = self%vmec%get_int('lfreeb') /= 0
+        if (self%free_boundary) self%derivative_method = 're-solved central finite differences (cold starts)'
         self%ns = self%vmec%get_int('ns')
         self%mpol = self%vmec%get_int('mpol')
         self%ntor = self%vmec%get_int('ntor')
@@ -88,6 +101,7 @@ contains
         self%ncurr = self%vmec%get_int('ncurr')
         call self%edge%init(self%ns, self%mpol, self%ntor, self%nfp, self%ncurr, &
             self%vmec%get_int('ntheta'), self%vmec%get_int('nzeta'), use_covariant)
+        if (allocated(self%names)) deallocate(self%names, self%key, self%kind, self%i1, self%i2)
         allocate(self%names(size(names)), self%key(size(names)), self%kind(size(names)), &
             self%i1(size(names)), self%i2(size(names)))
         do k = 1, size(names)
@@ -121,8 +135,14 @@ contains
             if (comma == 0) then
                 read(name(open + 1:index(name, ')') - 1), *, iostat=ios) a
                 if (ios /= 0 .or. a < 0) error stop 'bad parameter: '//trim(name)
-                if (all(key /= [character(len=16) :: 'am', 'ai', 'ac'])) then
+                if (all(key /= [character(len=16) :: 'am', 'ai', 'ac', 'extcur'])) then
                     error stop 'unsupported equilibrium parameter: '//trim(name)
+                end if
+                if (key == 'extcur') then
+                    if (.not. self%free_boundary) error stop 'equilibrium EXTCUR needs lfreeb'
+                    if (a < 1 .or. a > self%vmec%input_length('extcur')) &
+                        error stop 'EXTCUR group outside input'
+                    a = a - 1
                 end if
                 kind = K_ARRAY
                 i1 = a + 1
@@ -137,6 +157,7 @@ contains
                 if (b < 0 .or. b >= self%mpol .or. abs(a) > self%ntor) then
                     error stop 'boundary mode outside mpol/ntor: '//trim(name)
                 end if
+                if (self%free_boundary) error stop 'free-boundary RBC/ZBS are initial guesses, not parameters'
                 kind = K_BOUNDARY
                 i1 = b + 1                 ! m + 1
                 i2 = a + self%ntor + 1     ! n + ntor + 1
@@ -192,9 +213,9 @@ contains
         real(dp), intent(in) :: x(:)
         logical, intent(out) :: ok
         character(len=:), allocatable, intent(out), optional :: message
-        real(dp), allocatable :: tflux(:), pflux(:)
         integer :: k, start, finish, rate
 
+        self%fd_valid = .false.
         do k = 1, size(x)
             call self%vmec%set_input(trim(self%key(k)), x(k), self%i1(k), self%i2(k))
         end do
@@ -205,6 +226,12 @@ contains
         self%solves = self%solves + 1
         self%solved = ok
         if (.not. ok) return
+        call read_state(self)
+    end subroutine equilibrium_solve
+
+    subroutine read_state(self)
+        class(equilibrium_t), intent(inout) :: self
+        real(dp), allocatable :: tflux(:), pflux(:)
         call self%vmec%geometry(self%coef, tflux, pflux)
         call self%vmec%radial(self%phip_full, self%phip_half, self%iota_half, self%current_half, &
             self%mass_half, self%lamscale)
@@ -213,7 +240,7 @@ contains
         allocate(self%y(self%edge%n_y()))
         call self%edge%forward(self%coef, self%phip_full, self%phip_half, self%iota_half, &
             self%current_half, self%y)
-    end subroutine equilibrium_solve
+    end subroutine read_state
 
     function equilibrium_s_half(self) result(s)
         !! Half-grid flux label s_h = (h - 1/2) / (ns - 1), h = 1 ... ns - 1.
@@ -262,6 +289,7 @@ contains
         end do
         self%pressure_half = p_half
         self%solved = .false.
+        self%fd_valid = .false.
     end subroutine equilibrium_set_pressure
 
     integer function equilibrium_n_y(self)
@@ -313,6 +341,10 @@ contains
         integer :: r, k, nh, nrow, start, finish, rate, flip
 
         if (.not. self%solved) error stop 'equilibrium_jacobian: no equilibrium solved'
+        if (self%free_boundary) then
+            call free_boundary_jacobian(self, x, cot, jac, coef_cot, bmnc_cot, bsupu_cot, bsupv_cot)
+            return
+        end if
         nrow = size(cot, 1)
         nh = self%ns - 1
         allocate(coef_bar, mold=self%coef)
@@ -410,6 +442,103 @@ contains
             bindex = (block * self%mpol + (i1 - 1)) * (2 * self%ntor + 1) + i2
         end function bindex
     end subroutine equilibrium_jacobian
+
+    subroutine free_boundary_jacobian(self, x, cot, jac, coef_cot, bmnc_cot, bsupu_cot, bsupv_cot)
+        !! Cold re-solves avoid restart-dependent tangents; cache the state
+        !! tangents so magnetic and profile rows share the expensive solves.
+        class(equilibrium_t), intent(inout) :: self
+        real(dp), intent(in) :: x(:), cot(:, :)
+        real(dp), allocatable, intent(out) :: jac(:, :)
+        real(dp), intent(in), optional :: coef_cot(:, :), bmnc_cot(:, :)
+        real(dp), intent(in), optional :: bsupu_cot(:, :), bsupv_cot(:, :)
+        real(dp), allocatable :: dx(:, :), dpres(:, :), xp(:), pp(:), pm(:), p0(:), c(:, :)
+        real(dp) :: h, scale
+        integer :: k, ny, ng, nb, nstate, nr
+        logical :: ok
+
+        ny = size(self%y)
+        ng = size(self%coef)
+        nb = self%edge%mnmax_nyq * (self%ns - 1)
+        nstate = ny + ng + 3 * nb
+        nr = size(cot, 1)
+        if (.not. self%fd_valid) then
+            allocate(dx(nstate, size(x)), dpres(nstate, self%ns - 1))
+            dpres = 0
+            if (self%fd_relative <= 0) error stop 'free-boundary fd_relative must be positive'
+            call self%vmec%set_input('pin_restart', 1.0_dp)
+            do k = 1, size(x)
+                scale = 1.0_dp
+                select case (trim(self%key(k)))
+                case ('curtor')
+                    scale = 1.0e3_dp
+                case ('phiedge')
+                    scale = 1.0e-2_dp
+                end select
+                h = self%fd_relative * max(abs(x(k)), scale)
+                xp = x
+                xp(k) = x(k) + h
+                call self%solve(xp, ok)
+                if (.not. ok) error stop 'free-boundary FD: positive parameter solve failed'
+                pp = packed_state()
+                xp(k) = x(k) - h
+                call self%solve(xp, ok)
+                if (.not. ok) error stop 'free-boundary FD: negative parameter solve failed'
+                pm = packed_state()
+                dx(:, k) = (pp - pm) / (2 * h)
+            end do
+            if (self%kinetic) then
+                p0 = self%pressure_half
+                do k = 1, size(p0)
+                    h = self%fd_relative * max(abs(p0(k)), 1.0_dp)
+                    call self%vmec%set_input('am_aux_f', p0(k) + h, k)
+                    call self%solve(x, ok)
+                    if (.not. ok) error stop 'free-boundary FD: positive pressure solve failed'
+                    pp = packed_state()
+                    call self%vmec%set_input('am_aux_f', p0(k) - h, k)
+                    call self%solve(x, ok)
+                    if (.not. ok) error stop 'free-boundary FD: negative pressure solve failed'
+                    pm = packed_state()
+                    dpres(:, k) = (pp - pm) / (2 * h)
+                    call self%vmec%set_input('am_aux_f', p0(k), k)
+                end do
+            end if
+            do k = 1, size(x)
+                call self%vmec%set_input(trim(self%key(k)), x(k), self%i1(k), self%i2(k))
+            end do
+            call self%vmec%set_input('restore_pinned', 1.0_dp)
+            call self%vmec%set_input('pin_restart', 0.0_dp)
+            call read_state(self)
+            self%solved = .true.
+            call move_alloc(dx, self%fd_x)
+            call move_alloc(dpres, self%fd_pressure)
+            self%fd_valid = .true.
+        end if
+        allocate(c(nr, nstate))
+        c = 0
+        c(:, :ny) = cot
+        if (present(coef_cot)) c(:, ny + 1:ny + ng) = transpose(coef_cot)
+        if (present(bmnc_cot)) c(:, ny + ng + 1:ny + ng + nb) = transpose(bmnc_cot)
+        if (present(bsupu_cot)) c(:, ny + ng + nb + 1:ny + ng + 2 * nb) = transpose(bsupu_cot)
+        if (present(bsupv_cot)) c(:, ny + ng + 2 * nb + 1:) = transpose(bsupv_cot)
+        jac = matmul(c, self%fd_x)
+        self%pressure_bar = transpose(matmul(c, self%fd_pressure)) / mu0
+    contains
+        function packed_state() result(v)
+            real(dp), allocatable :: v(:), b(:)
+            character(len=8), parameter :: fields(3) = ['bmnc    ', 'bsupumnc', 'bsupvmnc']
+            integer :: j, offset, nq
+            allocate(v(nstate))
+            v(:ny) = self%y
+            v(ny + 1:ny + ng) = reshape(self%coef, [ng])
+            offset = ny + ng
+            nq = self%edge%mnmax_nyq
+            do j = 1, 3
+                b = self%vmec%wout(trim(fields(j)), nq * self%ns)
+                v(offset + 1:offset + nb) = b(nq + 1:)
+                offset = offset + nb
+            end do
+        end function packed_state
+    end subroutine free_boundary_jacobian
 
     subroutine profile_gradients(self, g_mass_ps, g_mass_am, g_iota_ai, g_cur)
         !! Derivatives of the half-grid profiles (VMEC++ RadialProfiles, power
