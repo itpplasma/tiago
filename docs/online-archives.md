@@ -80,7 +80,7 @@ Each adapter can configure every field of `http_policy_t` in its JSON `policy`:
 
 | Setting | Default | Meaning |
 | --- | ---: | --- |
-| `min_interval` | 0.5 s | Minimum spacing between request starts. |
+| `min_interval` | 0.5 s | Minimum time from the end of one request to the start of the next. |
 | `timeout` | 30 s | Maximum transfer time, including connection. |
 | `connect_timeout` | 10 s | Connection timeout. |
 | `backoff`, `max_backoff` | 0.5, 30 s | Initial and maximum exponential base delay. |

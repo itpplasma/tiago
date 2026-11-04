@@ -36,6 +36,10 @@ def serve(root):
                 self.end_headers()
                 self.wfile.write(body)
                 return
+            if mode == 'interval' and 'interval' not in counts:
+                # Latency that only the first request sees must not shorten
+                # the spacing the server observes.
+                time.sleep(0.05)
             with lock:
                 counts[mode] = counts.get(mode, 0) + 1
                 count = counts[mode]
