@@ -50,23 +50,24 @@ module tiago_joint_model
 
     type, public :: diagnostic_slot_t
         class(profile_diagnostic_t), allocatable :: d
-        real(dp), allocatable :: data(:)                !! measured signals
-        real(dp), allocatable :: covariance(:, :)       !! measurement covariance
-        real(dp), allocatable :: model_sigma(:)         !! model-error standard deviation
-        real(dp), allocatable :: chol(:, :)             !! of covariance + diag(model_sigma^2)
-        real(dp), allocatable :: eta_sigma(:)           !! prior sd of the alignment nuisances
+        real(dp), allocatable :: data(:) !! measured signals
+        real(dp), allocatable :: covariance(:, :) !! measurement covariance
+        real(dp), allocatable :: model_sigma(:) !! model-error standard deviation
+        real(dp), allocatable :: chol(:, :) !! of covariance + diag(model_sigma^2)
+        real(dp), allocatable :: eta_sigma(:) !! prior sd of the alignment nuisances
         real(dp), allocatable :: eta_mean(:)
         real(dp), allocatable :: discrepancy_basis(:, :), protected_jacobian(:, :)
         integer :: discrepancy_offset = 0
+        logical :: low_fidelity_te = .false.
         real(dp) :: student_nu = 0.0_dp
-        real(dp) :: gain_sigma = 0.0_dp                 !! > 0: calibration gain latent
+        real(dp) :: gain_sigma = 0.0_dp !! > 0: calibration gain latent
         integer :: eta_offset = 0, gain_index = 0, row_offset = 0
     end type diagnostic_slot_t
 
     type, public :: joint_model_t
         type(kinetic_profiles_t) :: prof
         type(diagnostic_slot_t), allocatable :: diags(:)
-        real(dp), allocatable :: mag_covariance(:, :)   !! of the magnetic signals (n_meas)
+        real(dp), allocatable :: mag_covariance(:, :) !! of the magnetic signals (n_meas)
         real(dp), allocatable :: mag_model_sigma(:)
         real(dp), allocatable :: mag_chol(:, :)
         real(dp), allocatable :: eta_factor(:, :)
@@ -123,6 +124,16 @@ contains
         if (.not. allocated(self%diags)) allocate(self%diags(0))
         do d = 1, size(self%diags)
             associate (slot => self%diags(d))
+                if (self%prof%te_ar1%active) then
+                    select type (instrument => slot%d)
+                        type is (ece_t)
+                        slot%low_fidelity_te = .true.
+                    end select
+                    if (slot%low_fidelity_te .and. slot%gain_sigma > 0) &
+                        error stop 'joint: AR1 scale replaces the ECE gain nuisance'
+                else if (slot%low_fidelity_te) then
+                    error stop 'joint: low-fidelity Te requires an AR1 profile'
+                end if
                 if (.not. ieee_is_finite(slot%student_nu) .or. slot%student_nu < 0) &
                     error stop 'joint: invalid Student degrees of freedom'
                 slot%eta_offset = self%n_rec + self%n_prof + self%n_eta
@@ -182,7 +193,7 @@ contains
                 associate (slot => self%diags(d))
                     do k = 1, size(slot%eta_sigma)
                         self%eta_factor(slot%eta_offset - self%n_rec - self%n_prof + k, &
-                                        slot%eta_offset - self%n_rec - self%n_prof + k) = slot%eta_sigma(k)
+                            slot%eta_offset - self%n_rec - self%n_prof + k) = slot%eta_sigma(k)
                     end do
                 end associate
             end do
@@ -241,7 +252,7 @@ contains
                 if (.not. allocated(slot%protected_jacobian)) &
                     error stop 'joint: discrepancy requires protected profile/calibration rows'
                 call constrain_discrepancy(slot%chol, slot%protected_jacobian, &
-                                           slot%discrepancy_basis, constrained, code)
+                    slot%discrepancy_basis, constrained, code)
                 if (code /= 0) error stop 'joint: discrepancy constraint failed'
                 slot%discrepancy_basis = constrained
             end associate
@@ -268,7 +279,7 @@ contains
     integer function joint_n_residuals(self)
         class(joint_model_t), intent(in) :: self
         joint_n_residuals = self%n_mag + self%n_fb + self%n_rec_prior + self%n_diag_rows + &
-                            self%n_prof + self%n_eta + self%n_gain + self%n_discrepancy
+            self%n_prof + self%n_eta + self%n_gain + self%n_discrepancy
     end function joint_n_residuals
 
     subroutine joint_unpack(self, theta, x, z, eta, gain, d)
@@ -309,6 +320,11 @@ contains
         call self%unpack(theta, x=x, z=z)
         allocate(p(size(self%s_half)))
         call self%prof%pressure(z, self%s_half, p)
+        ok = all(ieee_is_finite(p))
+        if (.not. ok) then
+            r_rec = huge(1._dp)
+            return
+        end if
         if (.not. allocated(rec%eq%pressure_half)) then
             call rec%eq%set_pressure(p)
             call invalidate_caches()
@@ -327,13 +343,13 @@ contains
             bu = rec%eq%vmec%wout('bsupumnc', nyq*rec%eq%ns)
             bv = rec%eq%vmec%wout('bsupvmnc', nyq*rec%eq%ns)
             call self%state%init(rec%eq%coef, rec%eq%nfp, xm, xn, &
-                                 reshape(wout_b, [nyq, rec%eq%ns]), reshape(bu, [nyq, rec%eq%ns]), &
-                                 reshape(bv, [nyq, rec%eq%ns]))
+                reshape(wout_b, [nyq, rec%eq%ns]), reshape(bu, [nyq, rec%eq%ns]), &
+                reshape(bv, [nyq, rec%eq%ns]))
             self%state_solve = rec%eq%solves
         end if
     end subroutine prepare
 
-    subroutine joint_sample_at(self, z, x, sample, loc)
+    subroutine joint_sample_at(self, z, x, sample, loc, low_fidelity_te)
         !! Provider fields (tiago_state_sampler) and kinetic profiles at points
         !! x(3, n) = (R, phi, Z) for the current equilibrium.
         class(joint_model_t), intent(in) :: self
@@ -342,13 +358,17 @@ contains
         type(located_t), allocatable, intent(out) :: loc(:)
         real(dp), allocatable :: f(:, :), df(:, :), s(:)
         integer :: j, i
+        logical, intent(in), optional :: low_fidelity_te
+        type(kinetic_profiles_t) :: profile_view
         integer, parameter :: rows(4) = [Q_NE, Q_TE, Q_TI, Q_ZEFF]
         integer, parameter :: profiles(4) = [P_NE, P_TE, P_TI, P_ZEFF]
 
         call sample_state(self%state, x, sample, loc)
         s = sample%q(Q_S, :)
         allocate(f(N_PROFILES, size(s)), df(N_PROFILES, size(s)))
-        call self%prof%evaluate(z, s, f, df)
+        profile_view = self%prof
+        if (present(low_fidelity_te)) profile_view%low_fidelity_te = low_fidelity_te
+        call profile_view%evaluate(z, s, f, df)
         do j = 1, size(s)
             do i = 1, 4
                 sample%q(rows(i), j) = f(profiles(i), j)
@@ -375,9 +395,10 @@ contains
 
         call self%unpack(theta, z=z, eta=eta, d=d)
         select type (instrument => self%diags(d)%d)
-        type is (ece_t)
+            type is (ece_t)
             allocate (medium%state, source=self%state)
             medium%profiles = self%prof
+            medium%profiles%low_fidelity_te = self%diags(d)%low_fidelity_te
             medium%z = z
             call record_ece(instrument, medium, eta, local_tape, status)
             if (status%code /= 0) then
@@ -393,7 +414,7 @@ contains
             return
         end select
         call self%diags(d)%d%sample_points(eta, x, dx_deta)
-        call self%sample_at(z, x, sample, loc)
+        call self%sample_at(z, x, sample, loc, self%diags(d)%low_fidelity_te)
         call self%diags(d)%d%predict(sample, eta, y)
     end subroutine joint_predict_diagnostic
 
@@ -446,7 +467,7 @@ contains
                 call self%unpack(theta, gain=gain, d=d)
                 y = gain*y - slot%data + matmul(slot%discrepancy_basis, &
                     theta(slot%discrepancy_offset+1: &
-                        slot%discrepancy_offset+size(slot%discrepancy_basis,2)))
+                    slot%discrepancy_offset+size(slot%discrepancy_basis,2)))
                 r(row + 1:row + size(y)) = whiten(slot%chol, y)
                 row = row + size(y)
                 deallocate(y)
@@ -473,6 +494,7 @@ contains
         real(dp), allocatable :: q_bar(:, :), eta_bar(:), f_bar(:, :), s_bar(:), p_bar(:), qs_bar(:, :)
         real(dp), allocatable :: coef_cot(:, :), bmnc_cot(:, :), cot(:, :), jeq(:, :), jd(:, :), e(:)
         type(plasma_sample_t) :: sample
+        type(kinetic_profiles_t) :: observation_profiles
         type(recorded_ece_t) :: tape
         type(fortnum_status_t) :: status
         type(located_t), allocatable :: loc(:)
@@ -536,7 +558,7 @@ contains
                 raw = r_rec(:nm)*rec%meas_sigma(:nm) + rec%meas_value(:nm)
                 do mk = 1, nm
                     call integrator_signal(raw(mk), c(1), c(2), c(3), self%mag_time(mk), &
-                                           self%mag_time_origin, v, dr, dg, db, dd)
+                        self%mag_time_origin, v, dr, dg, db, dd)
                     jac(mk, :) = dr*jac(mk, :)
                     cb = [dg, db, dd]
                     cjac(mk, :) = matmul(cb, self%mag_calibration%factor)/rec%meas_sigma(mk)
@@ -560,6 +582,8 @@ contains
             row = 0
             do d = 1, size(self%diags)
                 associate (slot => self%diags(d))
+                    observation_profiles = self%prof
+                    observation_profiles%low_fidelity_te = slot%low_fidelity_te
                     allocate(y(slot%d%n_signals()), e(slot%d%n_signals()))
                     call self%predict_diagnostic(theta, d, y, sample, loc, eta, dx, tape)
                     call self%unpack(theta, gain=gain, d=d)
@@ -568,24 +592,24 @@ contains
                         qs_bar(N_QUANTITIES, sample%n))
                     jd = 0.0_dp
                     select type (instrument => slot%d)
-                    type is (ece_t)
+                        type is (ece_t)
                         allocate (pb_all(self%state%n_params() + self%n_prof, size(y)), &
-                                  eb_all(size(eta), size(y)))
+                            eb_all(size(eta), size(y)))
                         call ece_rows(tape, pb_all, eb_all)
                     end select
                     do i = 1, size(y)
                         e = 0.0_dp
                         e(i) = 1.0_dp
                         select type (instrument => slot%d)
-                        type is (ece_t)
+                            type is (ece_t)
                             p_bar = pb_all(:self%state%n_params(), i)
                             zbar = pb_all(self%state%n_params() + 1:, i)
                             eta_bar = eb_all(:, i)
                             jd(i, self%n_rec + 1:self%n_rec + self%n_prof) = gain*zbar
                             jd(i, self%n_rec + self%n_prof + 1:self%n_rec + self%n_prof + self%n_eta) = &
                                 gain*matmul(eta_bar, self%eta_factor( &
-                                            slot%eta_offset - self%n_rec - self%n_prof + 1: &
-                                            slot%eta_offset - self%n_rec - self%n_prof + size(eta), :))
+                                slot%eta_offset - self%n_rec - self%n_prof + 1: &
+                                slot%eta_offset - self%n_rec - self%n_prof + size(eta), :))
                             if (slot%gain_index > 0) jd(i, slot%gain_index) = slot%gain_sigma*y(i)
                             coef_cot(:, row + i) = gain*p_bar(:ng)
                             bmnc_cot(:, row + i) = gain*p_bar(ng + 1:ng + nb)
@@ -600,7 +624,7 @@ contains
                             f_bar(profiles(k), :) = q_bar(rows(k), :)
                         end do
                         zbar = 0.0_dp
-                        call self%prof%vjp(z, sample%q(Q_S, :), f_bar, zbar, s_bar)
+                        call observation_profiles%vjp(z, sample%q(Q_S, :), f_bar, zbar, s_bar)
                         jd(i, self%n_rec + 1:self%n_rec + self%n_prof) = gain * zbar
                         s_bar = s_bar + q_bar(Q_S, :)
                         ! alignment: direct part plus motion of the points
@@ -614,8 +638,8 @@ contains
                         end do
                         jd(i, self%n_rec + self%n_prof + 1:self%n_rec + self%n_prof + self%n_eta) = &
                             gain*matmul(eta_bar, self%eta_factor( &
-                                        slot%eta_offset - self%n_rec - self%n_prof + 1: &
-                                        slot%eta_offset - self%n_rec - self%n_prof + size(eta), :))
+                            slot%eta_offset - self%n_rec - self%n_prof + 1: &
+                            slot%eta_offset - self%n_rec - self%n_prof + size(eta), :))
                         if (slot%gain_index > 0) jd(i, slot%gain_index) = slot%gain_sigma * y(i)
                         ! geometry and |B| (bmnc nodes) at fixed points through
                         ! the state's VJP, then the equilibrium adjoint
@@ -629,7 +653,7 @@ contains
                     end do
                     if (allocated(pb_all)) deallocate (pb_all, eb_all)
                     jd(:, slot%discrepancy_offset + 1: &
-                       slot%discrepancy_offset + size(slot%discrepancy_basis, 2)) = slot%discrepancy_basis
+                        slot%discrepancy_offset + size(slot%discrepancy_basis, 2)) = slot%discrepancy_basis
                     jac(nrec_rows + row + 1:nrec_rows + row + size(y), :) = jd
                     row = row + size(y)
                     deallocate(y, e, jd, q_bar, eta_bar, f_bar, s_bar, qs_bar)
@@ -678,7 +702,7 @@ contains
                 call self%unpack(theta, gain=gain, d=d)
                 y = whiten(slot%chol, gain*y - slot%data + matmul(slot%discrepancy_basis, &
                     theta(slot%discrepancy_offset+1: &
-                        slot%discrepancy_offset+size(slot%discrepancy_basis,2))))
+                    slot%discrepancy_offset+size(slot%discrepancy_basis,2))))
                 call robust_rows(y, slot%student_nu, slope)
                 row = nrec_rows + slot%row_offset
                 do col = 1, self%n
@@ -750,7 +774,7 @@ contains
             do i = 1, self%n_mag
                 raw = r(i) + rec%meas_value(i)
                 call integrator_signal(raw, c(1), c(2), c(3), self%mag_time(i), &
-                                       self%mag_time_origin, v, dr, dg, db, dd)
+                    self%mag_time_origin, v, dr, dg, db, dd)
                 r(i) = v - rec%meas_value(i)
             end do
         end if
@@ -778,7 +802,7 @@ contains
         if (.not. all(ieee_is_finite([amplitude, rho, nugget]))) return
         if (amplitude <= 0 .or. nugget < 0) return
         allocate (base(self%n_residuals()), low(self%n_residuals(), size(design, 2)), &
-                  high(self%n_residuals(), size(design, 2)))
+            high(self%n_residuals(), size(design, 2)))
         call self%residual(design(:, 1), base, ok)
         if (.not. ok) return
         call self%jacobian(design(:, 1), jac)
