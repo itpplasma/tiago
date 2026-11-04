@@ -56,6 +56,7 @@ if(NOT TARGET fortnum)
         GIT_TAG        ${TIAGO_FORTNUM_TAG})
     FetchContent_MakeAvailable(fortnum)
 endif()
+include(cmake/TiagoInferenceCore.cmake)
 
 FetchContent_Declare(libneo
     GIT_REPOSITORY ${TIAGO_LIBNEO_GIT}
@@ -64,13 +65,9 @@ FetchContent_Declare(libneo
 FetchContent_MakeAvailable(libneo)
 
 add_library(tiago_diagnostics STATIC
-    src/diagnostics/diagnostic_types.f90
     src/diagnostics/flux_loops.f90
     src/diagnostics/segmented_rogowski.f90
     src/diagnostics/bprobes.f90
-    src/generated/mse_rows.f90
-    src/generated/mse_local.f90
-    src/diagnostics/mse.f90
     src/diagnostics/sensor_set.f90
     src/generated/hermite_basis.f90
     src/generated/circular_state.f90
@@ -82,7 +79,7 @@ add_library(tiago_diagnostics STATIC
 set_target_properties(tiago_diagnostics PROPERTIES
     Fortran_STANDARD 2018
     Fortran_STANDARD_REQUIRED YES)
-target_link_libraries(tiago_diagnostics PUBLIC LIBNEO::field LIBNEO::nctools)
+target_link_libraries(tiago_diagnostics PUBLIC tiago_point_diagnostics LIBNEO::field LIBNEO::nctools)
 
 add_library(tiago_solver STATIC
     src/solver/coil_kernels.f90
@@ -255,14 +252,11 @@ add_library(tiago_inference STATIC
     src/generated/dispersion_atan.f90
     src/inference/dispersion_interferometer.f90
     src/signals/iq_phase_reduction.f90
-    src/inference/local_posterior.f90
-    src/inference/inference_engines.f90
     src/inference/local_mixture.f90)
 set_target_properties(tiago_inference PROPERTIES
     Fortran_STANDARD 2018
     Fortran_STANDARD_REQUIRED YES)
-find_package(LAPACK REQUIRED)
-target_link_libraries(tiago_inference PUBLIC ${LAPACK_LIBRARIES} fortnum tiago_diagnostics tiago_signals tiago_solver)
+target_link_libraries(tiago_inference PUBLIC tiago_inference_core tiago_diagnostics tiago_signals tiago_solver)
 if(TIAGO_ENABLE_OPENMP AND OpenMP_Fortran_FOUND)
     target_link_libraries(tiago_inference PUBLIC OpenMP::OpenMP_Fortran)
 endif()

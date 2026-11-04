@@ -117,7 +117,8 @@ program test_kinetic_profiles
     block
         type(kinetic_profiles_t) :: peaked
         real(dp), allocatable :: zz(:), zb(:), za(:), base(:)
-        real(dp) :: ss(4), val(4), plus(4), minus(4), slope(4), central(1), v0(1), thermal_plus(4), thermal_minus(4), thermal_slope(4)
+        real(dp) :: ss(4), val(4), plus(4), minus(4), slope(4), central(1), v0(1)
+        real(dp) :: thermal_plus(4), thermal_minus(4), thermal_slope(4)
         real(dp) :: c, exponent, direction
         integer :: col
         ss = [0.0_dp, 0.3_dp, 0.8_dp, 1.0_dp]
