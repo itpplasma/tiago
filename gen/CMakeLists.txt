@@ -66,3 +66,7 @@ target_link_libraries(gen_magnetic_pickup PRIVATE "${FORTSYM_LIBRARY}")
 add_executable(gen_harmonic_lockin gen_harmonic_lockin.f90)
 target_include_directories(gen_harmonic_lockin PRIVATE "${FORTSYM_BUILD}/include")
 target_link_libraries(gen_harmonic_lockin PRIVATE "${FORTSYM_LIBRARY}")
+
+add_executable(gen_nonthermal gen_nonthermal.f90)
+target_include_directories(gen_nonthermal PRIVATE "${FORTSYM_BUILD}/include")
+target_link_libraries(gen_nonthermal PRIVATE "${FORTSYM_LIBRARY}")

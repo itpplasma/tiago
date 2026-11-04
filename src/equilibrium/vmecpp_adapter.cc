@@ -16,6 +16,7 @@
 #include <cmath>
 #include <cstring>
 #include <memory>
+#include <filesystem>
 #include <numbers>
 #include <optional>
 #include <random>
@@ -460,6 +461,8 @@ struct tiago_vmecpp {
   // last converged equilibrium, the start of the next solve (hot restart)
   std::optional<vmecpp::WOutFileContents> last_wout;
   bool hot_restart = true;
+  std::optional<vmecpp::WOutFileContents> pinned_restart;
+  std::optional<vmecpp::OutputQuantities> pinned_output;
   int status = -1;
   // adjoint cache for the current solve
   bool factorized = false;
@@ -516,6 +519,7 @@ void ParallelOverModels(tiago_vmecpp* handle, int tasks, const Body& body) {
 }
 
 Eigen::VectorXd& Vector(vmecpp::VmecINDATA& in, const std::string& name) {
+  if (name == "extcur") return in.extcur;
   if (name == "am") return in.am;
   if (name == "ai") return in.ai;
   if (name == "ac") return in.ac;
@@ -561,7 +565,11 @@ extern "C" int tiago_vmecpp_create(const char* json_path, tiago_vmecpp** output)
     auto handle = std::make_unique<tiago_vmecpp>();
     handle->indata = vmecpp::VmecINDATA::FromFile(json_path);
     if (handle->indata.lfreeb) {
-      throw std::runtime_error("Tiago runs VMEC++ fixed-boundary (lfreeb = false)");
+      // Keep vacuum data relative to the input, independent of the caller's cwd.
+      auto& grid = handle->indata.mgrid_file;
+      if (std::filesystem::path(grid).is_relative()) {
+        grid = (std::filesystem::absolute(json_path).parent_path() / grid).string();
+      }
     }
     if (handle->indata.lasym) {
       throw std::runtime_error("the VMEC++ adjoint needs lasym = false");
@@ -601,6 +609,19 @@ extern "C" int tiago_vmecpp_set_input(tiago_vmecpp* handle, const char* name, in
       in.ftol_array.setConstant(value);  // every multi-grid step
     } else if (key == "niter") {
       in.niter_array.setConstant(static_cast<int>(value));
+    } else if (key == "pin_restart") {
+      if (value != 0.0) {
+        handle->pinned_restart = handle->last_wout;
+        handle->pinned_output = handle->output;
+      } else {
+        handle->pinned_restart.reset();
+        handle->pinned_output.reset();
+      }
+    } else if (key == "restore_pinned") {
+      if (!handle->pinned_output) throw std::runtime_error("no pinned equilibrium");
+      handle->output = handle->pinned_output;
+      handle->last_wout = handle->pinned_restart;
+      handle->status = 0;
     } else if (key == "hot_restart") {
       handle->hot_restart = value != 0.0;
     } else if (key == "threads") {
@@ -734,11 +755,13 @@ extern "C" int tiago_vmecpp_solve(tiago_vmecpp* handle, int* converged) {
     // otherwise, and as fallback.
     vmecpp::VmecINDATA indata = handle->indata;
     std::optional<vmecpp::HotRestartState> initial;
-    if (handle->hot_restart && handle->last_wout && handle->last_wout->ns == ns) {
+    const auto& seed = handle->pinned_restart ? handle->pinned_restart : handle->last_wout;
+    // Free-boundary cold solves keep the forward map independent of fit history.
+    if (handle->hot_restart && !indata.lfreeb && seed && seed->ns == ns) {
       indata.ns_array = Eigen::VectorXi::Constant(1, ns);
       indata.ftol_array = Eigen::VectorXd::Constant(1, handle->indata.ftol_array[last]);
       indata.niter_array = Eigen::VectorXi::Constant(1, handle->indata.niter_array[last]);
-      initial.emplace(*handle->last_wout, indata);
+      initial.emplace(*seed, indata);
     }
     const int threads = ThreadCount(handle);
     auto result = vmecpp::run(indata, initial, threads, vmecpp::OutputMode::kSilent, nullptr, true);
@@ -755,9 +778,11 @@ extern "C" int tiago_vmecpp_solve(tiago_vmecpp* handle, int* converged) {
     }
     handle->output = std::move(*result);
     handle->last_wout = handle->output->wout;
-    vmecpp::HotRestartState restart(handle->output->wout, indata);
-    handle->model = std::make_unique<Model>(indata, ns, restart);
-    handle->model_indata = indata;
+    if (!indata.lfreeb) {
+      vmecpp::HotRestartState restart(handle->output->wout, indata);
+      handle->model = std::make_unique<Model>(indata, ns, restart);
+      handle->model_indata = indata;
+    }
     handle->status = 0;
     *converged = 1;
   });
@@ -797,16 +822,15 @@ extern "C" int tiago_vmecpp_radial(const tiago_vmecpp* handle, double* phip_full
                                    double* current_half, double* mass_half,
                                    double* lamscale) {
   return Guard([&] {
-    if (!handle->model) throw std::runtime_error("no equilibrium solved yet");
-    auto& v = handle->model->vmec();
-    const int ns = v.fc_.ns;
-    const auto& p = *v.p_[0];
+    if (!handle->output) throw std::runtime_error("no equilibrium solved yet");
+    const auto& p = handle->output->vmec_internal_results;
+    const int ns = p.num_full;
     CopyVector(p.phipF.head(ns), phip_full, ns);
     CopyVector(p.phipH.head(ns - 1), phip_half, ns - 1);
     CopyVector(p.iotaH.head(ns - 1), iota_half, ns - 1);
     CopyVector(p.currH.head(ns - 1), current_half, ns - 1);
     CopyVector(p.massH.head(ns - 1), mass_half, ns - 1);
-    *lamscale = v.constants_.lamscale;
+    *lamscale = p.lamscale;
   });
 }
 
@@ -864,6 +888,9 @@ extern "C" int tiago_vmecpp_adjoint(tiago_vmecpp* handle, int ncot,
                                     const double* geometry_bar, double* boundary_bar,
                                     double* profile_bar, int max_block) {
   return Guard([&] {
+    if (handle->indata.lfreeb) {
+      throw std::runtime_error("free-boundary derivatives use re-solved finite differences, not the fixed-boundary adjoint");
+    }
 #ifndef VMECPP_ENABLE_ENZYME
     (void)ncot; (void)geometry_bar; (void)boundary_bar; (void)profile_bar;
     (void)max_block;

@@ -229,3 +229,19 @@ ctest --test-dir build -R tiago_harmonic --output-on-failure
 
 The [waveform model](../docs/harmonic-lockin.md) specifies reference calibration,
 normalization, validity and window latency.
+
+# Regenerate the bounded additional pressure
+
+`gen_nonthermal` emits `src/generated/nonthermal_pressure.f90`, including
+partials with respect to the thermal central pressure, the two bounded
+standard-normal latents and the flux label. It uses the equivalent hyperbolic
+tangent form of the logistic map to avoid exponential overflow in prior tails.
+
+```sh
+cmake --build build-codegen --target gen_nonthermal
+build-codegen/gen_nonthermal
+git diff --exit-code -- src/generated/nonthermal_pressure.f90
+```
+
+`tiago_kinetic_profiles` checks the independent pressure formula and reverse
+chain, including the central thermal-pressure dependence and prior tails.

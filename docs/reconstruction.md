@@ -8,7 +8,7 @@ minimises
     chi^2 = sum_i ((S_i(x) - m_i) / sigma_i)^2 + consistency + priors
 
 with Levenberg–Marquardt (in Fortran, on LAPACK) and reports the linearised
-covariance `(J^T J)^-1`. Each evaluation of `S(x)` solves the fixed-boundary
+covariance `(J^T J)^-1`. Each evaluation of `S(x)` solves the prescribed fixed- or free-boundary
 equilibrium with VMEC++, builds the boundary sheet current from the edge field,
 evaluates the plasma signals as in [magnetics.md](magnetics.md), and adds the
 coil contributions through the response matrix. No Python is involved.
@@ -17,11 +17,98 @@ coil contributions through the response matrix. No Python is involved.
 
 `PRES_SCALE`, `CURTOR`, `PHIEDGE`, `AM(k)`, `AI(k)`, `AC(k)` (power-series
 profiles), `RBC(n,m)`, `ZBS(n,m)` and coil currents `EXTCUR(g)`. The VMEC input
-must be fixed-boundary and stellarator-symmetric. Free-boundary consistency is
-imposed through `consistency_points`: virtual probes inside the plasma where
-the coil field plus the sheet field must vanish.
+must be stellarator-symmetric. With `lfreeb = false`, free-boundary consistency
+can be imposed through `consistency_points`: virtual probes inside the plasma
+where the coil field plus the sheet field must vanish.
 
-## Exact Jacobian
+## Free-boundary provider
+
+Set `lfreeb = true` in the VMEC++ input and supply its magnetic-field grid
+(`mgrid_file`) and coil-group currents (`extcur`). The boundary then moves with
+`EXTCUR(g)`, `PHIEDGE` (toroidal flux in Wb), `CURTOR` (current in A, with
+`ncurr = 1`), and the pressure profile. `RBC` and `ZBS` describe the initial
+guess and cannot be fitted as prescribed boundaries in this mode.
+`vmec_boundary_wout` is also incompatible with this mode. A relative mgrid path
+in a JSON input is resolved beside that input; use an absolute mgrid path in
+classic namelist inputs, which are converted in the working directory.
+
+Magnetic signals still require the matching filament geometry in `coils`.
+The filament groups and mgrid groups must have the same order, signs and current
+units. VMEC's `extcur` supplies the starting currents; the same fitted
+`EXTCUR(g)` changes both the vacuum field and the equilibrium. TIAGO normalizes
+each filament group by its first nonzero current. Set `coil_current_scale(g)`
+to the signed turns represented by that current per unit of VMEC `EXTCUR(g)`
+when these differ; its default is one. This scale converts geometry units and
+must come from the coil definition, rather than being fitted to the signals.
+
+The fixed-boundary implicit adjoint does not differentiate the vacuum solve.
+Free-boundary derivatives are therefore **re-solved central finite differences**,
+as recorded by `equilibrium_t%derivative_method` and the reconstruction summary.
+Each side uses a cold solve, so the forward map and its derivatives do not
+depend on the previous equilibrium. They include the moving boundary, edge
+field, geometry, field magnitude and contravariant field spectra needed by
+profile and ray diagnostics. The base state is restored after probing, and
+state tangents are cached across diagnostic rows. There are two solves per
+equilibrium parameter and, for kinetic pressure, two per half-grid pressure
+knot. No free-boundary implicit-adjoint accuracy or cost is claimed.
+
+`free_boundary_fd_step` (default `1e-3`, or `equilibrium_t%fd_relative` in the
+library) controls the relative difference step. The scale floor is 1000 A for
+`CURTOR`, 0.01 Wb for `PHIEDGE` and one input unit otherwise; pressure knots
+use a 1 Pa floor. Check a different step against independent cold re-solves
+and tighten `vmec_ftol` until solver residuals no longer dominate derivatives.
+Nonconvergent forward proposals are rejected by the existing residual path;
+a failed derivative probe terminates with an explicit error.
+
+### Kinetic and additional pressure
+
+The [joint model](inference.md) passes `kinetic_profiles_t%pressure` in Pa
+to `equilibrium_t%set_pressure` on normalized toroidal-flux half-grid labels
+`s`. It uses the same electron density `ne` (m^-3), electron and ion
+temperatures `Te`, `Ti` (eV), and effective charge `Zeff` as its diagnostics.
+For one impurity charge `Z`, the thermal pressure is
+
+    p_th = e ne [Te + (1 - (Zeff - 1)/Z) Ti]
+
+where `e` converts eV to J. The existing optional `P_FAST` profile adds pressure
+in Pa. Kinetic pressure requires identity `aphi`, `bloat = 1`, `spres_ped >= 1`
+and `gamma = 0`; do not fit `AM` or `PRES_SCALE` simultaneously.
+
+For an additional isotropic non-thermal hypothesis, call
+`model%prof%set_nonthermal([c_min,c_max], [K_min,K_max])` before `model%setup()`.
+It adds `c p_th(0) (1-s)^K` for `s < 1`, and zero outside. Bounds must satisfy
+`0 <= c_min < c_max` and `1 < K_min < K_max`; they are dimensionless,
+caller-declared priors, with no device-specific defaults. The last two profile
+latents `zc`, `zK` have independent standard-normal priors and map through
+
+    c = c_min + (c_max-c_min)/(1+exp(-zc))
+    K = K_min + (K_max-K_min)/(1+exp(-zK))
+
+This specifies bounded logistic-normal priors, not uniform priors. The pressure
+reverse chain includes the dependence of `p_th(0)` on kinetic profiles.
+Disable the term with `enabled=.false.` and call `setup()` again to remove
+both latents. Use the existing Laplace evidence for separately fitted thermal
+and non-thermal models, recording the bounds and their physical source;
+evidence depends on these choices. Avoid also freeing `P_FAST` unless an
+independent prior justifies both components. This scalar pressure term does
+not model fast-ion anisotropy. Compare local posterior modes separately as in
+[roadmap T4](../ROADMAP.md#t4--several-equilibria-finite-local-mixtures).
+
+### Public synthetic checks
+
+`ctest -L free-boundary --output-on-failure` uses the public
+[VMEC++ CTH-like case](https://github.com/proximafusion/vmecpp/tree/860df56938ea6aaf7a1775c89d51069bab4120b3/src/vmecpp/cpp/vmecpp/test_data),
+pinned by revision with a SHA-256 check of the mgrid. Fixture preparation uses
+Python's standard library; production reconstruction remains native.
+The magnetic test fits planted `EXTCUR(1)`, `PHIEDGE`, `CURTOR` and
+`PRES_SCALE`. Joint tests share kinetic `ne`, `Te`, `Ti` profiles with synthetic
+local profile probes, with and without the extra pressure term. They compare
+complete residual derivatives with cold re-solved differences at a different
+step, check recovery within two local Laplace standard deviations, and require
+finite joint evidence. These are local, noise-free synthetic recovery checks,
+not repeated-noise coverage or evidence for non-thermal pressure in a device.
+
+## Fixed-boundary exact Jacobian
 
 The Jacobian `J = dS/dx` costs one factorisation per iterate plus two cheap
 solves per residual row. It is built in three steps:
@@ -58,8 +145,8 @@ full-resolution NCSX (MPOL 11, NTOR 6, NS 99, about 45k unknowns), a dense LU
 would need 16 GB; with the block LU a Jacobian takes about 28 s on 4 cores and
 a 6-parameter reconstruction finishes in under 3 minutes using 1.5 GB.
 
-Further savings: solves after the first hot-restart from the previous
-equilibrium; at fixed boundary the plasma signals are exactly `R y_B` with the
+Further savings: fixed-boundary solves after the first hot-restart from the
+previous equilibrium; at fixed boundary the plasma signals are exactly `R y_B` with the
 field response `R` cached per boundary shape, so profile and coil fits evaluate
 the sheet once; and the fit stops when the predicted chi^2 decrease falls below
 the solver's noise floor.

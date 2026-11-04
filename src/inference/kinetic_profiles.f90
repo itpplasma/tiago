@@ -40,6 +40,7 @@ module tiago_kinetic_profiles
     use fortnum_bspline, only: bspline_workspace_t, bspline_init, bspline_set_knots, &
         bspline_eval_deriv
     use tiago_kinetic_pressure, only: kinetic_pressure
+    use tiago_nonthermal_pressure, only: nonthermal_pressure
     use tiago_density_label_jet, only: density_label_jet
     implicit none
     private
@@ -67,6 +68,9 @@ module tiago_kinetic_profiles
         real(dp) :: sol_decay = 0.05_dp !! e-folding length in s beyond s = 1
         type(profile_t) :: p(N_PROFILES)
         integer :: n_latent = 0
+        logical :: nonthermal = .false.
+        integer :: nonthermal_offset = 0
+        real(dp) :: c_bounds(2) = 0, k_bounds(2) = 0
     contains
         procedure :: init => profiles_init
         procedure :: set_profile => profiles_set
@@ -74,6 +78,7 @@ module tiago_kinetic_profiles
         procedure :: evaluate => profiles_evaluate
         procedure :: density_jet => profiles_density_jet
         procedure :: vjp => profiles_vjp
+        procedure :: set_nonthermal => profiles_set_nonthermal
         procedure :: pressure => profiles_pressure
         procedure :: pressure_vjp => profiles_pressure_vjp
         procedure :: fit_latent => profiles_fit_latent
@@ -162,7 +167,29 @@ contains
             self%p(i)%offset = self%n_latent
             if (self%p(i)%latent) self%n_latent = self%n_latent + self%ncoef
         end do
+        self%nonthermal_offset = self%n_latent
+        if (self%nonthermal) self%n_latent = self%n_latent + 2
     end subroutine layout
+
+    subroutine profiles_set_nonthermal(self, c_bounds, k_bounds, enabled)
+        !! c and K are bounded logistic transforms of independent N(0,1)
+        !! latents; bounds must come from the caller's declared physical prior.
+        use, intrinsic :: ieee_arithmetic, only: ieee_is_finite
+        class(kinetic_profiles_t), intent(inout) :: self
+        real(dp), intent(in) :: c_bounds(2), k_bounds(2)
+        logical, intent(in), optional :: enabled
+        if (.not. all(ieee_is_finite(c_bounds)) .or. .not. all(ieee_is_finite(k_bounds))) &
+            error stop 'nonthermal: bounds must be finite'
+        if (c_bounds(1) < 0 .or. c_bounds(2) <= c_bounds(1)) &
+            error stop 'nonthermal: need 0 <= c_min < c_max'
+        if (k_bounds(1) <= 1 .or. k_bounds(2) <= k_bounds(1)) &
+            error stop 'nonthermal: need 1 < K_min < K_max'
+        self%c_bounds = c_bounds
+        self%k_bounds = k_bounds
+        self%nonthermal = .true.
+        if (present(enabled)) self%nonthermal = enabled
+        call layout(self)
+    end subroutine profiles_set_nonthermal
 
     pure real(dp) function gibbs_kernel(a, b, sigma_f, l_core, l_edge, s0, sw, kind) result(k)
         real(dp), intent(in) :: a, b, sigma_f, l_core, l_edge, s0, sw
@@ -259,15 +286,29 @@ contains
         real(dp), intent(out) :: p(:)
         real(dp), intent(out), optional :: dp_ds(:)
         real(dp), allocatable :: f(:, :), df(:, :)
-        real(dp) :: g(N_PROFILES)
-        integer :: j
+        real(dp) :: g(N_PROFILES), p0, g0(N_PROFILES), extra, dp0, dzc, dzk, ds
+        real(dp) :: f0(N_PROFILES, 1), df0(N_PROFILES, 1)
+        integer :: j, offset
 
+        if (self%nonthermal) then
+            offset = self%nonthermal_offset
+            call self%evaluate(z, [0.0_dp], f0, df0)
+            call kinetic_pressure(f0(P_NE, 1), f0(P_TE, 1), f0(P_TI, 1), f0(P_ZEFF, 1), 0.0_dp, &
+                self%z_imp, elementary_charge, p0, g0(1), g0(2), g0(3), g0(4), g0(5))
+        end if
         allocate(f(N_PROFILES, size(s)), df(N_PROFILES, size(s)))
         call self%evaluate(z, s, f, df)
         do j = 1, size(s)
             call kinetic_pressure(f(P_NE, j), f(P_TE, j), f(P_TI, j), f(P_ZEFF, j), f(P_FAST, j), &
                 self%z_imp, elementary_charge, p(j), g(P_NE), g(P_TE), g(P_TI), g(P_ZEFF), g(P_FAST))
             if (present(dp_ds)) dp_ds(j) = dot_product(g, df(:, j))
+            if (.not. self%nonthermal) cycle
+            if (s(j) >= 1.0_dp) cycle
+            call nonthermal_pressure(s(j), p0, z(offset + 1), z(offset + 2), &
+                self%c_bounds(1), self%c_bounds(2), self%k_bounds(1), self%k_bounds(2), &
+                extra, dp0, dzc, dzk, ds)
+            p(j) = p(j) + extra
+            if (present(dp_ds)) dp_ds(j) = dp_ds(j) + ds
         end do
     end subroutine profiles_pressure
 
@@ -277,8 +318,9 @@ contains
         real(dp), intent(in) :: z(:), s(:), p_bar(:)
         real(dp), intent(inout) :: z_bar(:)
         real(dp), allocatable :: f(:, :), df(:, :), f_bar(:, :), s_bar(:)
-        real(dp) :: p, g(N_PROFILES)
-        integer :: j
+        real(dp) :: p, g(N_PROFILES), p0, g0(N_PROFILES), extra, dp0, dzc, dzk, ds, p0bar
+        real(dp) :: f0(N_PROFILES, 1), df0(N_PROFILES, 1), f0bar(N_PROFILES, 1), s0bar(1)
+        integer :: j, offset
 
         allocate(f(N_PROFILES, size(s)), df(N_PROFILES, size(s)), f_bar(N_PROFILES, size(s)), &
             s_bar(size(s)))
@@ -289,6 +331,24 @@ contains
             f_bar(:, j) = p_bar(j) * g
         end do
         call self%vjp(z, s, f_bar, z_bar, s_bar)
+        if (.not. self%nonthermal) return
+        offset = self%nonthermal_offset
+        call self%evaluate(z, [0.0_dp], f0, df0)
+        call kinetic_pressure(f0(P_NE, 1), f0(P_TE, 1), f0(P_TI, 1), f0(P_ZEFF, 1), 0.0_dp, &
+            self%z_imp, elementary_charge, p0, g0(1), g0(2), g0(3), g0(4), g0(5))
+        g0(P_FAST) = 0
+        p0bar = 0
+        do j = 1, size(s)
+            if (s(j) >= 1.0_dp) cycle
+            call nonthermal_pressure(s(j), p0, z(offset + 1), z(offset + 2), &
+                self%c_bounds(1), self%c_bounds(2), self%k_bounds(1), self%k_bounds(2), &
+                extra, dp0, dzc, dzk, ds)
+            p0bar = p0bar + p_bar(j) * dp0
+            z_bar(offset + 1) = z_bar(offset + 1) + p_bar(j) * dzc
+            z_bar(offset + 2) = z_bar(offset + 2) + p_bar(j) * dzk
+        end do
+        f0bar(:, 1) = p0bar * g0
+        call self%vjp(z, [0.0_dp], f0bar, z_bar, s0bar)
     end subroutine profiles_pressure_vjp
 
     subroutine profiles_fit_latent(self, which, s, values, z)

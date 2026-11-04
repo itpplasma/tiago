@@ -4,6 +4,7 @@ program test_kinetic_profiles
     !! central differences, interpolation of fitted latents, and a flat-top
     !! profile (plateau) being representable with a finite prior cost.
     use, intrinsic :: iso_fortran_env, only: dp => real64, error_unit
+    use, intrinsic :: ieee_arithmetic, only: ieee_is_finite
     use tiago_kinetic_profiles, only: kinetic_profiles_t, P_NE, P_TE, P_TI, P_ZEFF, P_FAST, &
         N_PROFILES, elementary_charge, KERNEL_MINERVA
     use tiago_kinetic_pressure, only: kinetic_pressure
@@ -112,6 +113,66 @@ program test_kinetic_profiles
     call kp%fit_latent(P_TE, kp%greville, [(te_ramp(kp%greville(i), .true.), i = 1, kp%ncoef)], z)
     rhs = sum(z(kp%p(P_TE)%offset + 1:kp%p(P_TE)%offset + kp%ncoef)**2)
     call expect(rhs > 50.0_dp, 'squared-exponential kernel penalizes the flattening')
+    ! The optional peaked component includes the thermal on-axis pressure chain.
+    block
+        type(kinetic_profiles_t) :: peaked
+        real(dp), allocatable :: zz(:), zb(:), za(:), base(:)
+        real(dp) :: ss(4), val(4), plus(4), minus(4), slope(4), central(1), v0(1), thermal_plus(4), thermal_minus(4), thermal_slope(4)
+        real(dp) :: c, exponent, direction
+        integer :: col
+        ss = [0.0_dp, 0.3_dp, 0.8_dp, 1.0_dp]
+        call peaked%init([0.0_dp, 0.5_dp, 1.0_dp])
+        call peaked%set_profile(P_NE, [(1.0e19_dp, i=1, peaked%ncoef)], &
+            .true., 0.2_dp, 0.8_dp, 0.2_dp, 0.5_dp, 0.3_dp)
+        call peaked%set_profile(P_TE, [(800.0_dp, i=1, peaked%ncoef)], .false.)
+        call peaked%set_profile(P_TI, [(600.0_dp, i=1, peaked%ncoef)], .false.)
+        allocate(zz(peaked%n_latent))
+        zz = 0
+        allocate(base(4))
+        call peaked%pressure(zz, ss, base, thermal_slope)
+        call peaked%pressure(zz, [0.0_dp], central)
+        call peaked%set_nonthermal([0.0_dp, 2.0_dp], [2.0_dp, 8.0_dp])
+        zz = [zz, 0.3_dp, -0.4_dp]
+        allocate(zb(size(zz)))
+        call peaked%pressure(zz, ss, val, slope)
+        c = 2.0_dp / (1.0_dp + exp(-zz(size(zz)-1)))
+        exponent = 2.0_dp + 6.0_dp / (1.0_dp + exp(-zz(size(zz))))
+        call expect(maxval(abs(val - base - c*central(1)*(1-ss)**exponent)) < 1.0e-10_dp, &
+            'bounded peaked pressure vs independent formula')
+        zb = 0
+        call peaked%pressure_vjp(zz, ss, [1.0_dp, -0.3_dp, 0.7_dp, 0.2_dp], zb)
+        do col = 1, size(zz)
+            za = zz
+            za(col) = zz(col) + h
+            call peaked%pressure(za, ss, plus)
+            za(col) = zz(col) - h
+            call peaked%pressure(za, ss, minus)
+            direction = dot_product([1.0_dp, -0.3_dp, 0.7_dp, 0.2_dp], (plus-minus)/(2*h))
+            call expect(abs(zb(col)-direction) < 1.0e-6_dp*max(abs(direction), 1.0_dp), &
+                'peaked pressure VJP includes amplitude, exponent and thermal p0')
+        end do
+        call peaked%pressure(zz, ss+h, plus)
+        call peaked%pressure(zz, ss-h, minus)
+        call peaked%set_nonthermal([0.0_dp, 2.0_dp], [2.0_dp, 8.0_dp], enabled=.false.)
+        call peaked%pressure(zz, ss+h, thermal_plus)
+        call peaked%pressure(zz, ss-h, thermal_minus)
+        call expect(maxval(abs(slope-thermal_slope &
+            -(plus-minus-thermal_plus+thermal_minus)/(2*h))) < 1.0e-4_dp, &
+            'peaked component flux derivative and zero edge continuation')
+        call peaked%set_nonthermal([0.0_dp, 2.0_dp], [2.0_dp, 8.0_dp])
+        zz(size(zz)-1:) = [30.0_dp, -30.0_dp]
+        call peaked%pressure(zz, [0.0_dp], v0)
+        call expect(v0(1) <= 3.0_dp*central(1), 'nonthermal amplitude obeys prior bound')
+        zz(size(zz)-1:) = [-1000.0_dp, 1000.0_dp]
+        call peaked%pressure(zz, ss, val)
+        zb = 0
+        call peaked%pressure_vjp(zz, ss, [1.0_dp, -0.3_dp, 0.7_dp, 0.2_dp], zb)
+        call expect(all(ieee_is_finite(val)) .and. all(ieee_is_finite(zb)), &
+            'nonthermal transform and derivatives remain finite in prior tails')
+        call peaked%set_nonthermal([0.0_dp, 2.0_dp], [2.0_dp, 8.0_dp], enabled=.false.)
+        call peaked%pressure(zz(:peaked%n_latent), ss, val)
+        call expect(maxval(abs(val-base)) < 1.0e-12_dp, 'thermal-only model remains selectable')
+    end block
     if (fails > 0) error stop 1
     print '(A)', 'kinetic profiles: all checks passed'
 contains
