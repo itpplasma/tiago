@@ -97,7 +97,7 @@ contains
 
         allocate(values(size(rec%eq%names)))
         do k = 1, rec%n
-            if (.not. rec%is_coil(k)) values(rec%eq_index(k)) = x(k)
+            if (rec%eq_index(k) > 0) values(rec%eq_index(k)) = x(k)
         end do
     end function eq_values
 
@@ -291,7 +291,7 @@ contains
         integer :: k, ng
         logical :: shape
 
-        shape = .false.
+        shape = rec%eq%free_boundary
         do k = 1, rec%n
             shape = shape .or. index(upper(rec%names(k)), 'RBC(') == 1 .or. &
                 index(upper(rec%names(k)), 'ZBS(') == 1
@@ -328,7 +328,7 @@ contains
         allocate(jac(n_rows(), rec%n))
         jac = 0.0_dp
         neq = size(rec%eq%names)
-        if (neq > 0) then
+        if (neq > 0 .or. rec%eq%kinetic) then
             ! C = dS/dy at the current equilibrium (field then shape columns)
             call use_equilibrium(x)
             call update_responses()
@@ -368,7 +368,7 @@ contains
             end do
             call rec%eq%jacobian(eq_values(x), cot, jeq)
             do k = 1, rec%n
-                if (.not. rec%is_coil(k)) jac(:rec%n_meas + rec%n_fb, k) = jeq(:, rec%eq_index(k))
+                if (rec%eq_index(k) > 0) jac(:rec%n_meas + rec%n_fb, k) = jeq(:, rec%eq_index(k))
             end do
             ! idia = 1 loops: + phiedge * signgs
             do k = 1, rec%n
@@ -395,18 +395,17 @@ contains
             do i = 1, rec%n_meas
                 select case (rec%meas_kind(i))
                 case (KIND_FLUX)
-                    jac(i, k) = col(rec%meas_index(i))
+                    jac(i, k) = jac(i, k) + col(rec%meas_index(i)) / rec%meas_sigma(i)
                 case (KIND_SEGROG)
-                    jac(i, k) = rec%seg_m(rec%meas_index(i), rec%group(k)) * &
-                        rec%segs(rec%meas_index(i))%turn_scale
+                    jac(i, k) = jac(i, k) + rec%seg_m(rec%meas_index(i), rec%group(k)) * &
+                        rec%segs(rec%meas_index(i))%turn_scale / rec%meas_sigma(i)
                 case default
-                    jac(i, k) = rec%probe_m(rec%meas_index(i), rec%group(k)) * &
-                        rec%probes(rec%meas_index(i))%turn_scale
+                    jac(i, k) = jac(i, k) + rec%probe_m(rec%meas_index(i), rec%group(k)) * &
+                        rec%probes(rec%meas_index(i))%turn_scale / rec%meas_sigma(i)
                 end select
-                jac(i, k) = jac(i, k) / rec%meas_sigma(i)
             end do
             do i = 1, rec%n_fb
-                jac(rec%n_meas + i, k) = rec%probe_m(rec%n_diag_probes + i, rec%group(k)) &
+                jac(rec%n_meas + i, k) = jac(rec%n_meas + i, k) + rec%probe_m(rec%n_diag_probes + i, rec%group(k)) &
                     / rec%fb_sigma
             end do
         end do

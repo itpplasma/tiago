@@ -1,7 +1,7 @@
 module tiago_vmecpp
     !! Fortran binding of the VMEC++ adapter (src/equilibrium/vmecpp_adapter.h):
-    !! fixed-boundary equilibria with the m = 1 gauge pinned, their geometry and
-    !! radial profiles, wout fields, and the implicit adjoint of the solve.
+    !! fixed- and free-boundary equilibria, geometry, radial profiles and wout
+    !! fields. The implicit adjoint is available for fixed boundaries only.
     use, intrinsic :: iso_c_binding, only: c_ptr, c_null_ptr, c_int, c_double, c_char, &
         c_null_char, c_f_pointer, c_associated
     use, intrinsic :: iso_fortran_env, only: dp => real64

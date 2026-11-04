@@ -1,7 +1,7 @@
 program test_multifidelity_profile
     use, intrinsic :: iso_fortran_env, only: dp => real64, int64
     use tiago_multifidelity_profile, only: ar1_profile_t
-    use tiago_kinetic_profiles, only: kinetic_profiles_t, P_TE, N_PROFILES
+    use tiago_kinetic_profiles, only: kinetic_profiles_t, P_TE, P_NE, P_TI, N_PROFILES
     use tiago_calibration, only: calibration_prior_t
     use fortnum_status, only: fortnum_status_t
     use fortnum_rng, only: rng_t, rng_seed, rng_normal
@@ -58,6 +58,7 @@ program test_multifidelity_profile
     end do
     call profile_derivatives(profiles, truth)
     call profile_derivatives(low_profiles, truth)
+    call combined_pressure()
     call single_fidelity()
     call forward(truth, truth_data)
     call rng_seed(rng, 20261030_int64, status)
@@ -220,6 +221,41 @@ contains
         call p%evaluate(z, points, f, df)
         call require(maxval(abs((fp(P_TE, :) - fm(P_TE, :))/(2*eps) - df(P_TE, :))) &
             < 1.e-5_dp, 'physical profile slope')
+    end subroutine
+
+    subroutine combined_pressure()
+        type(kinetic_profiles_t) :: combined, thermal
+        real(dp), allocatable :: z(:), zb(:), za(:)
+        real(dp) :: points(4), val(4), base(4), plus(4), minus(4), central(1)
+        real(dp) :: cotangent(4), amplitude, exponent, derivative
+        integer :: k
+        combined = profiles
+        call combined%set_profile(P_NE, [(1.e19_dp, k=1, combined%ncoef)], .false.)
+        call combined%set_profile(P_TI, [(600._dp, k=1, combined%ncoef)], .false.)
+        thermal = combined
+        call combined%set_nonthermal([0._dp, 2._dp], [2._dp, 8._dp])
+        z = [truth, .3_dp, -.4_dp]
+        points = [0._dp, .3_dp, .8_dp, 1._dp]
+        cotangent = [1._dp, -.3_dp, .7_dp, .2_dp]
+        call thermal%pressure(truth, points, base)
+        call thermal%pressure(truth, [0._dp], central)
+        call combined%pressure(z, points, val)
+        amplitude = 2/(1 + exp(-.3_dp))
+        exponent = 2 + 6/(1 + exp(.4_dp))
+        call require(maxval(abs(val - base - amplitude*central(1)*(1-points)**exponent)) &
+            < 1.e-10_dp, 'AR1 and bounded pressure retain independent latent coordinates')
+        allocate (zb(size(z)))
+        zb = 0
+        call combined%pressure_vjp(z, points, cotangent, zb)
+        do k = 1, size(z)
+            za = z; za(k) = z(k) + h
+            call combined%pressure(za, points, plus)
+            za(k) = z(k) - h
+            call combined%pressure(za, points, minus)
+            derivative = dot_product(cotangent, (plus-minus)/(2*h))
+            call require(abs(zb(k)-derivative) < 1.e-6_dp*max(1._dp, abs(derivative)), &
+                'combined pressure VJP includes AR1, calibration and bounded component')
+        end do
     end subroutine
 
     subroutine single_fidelity()

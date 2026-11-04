@@ -705,7 +705,7 @@ contains
             cot = 0.0_dp
             call rec%eq%jacobian(rec%eq_x, cot, jeq, coef_cot, bmnc_cot, ub_cot, vb_cot)
             do k = 1, self%n_rec
-                if (rec%is_coil(k)) cycle
+                if (rec%eq_index(k) == 0) cycle
                 jac(nrec_rows + 1:nrec_rows + ndr, k) = jac(nrec_rows + 1:nrec_rows + ndr, k) + &
                     jeq(:, rec%eq_index(k)) * rec%scale(k)
             end do

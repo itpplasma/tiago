@@ -33,6 +33,7 @@ program tiago_reconstruct
     character(len=64) :: parameters(maxp) = ''
     real(dp) :: start_values(maxp), truth_values(maxp), parameter_scale(maxp)
     real(dp) :: prior_values(maxp), prior_sigma(maxp)
+    real(dp) :: coil_current_scale(1024) = 1.0_dp, free_boundary_fd_step = 1.0e-3_dp
     real(dp) :: consistency_sigma = 1.0e-3_dp, seg_area = 0.0_dp
     real(dp) :: sigma_relative = 0.01_dp, sigma_flux = 0.0_dp, sigma_segrog = 0.0_dp
     real(dp) :: sigma_bprobe = 0.0_dp, fd_step = 1.0e-4_dp, vmec_ftol = 1.0e-14_dp
@@ -42,12 +43,12 @@ program tiago_reconstruct
         add_noise = .true.
     logical :: rphiz = .false., plasma_covariant = .false.
     logical :: plasma_conservative = .false.
-    namelist /reconstruction/ vmec_input, vmec_boundary_wout, output_dir, coils, coil_extcur, &
+    namelist /reconstruction/ vmec_input, vmec_boundary_wout, output_dir, coils, coil_extcur, coil_current_scale, &
         flux, segrog, bprobes, measurements, consistency_points, parameters, start_values, &
         truth_values, parameter_scale, prior_values, prior_sigma, consistency_sigma, seg_area, &
         sigma_relative, sigma_flux, sigma_segrog, sigma_bprobe, fd_step, vmec_ftol, vmec_niter, samples, plasma_nphi, &
         plasma_ntheta, max_iterations, seed, gauss, synthesize_measurements, &
-        add_noise, check_jacobian, rphiz, plasma_covariant, plasma_conservative, &
+        add_noise, check_jacobian, rphiz, plasma_covariant, plasma_conservative, free_boundary_fd_step, &
         prior_starts, candidate_count, candidate_values, mixture_psis_draws, mode_distance
 
     character(len=512) :: input_file
@@ -189,6 +190,20 @@ contains
         call execute_command_line('mkdir -p "'//workdir//'"')
         call rec%eq%init(trim(vmec_input), workdir, eq_names, &
             plasma_covariant, plasma_conservative)
+        if (rec%eq%free_boundary) then
+            if (len_trim(vmec_boundary_wout) > 0) call die('free-boundary input cannot pin a wout boundary')
+            if (len_trim(coils) == 0) call die('free-boundary signals require matching coil geometry')
+            do k = 1, npar
+                if (.not. rec%is_coil(k)) cycle
+                neq = neq + 1
+                rec%eq_index(k) = neq
+                eq_names = [character(len=64) :: eq_names, rec%names(k)]
+            end do
+            call rec%eq%init(trim(vmec_input), workdir, eq_names, &
+                plasma_covariant, plasma_conservative)
+        end if
+        rec%eq%fd_relative = free_boundary_fd_step
+        if (free_boundary_fd_step <= 0.0_dp) call die('free_boundary_fd_step must be positive')
         call rec%eq%vmec%set_input('ftol', vmec_ftol)
         call rec%eq%vmec%set_input('niter', real(vmec_niter, dp))
         if (len_trim(vmec_boundary_wout) > 0) call boundary_from_wout(trim(vmec_boundary_wout))
@@ -230,6 +245,17 @@ contains
             call rec%coils%response(rec%loops, rec%segs, rec%probes, rec%flux_m, rec%seg_m, &
                 rec%probe_m, rec%rule)
             rec%extcur = rec%coils%extcur
+            if (size(rec%extcur) > size(coil_current_scale)) call die('too many coil groups')
+            rec%flux_m = rec%flux_m * spread(coil_current_scale(:size(rec%extcur)), 1, size(rec%flux_m, 1))
+            rec%seg_m = rec%seg_m * spread(coil_current_scale(:size(rec%extcur)), 1, size(rec%seg_m, 1))
+            rec%probe_m = rec%probe_m * spread(coil_current_scale(:size(rec%extcur)), 1, size(rec%probe_m, 1))
+            if (rec%eq%free_boundary) then
+                if (size(rec%extcur) /= rec%eq%vmec%input_length('extcur')) &
+                    call die('free-boundary coil groups must match the VMEC mgrid groups')
+                do k = 1, size(rec%extcur)
+                    rec%extcur(k) = rec%eq%vmec%get_input('extcur', k)
+                end do
+            end if
         else
             call rec%coils%init('')
             allocate(rec%extcur(0))
@@ -539,6 +565,7 @@ contains
         close(unit)
 
         open(newunit=unit, file=trim(output_dir)//'/summary.txt', status='replace')
+        write(unit, '(A)') 'equilibrium derivatives: '//trim(rec%eq%derivative_method)
         write(unit, '(A)') 'Tiago equilibrium reconstruction'
         write(unit, '(A,L1)') 'plasma_covariant = ', rec%eq%edge%covariant
         write(unit, '(A,L1)') 'plasma_conservative = ', rec%eq%conservative
