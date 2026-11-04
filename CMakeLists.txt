@@ -49,7 +49,7 @@ option(TIAGO_ENABLE_OPENMP "Enable OpenMP parallelism inside Tiago loops" ON)
 
 # fortnum: B-spline profile bases, NUTS and PSIS for the inference core. Declared
 # before libneo, whose numerics reuse an existing fortnum target.
-set(TIAGO_FORTNUM_TAG "8de7c25990eb65f298e92523adcc15c7d2e0f889" CACHE STRING "fortnum commit used by Tiago")
+set(TIAGO_FORTNUM_TAG "aa46765ec60220f2107a3a2b8ce940f89f026a56" CACHE STRING "fortnum commit used by Tiago")
 if(NOT TARGET fortnum)
     FetchContent_Declare(fortnum
         GIT_REPOSITORY https://github.com/lazy-fortran/fortnum.git
@@ -180,6 +180,7 @@ add_library(tiago_inference STATIC
     src/generated/student_residual_small.f90
     src/inference/robust_signals.f90
     src/inference/calibration_campaign.f90
+    src/inference/multifidelity_profile.f90
     src/inference/kinetic_profiles.f90
     src/inference/profile_diagnostic.f90
     src/inference/point_probe.f90
@@ -1059,3 +1060,8 @@ if(FORTSYM_BUILD)
         -DOUTPUT=${CMAKE_CURRENT_BINARY_DIR}/tests/harmonic-codegen
         -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/check_harmonic_codegen.cmake)
 endif()
+
+add_executable(test_multifidelity_profile tests/test_multifidelity_profile.f90)
+target_link_libraries(test_multifidelity_profile PRIVATE tiago_inference)
+add_test(NAME tiago_multifidelity_profile COMMAND test_multifidelity_profile
+    ${TIAGO_BINARY_DIR}/tests/multifidelity-profile.csv)

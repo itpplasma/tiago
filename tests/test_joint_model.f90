@@ -11,7 +11,7 @@ program test_joint_model
     !!     finite.
     !! Usage: test_joint_model <VMEC input> <sensors.awk> <workdir>
     use, intrinsic :: iso_fortran_env, only: dp => real64, int64, error_unit
-    use, intrinsic :: ieee_arithmetic, only: ieee_is_finite
+    use, intrinsic :: ieee_arithmetic, only: ieee_is_finite, ieee_is_nan
     use tiago_reconstruction, only: rec, jacobian_at, invalidate_caches, n_rows
     use tiago_joint_model, only: joint_model_t, diagnostic_slot_t
     use tiago_synthetic_case, only: setup_magnetics, place_probes, synthesize_magnetics, &
@@ -219,6 +219,7 @@ program test_joint_model
     call expect(ok .and. size(theta0) == model%n, 'joint prior draw coordinates')
     call check_surrogate_priors()
     call check_profile_only_failure()
+    call check_multifidelity()
     if (fails > 0) error stop 1
     print '(A)', 'joint model: all checks passed'
 contains
@@ -226,9 +227,12 @@ contains
         type(joint_model_t) :: profile_only
         real(dp), allocatable :: values(:), residual(:)
         logical :: valid
-        integer :: state_solve
+        integer :: state_solve, n_meas, n_fb, n_prior
 
         ! The profile-only consumer has no reconstruction residual to carry NaN.
+        n_meas = rec%n_meas
+        n_fb = rec%n_fb
+        n_prior = rec%n_prior
         rec%n_meas = 0
         rec%n_fb = 0
         rec%n_prior = 0
@@ -263,7 +267,84 @@ contains
         call expect(valid .and. all(ieee_is_finite(residual)), 'profile-only equilibrium recovers after failure')
         call expect(rec%eq%solved, 'recovered residual restores native equilibrium')
         call expect(profile_only%state_solve == rec%eq%solves, 'recovered residual restores flux map')
+        rec%n_meas = n_meas
+        rec%n_fb = n_fb
+        rec%n_prior = n_prior
+        call invalidate_caches()
     end subroutine check_profile_only_failure
+    subroutine check_multifidelity()
+        use tiago_multifidelity_profile, only: ar1_profile_t
+        use tiago_calibration, only: calibration_prior_t
+        type(ar1_profile_t) :: prior
+        type(calibration_prior_t) :: calibration
+        type(diagnostic_slot_t), allocatable :: old(:)
+        real(dp), allocatable :: t(:), direction(:), rr(:), rp(:), rm(:), jj(:, :), reference(:)
+        real(dp) :: error, initial_chi2
+        integer :: code, o, np, steps, j, nd
+        character(:), allocatable :: message
+        logical :: valid
+        call calibration%init([1.2_dp], reshape([.1_dp**2], [1, 1]), code)
+        call expect(code == 0, 'joint AR1 calibration')
+        calibration%record%record_id = 'synthetic-ECE-scale'
+        call prior%init(model%prof%greville, &
+            (2500*(1 - model%prof%greville) + 50)/1.2_dp, calibration, &
+            log([100._dp, .12_dp, 50._dp, .1_dp]), [.2_dp, .2_dp, .2_dp, .2_dp], &
+            'synthetic', 'constant and calibration tangent', code)
+        call expect(code == 0, 'joint AR1 prior')
+        call model%prof%set_multifidelity_te(prior)
+        call move_alloc(model%diags, old)
+        nd = size(old)
+        allocate (model%diags(nd + 1))
+        model%diags(:nd) = old
+        model%diags(nd + 1) = old(1)
+        model%diags(nd + 1)%low_fidelity_te = .true.
+        ! Weak pressure directions and observed curvature need tighter equilibria.
+        call rec%eq%vmec%set_input('ftol', 1.e-22_dp)
+        call model%setup()
+        allocate (t(model%n), direction(model%n), rr(model%n_residuals()), &
+            rp(model%n_residuals()), rm(model%n_residuals()))
+        t = 0; t(:model%n_rec) = rec%prior/rec%scale
+        o = model%n_rec + model%prof%te_ar1%offset
+        np = model%prof%te_ar1%n_params
+        t(o + 1:o + np) = [(0.2_dp*sin(.4_dp*j), j=1, np)]
+        call model%residual(t, rr, valid)
+        call expect(valid, 'joint AR1 physical pressure equilibrium')
+        direction = t
+        direction(o+prior%hyper_index()+1) = 1.e5_dp
+        call model%residual(direction,rr,valid)
+        call expect(.not. valid, 'invalid AR1 covariance rejected before equilibrium solve')
+        call expect(all(ieee_is_nan(rr)), 'invalid AR1 residual initialized to NaN')
+        call synthesize_magnetics(model, t(:model%n_rec)*rec%scale, &
+            .01_dp, 1.e-4_dp, 1.e-8_dp, 1.e-7_dp, rng, .false.)
+        call synthesize_profiles(model, t, .02_dp, &
+            [(0._dp, j=1, size(model%diags))], rng, .false.)
+        direction = 0
+        direction(o + 1:o + np) = [(cos(.7_dp*j), j=1, np)]
+        call model%jacobian(t, jj)
+        call model%residual(t + 1.e-4_dp*direction, rp, valid)
+        call expect(valid, 'joint AR1 plus equilibrium')
+        call model%residual(t - 1.e-4_dp*direction, rm, valid)
+        call expect(valid, 'joint AR1 minus equilibrium')
+        reference = (rp - rm)/2.e-4_dp
+        error = maxval(abs(reference - matmul(jj, direction)))/maxval(abs(reference))
+        print '(A,ES14.6)', 'AR1 joint finite-difference relative error=', error
+        call expect(error < 2.e-4_dp, 'joint AR1 pressure and both fidelity derivatives')
+        t(o + 1:o + np) = 0
+        call model%residual(t, rr, valid)
+        initial_chi2 = sum(rr**2)
+        call map_fit(model, t, 60, steps, message)
+        call model%residual(t, rr, valid)
+        call expect(valid .and. sum(rr**2) < initial_chi2, 'joint AR1 MAP')
+        call laplace(model, t, lap)
+        call expect(lap%info == 0, 'joint AR1 observed Hessian positive')
+        call expect(lap%proper .and. abs(lap%log_evidence) < huge(1._dp), &
+            'joint AR1 normalized Laplace evidence')
+        starts(1)%theta = t
+        starts(2)%theta = t
+        call multi_start_map(model, starts, model%n, trim(work), mixture_opts, mixture, st)
+        call expect(st%code == 0 .and. size(mixture%modes) == 1, 'AR1 multi-start deduplicates MAP')
+        call expect(mixture%evidence_valid, 'AR1 multi-start normalized evidence')
+    end subroutine
 
     subroutine check_surrogate_priors()
         real(dp) :: design(model%n, 3), direction(model%n), length(model%n)
