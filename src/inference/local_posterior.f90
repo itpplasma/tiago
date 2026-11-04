@@ -13,6 +13,7 @@ module tiago_local_posterior
         procedure(normalization_interface), deferred :: log_normalization
         procedure(proper_interface), deferred :: proper_prior
         procedure(draw_interface), deferred :: draw_prior
+        procedure :: observed_curvature => posterior_observed_curvature
         procedure :: exact => posterior_exact
         procedure :: save_equilibrium => posterior_save
     end type
@@ -52,6 +53,11 @@ module tiago_local_posterior
         end subroutine
     end interface
 contains
+    logical function posterior_observed_curvature(self)
+        class(local_posterior_t), intent(in) :: self
+        posterior_observed_curvature = .false.
+    end function
+
     subroutine posterior_exact(self)
         class(local_posterior_t), intent(inout) :: self
     end subroutine
