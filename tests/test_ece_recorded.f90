@@ -64,9 +64,10 @@ contains
         type(recorded_ece_t) :: tape, tp, tm
         type(plasma_sample_t) :: sample
         type(fortnum_status_t) :: status
-        real(dp), allocatable :: p(:), pd(:), pb(:), eta(:), ed(:), eb(:)
+        real(dp), allocatable :: p(:), pd(:), pb(:), eta(:), ed(:), eb(:), &
+            pm(:, :), em(:, :)
         real(dp) :: yd(2), vd(2), yb(2), vb(2), fd(2), fvd(2), h, lhs, rhs, &
-            err, verr, adj, je, ae
+            err, verr, adj, je, ae, ym(2, 2), vm(2, 2)
         integer :: i, ns, np
         call configure(medium, diagnostic, 2, 48, 1.0_dp, .true.)
         ns = medium%state%n_params()
@@ -117,6 +118,23 @@ contains
         call require(err < 2.0e-6_dp .and. verr < 2.0e-6_dp, &
             'full-chain finite differences')
         call require(adj < 2.0e-11_dp, 'full-chain transpose identity')
+        ! A second, different column must not mix with the first.
+        allocate (pm(np, 2), em(10, 2))
+        pm(:, 1) = pd
+        pm(:ns, 2) = [(cos(.29_dp*i)*max(abs(p(i)), .001_dp), i=1, ns)]
+        pm(ns + 1:, 2) = [(sin(.31_dp*i), i=1, np - ns)]
+        em(:, 1) = ed
+        em(:, 2) = [(sin(.23_dp*i), i=1, 10)]
+        call tape%jvp_multi(pm, em, ym, vm, status)
+        call require(status%code == 0, 'multi-direction tangent')
+        call require(all(abs(ym(:, 1) - yd) <= 1.0e-12_dp*maxval(abs(yd))) .and. &
+            all(abs(vm(:, 1) - vd) <= 1.0e-12_dp*maxval(abs(vd))), &
+            'multi-direction first column')
+        lhs = dot_product(yb, ym(:, 2)) + dot_product(vb, vm(:, 2))
+        rhs = dot_product(pb, pm(:, 2)) + dot_product(eb, em(:, 2))
+        adj = abs(lhs - rhs)/max(abs(lhs), abs(rhs))
+        print '(A,ES14.6)', 'multi-direction second-column transpose error=', adj
+        call require(adj < 2.0e-11_dp, 'multi-direction second column')
     end subroutine
 
     subroutine domains()
