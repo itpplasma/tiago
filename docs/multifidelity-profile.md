@@ -98,3 +98,21 @@ one planted truth and does not establish coverage over arbitrary hyperpriors
 or equilibrium modes. `tiago_ece_recorded` checks the composed ECE derivatives;
 `tiago_joint_model`, in reconstruction builds, checks the pressure/equilibrium
 chain, MAP and evidence with both fidelities.
+
+![Synthetic calibration and discrepancy recovery](figures/multifidelity-recovery.png)
+
+The figure uses all 96 independent measurement-noise realizations of one
+planted profile, with 10 eV noise per observation. Points and bars show the
+autoregressive fits and local Gaussian 95% intervals; black lines mark the
+planted scale and the discrepancy spline coefficient with largest planted
+magnitude. Dashed lines mark the previous shared-profile constraints,
+$C=1$ and $\delta=0$, rather than an old fitted result. This is conditional
+repeated-noise recovery, not experimental calibration or general coverage.
+The [native output](../benchmarks/reconstruction/results/multifidelity-profile.csv)
+and [plotting script](../tools/multifidelity_plot.py) reproduce the figure:
+
+```bash
+python tools/multifidelity_plot.py \
+  benchmarks/reconstruction/results/multifidelity-profile.csv \
+  docs/figures/multifidelity-recovery.png
+```
