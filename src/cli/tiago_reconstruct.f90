@@ -11,9 +11,20 @@ program tiago_reconstruct
         fit, covariance, synthesize, signal_value, KIND_FLUX, KIND_SEGROG, KIND_BPROBE
     use tiago_reconstruction_plots, only: equilibrium_profiles_t, read_profiles, plot_signals, &
         plot_residuals, plot_convergence, plot_profiles, plot_boundary, plot_jacobian_check
+    use tiago_reconstruction_posterior, only: reconstruction_posterior_t
+    use tiago_local_mixture, only: mode_start_t, mixture_options_t, local_mixture_t, multi_start_map
+    use fortnum_status, only: fortnum_status_t
     implicit none
 
-    integer, parameter :: maxp = 64
+    integer, parameter :: maxp = 64, max_starts = 64
+    type(reconstruction_posterior_t) :: posterior
+    type(local_mixture_t) :: mixture
+    type(mixture_options_t) :: mixture_opts
+    type(mode_start_t), allocatable :: mode_starts(:)
+    type(fortnum_status_t) :: mixture_status
+    integer :: prior_starts = 0, candidate_count = 0, mixture_psis_draws = 400
+    real(dp) :: candidate_values(maxp, max_starts) = huge(1.0_dp), mode_distance = 1.0_dp
+    integer :: selected_mode
     ! namelist
     character(len=512) :: vmec_input = '', output_dir = 'reconstruction'
     character(len=512) :: coils = '', coil_extcur = ''
@@ -36,7 +47,8 @@ program tiago_reconstruct
         truth_values, parameter_scale, prior_values, prior_sigma, consistency_sigma, seg_area, &
         sigma_relative, sigma_flux, sigma_segrog, sigma_bprobe, fd_step, vmec_ftol, vmec_niter, samples, plasma_nphi, &
         plasma_ntheta, max_iterations, seed, gauss, synthesize_measurements, &
-        add_noise, check_jacobian, rphiz, plasma_covariant, plasma_conservative
+        add_noise, check_jacobian, rphiz, plasma_covariant, plasma_conservative, &
+        prior_starts, candidate_count, candidate_values, mixture_psis_draws, mode_distance
 
     character(len=512) :: input_file
     real(dp), allocatable :: x(:), x_start(:), x_truth(:), defaults(:), cov(:, :), jac(:, :)
@@ -101,7 +113,33 @@ program tiago_reconstruct
 
     if (check_jacobian) call jacobian_check(x)
 
-    call fit(x, max_iterations, steps, message)
+    if (prior_starts < 0 .or. candidate_count < 0 .or. candidate_count > max_starts) &
+        call die('invalid number of mixture starts')
+    if (prior_starts + candidate_count > 0) then
+        call execute_command_line('mkdir -p "'//trim(output_dir)//'/modes"')
+        allocate(mode_starts(1 + candidate_count + prior_starts))
+        mode_starts(1)%theta = x_start/rec%scale
+        do k = 1, candidate_count
+            if (any(candidate_values(:n, k) == huge(1.0_dp))) &
+                call die('candidate_values required for every parameter')
+            mode_starts(k + 1)%theta = candidate_values(:n, k)/rec%scale
+        end do
+        mixture_opts%max_iterations = max_iterations
+        mixture_opts%psis_draws = mixture_psis_draws
+        mixture_opts%seed = seed
+        mixture_opts%dedup_distance = mode_distance
+        call multi_start_map(posterior, mode_starts, n, trim(output_dir)//'/modes', &
+            mixture_opts, mixture, mixture_status)
+        if (mixture_status%code /= 0) call die(trim(mixture_status%msg))
+        selected_mode = minloc(mixture%modes%gaussian%chi2, dim=1)
+        if (mixture%evidence_valid) selected_mode = maxloc(mixture%modes%weight, dim=1)
+        x = mixture%modes(selected_mode)%gaussian%mean*rec%scale
+        steps = mixture%modes(selected_mode)%steps
+        message = mixture%modes(selected_mode)%message
+        call posterior%exact()
+    else
+        call fit(x, max_iterations, steps, message)
+    end if
     call residual_at(x, r_fit)
     call model_signals(x, f1, s1, p1)
     call rec%eq%write_wout(trim(output_dir)//'/wout_fit.nc')

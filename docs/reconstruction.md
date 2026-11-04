@@ -135,3 +135,25 @@ code and is not combined with it automatically.
 synthetic reconstructions with results, timings and figures: LI383, including a
 20-seed pull study, and full-resolution NCSX with coil currents and
 consistency points. It also compares VMEC++ with VMEC2000.
+
+## Multiple starts and local mixtures
+
+Set `prior_starts > 0` or `candidate_count > 0` to enable the shared
+[multimode inference](inference.md#several-local-modes) engines. The initial
+`start_values` remain the first start. Supply up to 64 additional physical
+parameter vectors in `candidate_values(1:n_parameters, 1:candidate_count)`;
+`prior_starts` adds independent draws from the declared proper Gaussian prior.
+`mixture_psis_draws` defaults to 400 (minimum 20), and `mode_distance` defaults
+to 1 in local Mahalanobis units. The usual `seed` and `max_iterations` apply.
+
+Each retained mode has a separate equilibrium, MAP, covariance, evidence and
+PSIS report under `output_dir/modes`. These covariances use scaled inference
+coordinates. The existing top-level outputs describe the mode with largest
+evidence weight, or smallest posterior chi-squared when priors are improper;
+they do not summarize all modes. Their parameter covariance remains in physical
+units. Compare all mode reports before making a physical interpretation.
+
+The namelist supports starts within one configured equilibrium model. For
+alternative pressure-model families or equilibrium branches, use the Fortran
+API with a `prepare` callback and explicit discrete family priors, as described
+in the inference documentation. No physical equilibrium is averaged.
