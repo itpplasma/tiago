@@ -11,7 +11,7 @@ program test_joint_model
     !!     finite.
     !! Usage: test_joint_model <VMEC input> <sensors.awk> <workdir>
     use, intrinsic :: iso_fortran_env, only: dp => real64, int64, error_unit
-    use, intrinsic :: ieee_arithmetic, only: ieee_is_finite
+    use, intrinsic :: ieee_arithmetic, only: ieee_is_finite, ieee_is_nan
     use tiago_reconstruction, only: rec, jacobian_at, invalidate_caches, n_rows
     use tiago_joint_model, only: joint_model_t, diagnostic_slot_t
     use tiago_synthetic_case, only: setup_magnetics, place_probes, synthesize_magnetics, &
@@ -313,7 +313,7 @@ contains
         direction(o+prior%hyper_index()+1) = 1.e5_dp
         call model%residual(direction,rr,valid)
         call expect(.not. valid, 'invalid AR1 covariance rejected before equilibrium solve')
-        call expect(all(rr == huge(1._dp)), 'invalid AR1 residual initialized')
+        call expect(all(ieee_is_nan(rr)), 'invalid AR1 residual initialized to NaN')
         call synthesize_magnetics(model, t(:model%n_rec)*rec%scale, &
             .01_dp, 1.e-4_dp, 1.e-8_dp, 1.e-7_dp, rng, .false.)
         call synthesize_profiles(model, t, .02_dp, &
