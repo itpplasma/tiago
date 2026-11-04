@@ -14,6 +14,7 @@ program test_ece_recorded
     use tiago_kinetic_profiles, only: P_NE
     use fortnum_status, only: fortnum_status_t
     implicit none
+    call multifidelity()
     call thick()
     call derivatives()
     call domains()
@@ -28,6 +29,58 @@ contains
             print *, text
             error stop 1
         end if
+    end subroutine
+
+    subroutine multifidelity()
+        use tiago_multifidelity_profile, only: ar1_profile_t
+        use tiago_calibration, only: calibration_prior_t
+        type(state_medium_t) :: medium, plus, minus
+        type(ece_t) :: diagnostic
+        type(recorded_ece_t) :: tape, tp, tm
+        type(ar1_profile_t) :: prior
+        type(calibration_prior_t) :: calibration
+        type(fortnum_status_t) :: status
+        real(dp), allocatable :: pd(:), pb(:), ed(:), eb(:)
+        real(dp) :: yd(1), vd(1), fd(1), h, lhs, rhs
+        integer :: code, ns, np, o, j
+        call configure(medium, diagnostic, 1, 48, 1._dp, .true.)
+        call calibration%init([1.2_dp], reshape([.1_dp**2], [1, 1]), code)
+        call require(code == 0, 'AR1 calibration')
+        calibration%record%record_id = 'synthetic-ECE-temperature-scale'
+        call prior%init(medium%profiles%greville, &
+            1000*exp(-.5_dp*medium%profiles%greville), calibration, &
+            log([70._dp, .2_dp, 30._dp, .15_dp]), [.2_dp, .2_dp, .2_dp, .2_dp], &
+            'synthetic', 'constant and calibration tangent', code)
+        call require(code == 0, 'AR1 ECE profile')
+        call medium%profiles%set_multifidelity_te(prior)
+        medium%profiles%low_fidelity_te = .true.
+        deallocate (medium%z)
+        allocate (medium%z(medium%profiles%n_latent))
+        medium%z = .15_dp
+        o = medium%profiles%te_ar1%offset
+        ns = medium%state%n_params(); np = medium%n_params()
+        allocate (pd(np), pb(np), ed(5), eb(5))
+        pd = 0; ed = 0; h = 1.e-5_dp
+        pd(ns + o + 1:) = [(cos(.4_dp*j), j=1, prior%n_params)]
+        call record_ece(diagnostic, medium, ed, tape, status)
+        call require(status%code == 0, 'recorded ECE uses low-fidelity profile')
+        call tape%jvp(pd, ed, yd, vd, status)
+        call require(status%code == 0, 'AR1 ECE tangent')
+        plus = medium; minus = medium
+        plus%z = medium%z + h*pd(ns + 1:)
+        minus%z = medium%z - h*pd(ns + 1:)
+        call record_ece(diagnostic, plus, ed, tp, status)
+        call require(status%code == 0, 'AR1 ECE plus')
+        call record_ece(diagnostic, minus, ed, tm, status)
+        call require(status%code == 0, 'AR1 ECE minus')
+        fd = (tp%voltage - tm%voltage)/(2*h)
+        call require(maxval(abs(fd - yd)) < 2.e-6_dp, 'recorded ECE AR1 finite difference')
+        call tape%vjp([.7_dp], [0._dp], pb, eb, status)
+        call require(status%code == 0, 'AR1 ECE adjoint')
+        lhs = .7_dp*yd(1); rhs = dot_product(pb, pd)
+        call require(abs(lhs - rhs) < 1.e-11_dp, 'recorded ECE AR1 adjoint identity')
+        call require(abs(pb(ns + o + prior%scale_index())) < 1.e-14_dp, &
+            'calibration scale belongs to AR1 link and is not a second ECE gain')
     end subroutine
 
     subroutine thick()
