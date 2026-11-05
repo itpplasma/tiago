@@ -685,6 +685,16 @@ add_test(NAME tiago_local_mixture COMMAND test_local_mixture
     ${TIAGO_BINARY_DIR}/tests/local_mixture)
 set_tests_properties(tiago_local_mixture PROPERTIES TIMEOUT 60)
 
+find_package(Python3 COMPONENTS Interpreter REQUIRED)
+add_executable(test_temporal_inference tests/test_temporal_inference.f90)
+target_link_libraries(test_temporal_inference PRIVATE tiago_inference)
+add_test(NAME tiago_temporal_inference COMMAND ${Python3_EXECUTABLE}
+    ${TIAGO_SOURCE_DIR}/tests/check_temporal_inference.py
+    $<TARGET_FILE:test_temporal_inference>
+    ${TIAGO_BINARY_DIR}/tests/temporal-inference)
+set_tests_properties(tiago_temporal_inference PROPERTIES TIMEOUT 120
+    ENVIRONMENT "OMP_NUM_THREADS=1;OPENBLAS_NUM_THREADS=1")
+
 add_test(NAME tiago_kinetic_profiles COMMAND $<TARGET_FILE:test_kinetic_profiles>)
 
 add_test(NAME tiago_diag_lint_flux

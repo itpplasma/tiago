@@ -351,3 +351,33 @@ the normalized analytic posterior. Reproduce it with
 `python tools/local_mixture_plot.py build/tests/local_mixture/two_mode docs/figures/local-mixture.png`
 after running the test. The synthetic observations and prior are stated above;
 no experimental data enter this check.
+
+## Synthetic temporal inference check
+
+The `tiago_temporal_inference` CTest checks the existing maximum a posteriori
+(MAP), Laplace and evidence-weighted family machinery against exact Gaussian
+conditioning. It regenerates dimensionless synthetic observations for forty
+plasma times, three sensor offsets and three temporally correlated sensor drifts.
+Independent stationary first-order autoregressive priors describe plasma and
+drift; independent Gaussian priors describe offsets. Ninety-two retained sensor
+observations measure plasma plus offset and drift, while five trusted anchors
+measure only plasma. Missing observations are omitted.
+
+Four equally probable families combine drift standard deviations of 0.12 or
+0.30 with adjacent-time correlations of 0.30 or 0.94. A family callback activates
+each covariance before the production `multi_start_map` call, and repeated starts
+must collapse within each family. The Fortran fixture assembles normalized
+innovation residuals through `local_posterior_t`; the independent Python
+standard-library oracle conditions a directly constructed dense stationary
+covariance in observation space. Every component mean, full covariance, absolute
+log evidence and family weight is checked, as is exact Gaussian importance
+sampling.
+
+The check also removes anchors and generates drift outside the candidate
+covariance set. Oracle agreement verifies the computation even under model
+misspecification; single-realization errors and interval coverage are descriptive,
+not calibration claims. This toy does not connect temporal states to the joint
+equilibrium reconstruction. Run it with
+`ctest --test-dir build -R tiago_temporal_inference --output-on-failure`.
+The checker accepts `--times` for smaller exploratory cases and needs no NumPy
+installation, external data or equilibrium solver.
