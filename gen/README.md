@@ -1,6 +1,12 @@
 # Regenerate the generated kernels
 
 Ordinary TIAGO builds use the checked-in Fortran kernels without a CAS.
+For `gen_magnetics`, `gen_digitizer` and `gen_interferometer`, use
+FortSym's [reciprocal simplifier fix](https://github.com/lazy-fortran/fortsym/commit/063008070086aaf2d78f6e9d9a8fddff44c74a46)
+with its pinned FortGen dependency. This fixes a SymEngine cancellation crash
+on reciprocal expressions and reproduces these generators' checked-in kernels.
+The earlier revision identifiers below record the original generation environment.
+
 To regenerate from the symbolic cross products and the differentiated
 `atan2` expression, use a built FortSym tree at commit
 `7e8ef7abdd90c49bb5f75e2c119e7d181656bcc6`:
