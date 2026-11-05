@@ -1015,6 +1015,11 @@ if(TIAGO_ENABLE_RECONSTRUCTION)
         ${TIAGO_SOURCE_DIR}/benchmarks/reconstruction/sensors.awk
         ${TIAGO_BINARY_DIR}/tests/joint-recorded)
     set_tests_properties(tiago_joint_recorded PROPERTIES FIXTURES_REQUIRED input_li383 TIMEOUT 3600)
+    add_test(NAME tiago_joint_grouped COMMAND ${TIAGO_SOURCE_DIR}/tests/joint_recorded.sh
+        $<TARGET_FILE:test_joint_recorded> ${TIAGO_INPUT_LI383}
+        ${TIAGO_SOURCE_DIR}/benchmarks/reconstruction/sensors.awk
+        ${TIAGO_BINARY_DIR}/tests/joint-grouped -4)
+    set_tests_properties(tiago_joint_grouped PROPERTIES FIXTURES_REQUIRED input_li383 TIMEOUT 600)
 endif()
 
 if(TIAGO_IS_TOP_LEVEL)

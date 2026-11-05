@@ -3,6 +3,7 @@ module tiago_recorded_diagnostic
     use tiago_profile_diagnostic, only: profile_diagnostic_t, plasma_sample_t
     use tiago_calibration, only: calibration_prior_t
     use tiago_recorded_affine, only: recorded_affine
+    use tiago_recorded_log_gain, only: recorded_log_gain
     implicit none
     private
 
@@ -14,6 +15,9 @@ module tiago_recorded_diagnostic
 
     type, extends(recorded_diagnostic_t), public :: calibrated_diagnostic_t
         class(profile_diagnostic_t), allocatable :: model
+        integer, allocatable, private :: groups(:)
+        integer, private :: n_groups = 1
+        logical, private :: log_gains = .false., gain_only = .false.
     contains
         procedure :: init => calibrated_init
         procedure :: n_signals => calibrated_count
@@ -30,17 +34,41 @@ contains
         calibration_count = self%calibration%n_params()
     end function
 
-    subroutine calibrated_init(self, model, prior, status)
+    subroutine calibrated_init(self, model, prior, status, groups, log_gains)
         class(calibrated_diagnostic_t), intent(inout) :: self
         class(profile_diagnostic_t), intent(in) :: model
         type(calibration_prior_t), intent(in) :: prior
         integer, intent(out) :: status
+        integer, intent(in), optional :: groups(:)
+        logical, intent(in), optional :: log_gains
+        integer :: ng, g
         status = 1
-        if (prior%n_params() /= 2) return
+        ng = 1
+        if (present(groups)) then
+            if (size(groups) /= model%n_signals()) return
+            if (size(groups) == 0) return
+            if (any(groups < 1)) return
+            ng = maxval(groups)
+            if (ng > model%n_signals()) return
+            do g = 1, ng
+                if (.not. any(groups == g)) return
+            end do
+        end if
+        if (prior%n_params() /= ng .and. prior%n_params() /= 2*ng) return
         if (.not. allocated(prior%factor)) return
+        if (size(prior%factor, 1) /= prior%n_params()) return
+        if (size(prior%factor, 2) /= prior%n_params()) return
         if (allocated(self%model)) deallocate (self%model)
         allocate (self%model, source=model)
         self%calibration = prior
+        self%n_groups = ng
+        self%gain_only = prior%n_params() == ng
+        if (allocated(self%groups)) deallocate (self%groups)
+        allocate (self%groups(model%n_signals()))
+        self%groups = 1
+        if (present(groups)) self%groups = groups
+        self%log_gains = .false.
+        if (present(log_gains)) self%log_gains = log_gains
         status = 0
     end subroutine
 
@@ -79,14 +107,16 @@ contains
         type(plasma_sample_t), intent(in) :: sample
         real(dp), intent(in) :: eta(:)
         real(dp), intent(out) :: y(:)
-        real(dp) :: c(2), raw(size(y)), dy, dg, db
-        integer :: i, k
+        real(dp) :: c(2*self%n_groups), slope(self%n_groups)
+        real(dp) :: raw(size(y)), dy, dg, db
+        integer :: i, k, g
         k = self%model%n_nuisance()
-        c = self%calibration%physical(eta(k + 1:))
+        call calibration_values(self, eta(k + 1:), c, slope)
         call self%model%predict(sample, eta(:k), raw)
-        !$omp parallel do default(shared) private(i, dy, dg, db) if(size(y)>1024)
+        !$omp parallel do default(shared) private(i, g, dy, dg, db) if(size(y)>1024)
         do i = 1, size(y)
-            call recorded_affine(raw(i), c(1), c(2), y(i), dy, dg, db)
+            g = 2*self%groups(i) - 1
+            call recorded_affine(raw(i), c(g), c(g + 1), y(i), dy, dg, db)
         end do
         !$omp end parallel do
     end subroutine
@@ -96,19 +126,28 @@ contains
         type(plasma_sample_t), intent(in) :: sample
         real(dp), intent(in) :: eta(:), q_dot(:, :), eta_dot(:)
         real(dp), intent(out) :: y_dot(:)
-        real(dp) :: c(2), dc(2), raw(size(y_dot)), dr(size(y_dot))
-        real(dp) :: value, dy, dg, db
-        integer :: i, k
+        real(dp) :: c(2*self%n_groups), dc(2*self%n_groups)
+        real(dp) :: slope(self%n_groups), raw(size(y_dot)), dr(size(y_dot))
+        real(dp) :: value, dy, dg, db, dc_prior(size(self%calibration%mean))
+        integer :: i, k, g
         k = self%model%n_nuisance()
-        c = self%calibration%physical(eta(k + 1:))
-        dc = self%calibration%jvp(eta_dot(k + 1:))
+        call calibration_values(self, eta(k + 1:), c, slope)
+        dc_prior = self%calibration%jvp(eta_dot(k + 1:))
+        dc = 0
+        if (self%gain_only) then
+            dc(1::2) = dc_prior
+        else
+            dc = dc_prior
+        end if
+        dc(1::2) = slope*dc(1::2)
         call self%model%predict(sample, eta(:k), raw)
         call self%model%jvp(sample, eta(:k), q_dot, eta_dot(:k), dr)
-        !$omp parallel do default(shared) private(i, value, dy, dg, db) &
+        !$omp parallel do default(shared) private(i, g, value, dy, dg, db) &
         !$omp if(size(y_dot)>1024)
         do i = 1, size(y_dot)
-            call recorded_affine(raw(i), c(1), c(2), value, dy, dg, db)
-            y_dot(i) = dy*dr(i) + dg*dc(1) + db*dc(2)
+            g = 2*self%groups(i) - 1
+            call recorded_affine(raw(i), c(g), c(g + 1), value, dy, dg, db)
+            y_dot(i) = dy*dr(i) + dg*dc(g) + db*dc(g + 1)
         end do
         !$omp end parallel do
     end subroutine
@@ -118,23 +157,50 @@ contains
         type(plasma_sample_t), intent(in) :: sample
         real(dp), intent(in) :: eta(:), y_bar(:)
         real(dp), intent(out) :: q_bar(:, :), eta_bar(:)
-        real(dp) :: c(2), cbar(2), raw(size(y_bar)), rb(size(y_bar))
+        real(dp) :: c(2*self%n_groups), cbar(2*self%n_groups)
+        real(dp) :: slope(self%n_groups), raw(size(y_bar)), rb(size(y_bar))
         real(dp) :: value, dy, dg, db
-        integer :: i, k
+        integer :: i, k, g
         k = self%model%n_nuisance()
-        c = self%calibration%physical(eta(k + 1:))
+        call calibration_values(self, eta(k + 1:), c, slope)
         call self%model%predict(sample, eta(:k), raw)
         cbar = 0.0_dp
-        !$omp parallel do default(shared) private(i, value, dy, dg, db) &
+        !$omp parallel do default(shared) private(i, g, value, dy, dg, db) &
         !$omp reduction(+:cbar) if(size(y_bar)>1024)
         do i = 1, size(y_bar)
-            call recorded_affine(raw(i), c(1), c(2), value, dy, dg, db)
+            g = 2*self%groups(i) - 1
+            call recorded_affine(raw(i), c(g), c(g + 1), value, dy, dg, db)
             rb(i) = dy*y_bar(i)
-            cbar(1) = cbar(1) + dg*y_bar(i)
-            cbar(2) = cbar(2) + db*y_bar(i)
+            cbar(g) = cbar(g) + dg*y_bar(i)
+            cbar(g + 1) = cbar(g + 1) + db*y_bar(i)
         end do
         !$omp end parallel do
         call self%model%vjp(sample, eta(:k), rb, q_bar, eta_bar(:k))
-        eta_bar(k + 1:) = self%calibration%vjp(cbar)
+        cbar(1::2) = slope*cbar(1::2)
+        if (self%gain_only) then
+            eta_bar(k + 1:) = self%calibration%vjp(cbar(1::2))
+        else
+            eta_bar(k + 1:) = self%calibration%vjp(cbar)
+        end if
+    end subroutine
+    subroutine calibration_values(self, z, c, slope)
+        class(calibrated_diagnostic_t), intent(in) :: self
+        real(dp), intent(in) :: z(:)
+        real(dp), intent(out) :: c(:), slope(:)
+        real(dp) :: gain, c_prior(size(z))
+        integer :: g
+        c_prior = self%calibration%physical(z)
+        c = 0
+        if (self%gain_only) then
+            c(1::2) = c_prior
+        else
+            c = c_prior
+        end if
+        slope = 1.0_dp
+        if (.not. self%log_gains) return
+        do g = 1, size(slope)
+            call recorded_log_gain(c(2*g - 1), gain, slope(g))
+            c(2*g - 1) = gain
+        end do
     end subroutine
 end module tiago_recorded_diagnostic
