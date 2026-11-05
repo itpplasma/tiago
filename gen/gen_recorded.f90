@@ -2,7 +2,7 @@ program gen_recorded
     !! Recorded gain and offset, with partial derivatives.
     use fortsym_string, only: str, chars
     use fortsym_arena, only: arena_t
-    use fortsym_expr, only: expr_t, sym, operator(+), operator(-), &
+    use fortsym_expr, only: expr_t, sym, exp, operator(+), operator(-), &
                             operator(*), operator(/)
     use fortsym_diff, only: diff
     use fortsym_kernel, only: kernel_spec_t, emit_kernel
@@ -47,6 +47,23 @@ program gen_recorded
         j = j - 1
     end do
     open (newunit=unit, file='src/generated/recorded_affine.f90', status='replace')
+    write (unit, '(A)') code(:j)
+    deallocate (spec%args, spec%outputs)
+    allocate (spec%args(1), spec%outputs(2))
+    spec%args = [str('log_gain')]
+    spec%outputs = [str('gain'), str('d_log_gain')]
+    spec%name = str('recorded_log_gain')
+    spec%module_name = str('tiago_recorded_log_gain')
+    gain = sym(arena, 'log_gain')
+    roots(1) = exp(gain)
+    roots(2) = diff(roots(1), gain)
+    code = chars(emit_kernel(roots(:2), spec))
+    j = len_trim(code)
+    do while (j > 0)
+        if (code(j:j) /= new_line('a')) exit
+        j = j - 1
+    end do
+    write (unit, '(A)') ''
     write (unit, '(A)') code(:j)
     close (unit)
 end program gen_recorded

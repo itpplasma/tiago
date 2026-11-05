@@ -6,9 +6,15 @@ program test_joint_recorded
                                 calibration_start
     use tiago_joint_model, only: joint_model_t, diagnostic_slot_t
     use tiago_energy_consistency, only: energy_consistency_t
+    use tiago_recorded_diagnostic, only: calibrated_diagnostic_t
+    use tiago_calibration, only: calibration_prior_t
+    use tiago_point_probe, only: point_probe_t
+    use tiago_profile_diagnostic, only: plasma_sample_t, Q_TE
+    use tiago_real_space_state, only: located_t
     use tiago_reconstruction, only: rec
     use tiago_inference_engines, only: map_fit, laplace, laplace_t
     use fortnum_status, only: fortnum_status_t
+    use fortnum_rng, only: rng_t, rng_seed
     implicit none
     type(joint_model_t)::model, control
     type(laplace_t)::post
@@ -33,6 +39,10 @@ program test_joint_recorded
     call get_command_argument(5, rep_text)
     replica = 0
     if (len_trim(rep_text) > 0) read (rep_text, *) replica
+    if (replica == -4) then
+        call check_grouped(model, truth)
+        stop
+    end if
     if (replica == -2) then
         allocate (direction(model%n), jdot(model%n_residuals()))
         direction = [(sin(real(i, dp)), i=1, model%n)]
@@ -254,6 +264,121 @@ program test_joint_recorded
         print '(A,ES14.6)', 'Thomson-only relative profile RMSE=', profile_error
     end if
 contains
+    subroutine check_grouped(base, injected)
+        type(joint_model_t), intent(in) :: base
+        real(dp), intent(in) :: injected(:)
+        type(joint_model_t) :: fitted, fixed
+        type(calibrated_diagnostic_t) :: grouped
+        type(calibration_prior_t) :: prior
+        type(point_probe_t) :: probe
+        type(rng_t) :: rng
+        type(fortnum_status_t) :: rng_status
+        type(plasma_sample_t) :: sample
+        type(located_t), allocatable :: locations(:)
+        real(dp), allocatable :: z(:), start(:), baseline(:), eta(:), dx(:, :, :)
+        real(dp), allocatable :: prediction(:), r(:), rp(:), rm(:), tangent(:)
+        real(dp), allocatable :: direction(:), weights(:), bar(:)
+        real(dp) :: covariance(2, 2), factor(2, 2), h, fd_error, adjoint_error
+        real(dp) :: fitted_chi, fixed_chi, xu(3, 3), b, db(3)
+        real(dp) :: truth_gain(2), fitted_gain(2), fixed_gain(2)
+        character(:), allocatable :: message
+        integer :: code, i, k, old_eta, steps, gain_unit
+        logical :: ok
+        fitted = base
+        factor = 0
+        do i = 1, 2
+            factor(i, i) = .15_dp
+        end do
+        factor(2, 1) = .1_dp
+        covariance = matmul(factor, transpose(factor))
+        call prior%init([0._dp, 0._dp], covariance, code)
+        call require(code == 0, 'joint grouped prior')
+        allocate (probe%x0(3, 4))
+        probe%quantity = [Q_TE, Q_TE, Q_TE, Q_TE]
+        probe%aligned = .true.
+        do i = 1, 4
+            call fitted%state%eval([.2_dp*i, 0._dp, 0._dp], probe%x0(:, i), xu, b, db)
+        end do
+        call grouped%init(probe, prior, code, groups=[1, 1, 2, 2], &
+            log_gains=.true.)
+        call require(code == 0, 'joint grouped wrapper')
+        deallocate (fitted%diags(3)%d, fitted%diags(3)%eta_sigma, &
+            fitted%diags(3)%eta_mean)
+        allocate (fitted%diags(3)%d, source=grouped)
+        old_eta = base%diags(3)%eta_offset - base%n_rec - base%n_prof
+        call fitted%setup()
+        fitted%eta_factor(:old_eta, :old_eta) = base%eta_factor(:old_eta, :old_eta)
+        allocate (z(fitted%n)); z = 0
+        k = fitted%diags(3)%eta_offset
+        z(:k) = injected(:k)
+        z(fitted%mag_calibration_index + 1:) = &
+            injected(base%mag_calibration_index + 1:)
+        z(k + 1:k + 2) = [.8_dp, -.6_dp]
+        allocate (prediction(4))
+        call fitted%predict_diagnostic(z, 3, prediction, sample, locations, eta, dx)
+        fitted%diags(3)%data = prediction
+        fitted%diags(3)%covariance = 0
+        do i = 1, 4
+            fitted%diags(3)%covariance(i, i) = (.005_dp*prediction(i))**2
+        end do
+        call fitted%update_covariances()
+        allocate (r(fitted%n_residuals()), rp(fitted%n_residuals()), &
+            rm(fitted%n_residuals()), tangent(fitted%n_residuals()), &
+            weights(fitted%n_residuals()), direction(fitted%n), bar(fitted%n))
+        direction = [(sin(real(i, dp)), i=1, fitted%n)]
+        direction(1) = .01_dp*direction(1)
+        weights = [(cos(real(i, dp)), i=1, size(weights))]
+        call fitted%jvp(z, direction, tangent)
+        call fitted%vjp(z, weights, bar)
+        adjoint_error = abs(dot_product(weights, tangent) - &
+            dot_product(direction, bar))/max(1._dp, norm2(tangent))
+        h = 1.e-3_dp
+        call fitted%residual(z + h*direction, rp, ok)
+        call require(ok, 'joint grouped positive perturbation')
+        call fitted%residual(z - h*direction, rm, ok)
+        call require(ok, 'joint grouped negative perturbation')
+        fd_error = norm2((rp - rm)/(2*h) - tangent)/norm2(tangent)
+        call require(fd_error < 5.e-4_dp, 'joint grouped full directional oracle')
+        call require(adjoint_error < 1.e-9_dp, 'joint grouped adjoint oracle')
+        start = z
+        call rng_seed(rng, 20261105_int64, rng_status)
+        call fitted%draw_prior(rng, start, ok)
+        call require(ok, 'grouped calibration included in joint prior sampling')
+        start = z
+        start(k + 1:k + 2) = 0
+        fixed = fitted
+        fixed%eta_factor(old_eta + 1:, :) = 0
+        baseline = start
+        call map_fit(fixed, baseline, 20, steps, message)
+        call fixed%residual(baseline, r, ok)
+        call require(ok, 'incorrect fixed calibration fit')
+        fixed_chi = sum(r**2)
+        call map_fit(fitted, start, 20, steps, message)
+        call fitted%residual(start, r, ok)
+        call require(ok, 'trusted-anchor grouped fit')
+        fitted_chi = sum(r**2)
+        call require(index(message, 'converged') == 1, 'grouped joint MAP convergence')
+        call require(fitted_chi < fixed_chi, &
+            'anchors prefer fitted correlated calibration')
+        call require(maxval(abs(start(k + 1:k + 2) - z(k + 1:k + 2))) < .05_dp, &
+            'anchored grouped calibration recovery in prior coordinates')
+        print '(A,2ES14.6)', 'grouped joint FD/adjoint relative errors=', &
+            fd_error, adjoint_error
+        print '(A,2ES14.6)', 'grouped/fixed-calibration posterior chi-square=', &
+            fitted_chi, fixed_chi
+        print '(A,2F12.5)', 'grouped injected latents=', z(k + 1:k + 2)
+        print '(A,2F12.5)', 'grouped recovered latents=', start(k + 1:k + 2)
+        truth_gain = prior%physical(z(k + 1:k + 2))
+        fitted_gain = prior%physical(start(k + 1:k + 2))
+        fixed_gain = prior%physical(baseline(k + 1:k + 2))
+        open (newunit=gain_unit, file=trim(work)//'/grouped-gains.csv', status='replace')
+        write (gain_unit, '(A)') 'group,injected_log_gain,fitted_log_gain,fixed_log_gain'
+        do i = 1, 2
+            write (gain_unit, '(I0,3(",",ES25.17))') &
+                i, truth_gain(i), fitted_gain(i), fixed_gain(i)
+        end do
+        close (gain_unit)
+    end subroutine
     subroutine check_energy(base, injected)
         type(joint_model_t), intent(in) :: base
         real(dp), intent(in) :: injected(:)

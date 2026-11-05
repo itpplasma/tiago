@@ -22,6 +22,31 @@ Avoid retaining complete raw archives. Check source versions, units, response
 validity intervals and the reduction covariance before inference.
 
 Initialize every recorded diagnostic with its explicit `calibration_prior_t`.
+For a generic profile diagnostic, `calibrated_diagnostic_t%init(model, prior,
+status, groups=..., log_gains=.true.)` optionally assigns each output to a
+calibration group. Group numbers are contiguous from one, with one entry per
+output. For `G` groups, the prior has either `G` gain entries with exactly zero
+additive offsets or `2*G` paired entries `[gain_1, offset_1, gain_2, offset_2, ...]`;
+with `log_gains=.true.`, each gain entry instead represents its natural
+logarithm. Means and covariance then apply in log-gain/linear-offset coordinates.
+All outputs in a group share exactly the same gain and offset. The prior's full
+covariance may correlate groups, including groups associated by the caller
+with different times or lasers. Geometry, time and channel-to-group construction
+remain the adapter's responsibility. Omitting both options retains one shared
+affine gain/offset. Instruments requiring provider-specific preparation, such as
+ECE moving-ray tapes, retain their native joint composition; this wrapper does
+not introduce a provider preparation interface. These calibration coordinates
+are part of the existing joint likelihood, derivative and posterior-sampling
+parameter vector.
+
+A trusted diagnostic must constrain the latent quantity needed to distinguish
+profile changes from calibration drift. Prior correlations alone cannot create
+identifiability or correct arbitrary drift outside the chosen model and prior
+support. Positive log gains do not describe additive or spatial distortions.
+The synthetic `tiago_joint_grouped` test checks the complete joint derivative
+and a local anchored fit against an incorrect fixed-calibration baseline; it
+does not establish complete experimental inference or posterior coverage.
+
 The joint standard-normal nuisance coordinates are mapped through `eta_factor`;
 its default diagonal contains each slot's `eta_sigma`. Off-diagonal blocks can
 share a calibration or correlate repeated observations. `campaign_factor`

@@ -49,6 +49,7 @@ program test_recorded_diagnostic
     call check_diagnostic_derivatives(diag, sample, eta, 1.0e-5_dp, err, adj)
     call check(err < 1.0e-8_dp, 'all sampled quantities and calibration FD')
     call check(adj < 1.0e-12_dp, 'complete adjoint identity')
+    call check_groups()
     call check_motion()
     call check_provider()
     ! Vacuum/zero-input limit still records the offset.
@@ -72,6 +73,112 @@ contains
         write (error_unit, '(A)') 'FAIL: '//text
         fails = fails + 1
     end subroutine
+    subroutine check_groups()
+        type(point_probe_t) :: points
+        type(calibrated_diagnostic_t) :: grouped, scalar
+        type(calibration_prior_t) :: grouped_prior
+        type(plasma_sample_t) :: smp
+        real(dp) :: covariance(4, 4), factor(4, 4), mean(4), z(4), values(4)
+        real(dp) :: expected(4), c(4), fd_error, adjoint_error
+        integer :: i, code
+        points%x0 = reshape([(real(i, dp), i=1, 12)], [3, 4])
+        points%quantity = [Q_TE, Q_TE, Q_TE, Q_TE]
+        points%aligned = .true.
+        smp%n = 4
+        allocate (smp%q(N_QUANTITIES, 4), smp%dq_dx(3, N_QUANTITIES, 4))
+        smp%q = 0
+        smp%q(Q_TE, :) = [2._dp, 5._dp, 3._dp, 7._dp]
+        smp%dq_dx = 0
+        smp%inside = [.true., .true., .true., .true.]
+        factor = 0
+        do i = 1, 4
+            factor(i, i) = .2_dp
+        end do
+        factor(3, 1) = .15_dp
+        factor(4, 2) = -.1_dp
+        covariance = matmul(factor, transpose(factor))
+        z = [.4_dp, -.2_dp, .3_dp, .1_dp]
+        mean = [1.2_dp, .1_dp, .8_dp, -.2_dp]
+        call grouped_prior%init(mean, covariance, code)
+        call check(code == 0, 'correlated group prior')
+        call grouped%init(points, grouped_prior, code, groups=[1, 1, 2, 2])
+        call check(code == 0, 'shared groups setup')
+        c = mean + matmul(factor, z)
+        expected(:2) = c(1)*smp%q(Q_TE, :2) + c(2)
+        expected(3:) = c(3)*smp%q(Q_TE, 3:) + c(4)
+        call grouped%predict(smp, z, values)
+        call check(maxval(abs(values - expected)) < 1.e-14_dp, &
+            'shared groups with independent correlated-factor oracle')
+        call check(grouped%n_nuisance() == 4, 'one gain/offset per group')
+        call check_diagnostic_derivatives(grouped, smp, z, 1.e-5_dp, &
+            fd_error, adjoint_error)
+        call check(fd_error < 1.e-8_dp, 'correlated grouped affine FD')
+        call check(adjoint_error < 1.e-12_dp, 'correlated grouped affine adjoint')
+        mean(1::2) = log(mean(1::2))
+        call grouped_prior%init(mean, covariance, code)
+        call grouped%init(points, grouped_prior, code, groups=[1, 1, 2, 2], &
+            log_gains=.true.)
+        call check(code == 0, 'log gain setup')
+        c = mean + matmul(factor, z)
+        expected(:2) = exp(c(1))*smp%q(Q_TE, :2) + c(2)
+        expected(3:) = exp(c(3))*smp%q(Q_TE, 3:) + c(4)
+        call grouped%predict(smp, z, values)
+        call check(maxval(abs(values - expected)) < 1.e-14_dp, &
+            'positive log gain oracle')
+        call check_diagnostic_derivatives(grouped, smp, z, 1.e-5_dp, &
+            fd_error, adjoint_error)
+        call check(fd_error < 1.e-8_dp, 'log gain directional FD')
+        call check(adjoint_error < 1.e-12_dp, 'log gain adjoint')
+        print '(A,2ES12.4)', 'grouped log gain FD/adjoint errors: ', &
+            fd_error, adjoint_error
+        call scalar%init(points, prior, code)
+        call check(code == 0, 'default scalar setup')
+        call grouped%init(points, prior, code, groups=[1, 1, 1, 1])
+        call check(code == 0, 'explicit shared scalar setup')
+        call scalar%predict(smp, z(:2), expected)
+        call grouped%predict(smp, z(:2), values)
+        call check(maxval(abs(values - expected)) == 0._dp, 'scalar API parity')
+        call grouped%init(points, grouped_prior, code, groups=[1, 2])
+        call check(code /= 0, 'reject wrong group count')
+        call grouped%init(points, grouped_prior, code, groups=[0, 1, 2, 2])
+        call check(code /= 0, 'reject zero group')
+        call grouped%init(points, grouped_prior, code, groups=[1, 1, 2, 5])
+        call check(code /= 0, 'reject excessive group')
+        call grouped%init(points, grouped_prior, code, groups=[2, 2, 2, 2])
+        call check(code /= 0, 'reject unused group')
+        covariance = 0
+        do i = 1, 4
+            covariance(i, i) = .04_dp
+        end do
+        call grouped_prior%init(mean(:3), covariance(:3, :3), code)
+        call grouped%init(points, grouped_prior, code, groups=[1, 1, 2, 2])
+        call check(code /= 0, 'reject wrong prior dimensions')
+        covariance(:2, :2) = reshape([.04_dp, .02_dp, .02_dp, .05_dp], [2, 2])
+        do i = 1, 2
+            mean(:2) = [1.2_dp, .8_dp]
+            if (i == 2) mean(:2) = log(mean(:2))
+            call grouped_prior%init(mean(:2), covariance(:2, :2), code)
+            call grouped%init(points, grouped_prior, code, groups=[1, 1, 2, 2], &
+                log_gains=i == 2)
+            call check(code == 0, 'gain-only grouped setup')
+            call check(grouped%n_nuisance() == 2, 'no artificial offset coordinates')
+            c(:2) = mean(:2) + [.2_dp*z(1), .1_dp*z(1) + .2_dp*z(2)]
+            if (i == 2) c(:2) = exp(c(:2))
+            expected(:2) = c(1)*smp%q(Q_TE, :2)
+            expected(3:) = c(2)*smp%q(Q_TE, 3:)
+            call grouped%predict(smp, z(:2), values)
+            call check(maxval(abs(values - expected)) < 1.e-14_dp, &
+                'gain-only correlated independent oracle')
+            call check_diagnostic_derivatives(grouped, smp, z(:2), 1.e-5_dp, &
+                fd_error, adjoint_error)
+            call check(fd_error < 1.e-8_dp, 'gain-only grouped directional FD')
+            call check(adjoint_error < 1.e-12_dp, 'gain-only grouped adjoint')
+        end do
+        smp%q = 0
+        call grouped%predict(smp, z(:2), values)
+        call check(maxval(abs(values)) == 0._dp, 'gain-only exact zero offset')
+    end subroutine
+
     subroutine check_provider()
         type(circular_state_t) :: state
         type(kinetic_profiles_t) :: profiles
