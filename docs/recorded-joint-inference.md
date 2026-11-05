@@ -33,11 +33,20 @@ All outputs in a group share exactly the same gain and offset. The prior's full
 covariance may correlate groups, including groups associated by the caller
 with different times or lasers. Geometry, time and channel-to-group construction
 remain the adapter's responsibility. Omitting both options retains one shared
-affine gain/offset. Instruments requiring provider-specific preparation, such as
-ECE moving-ray tapes, retain their native joint composition; this wrapper does
-not introduce a provider preparation interface. These calibration coordinates
-are part of the existing joint likelihood, derivative and posterior-sampling
-parameter vector.
+affine gain/offset. These calibration coordinates are part of the existing
+joint likelihood, derivative and posterior-sampling parameter vector.
+
+Preparation records propagate through calibration wrappers, including nested
+wrappers. ECE retains its native moving-ray, opacity and receiver calculation;
+the common calibration response transforms its signal and both its provider and
+nuisance derivatives. For prepared diagnostics, the optional `record` output of
+`predict_diagnostic` is an allocatable `class(profile_tape_t)`, with `signal_jvp` and `signal_vjp` in the
+provider/profile and diagnostic nuisance coordinates. Recompute the record at
+each evaluation. The existing bare-ECE `tape` output remains available. Joint
+likelihoods continue to use the fixed observed covariance. The registered
+`tiago_joint_calibrated_ece` test checks scalar, grouped log-gain and nested
+wrappers against the complete moving-ray finite difference and a separate
+tangent/adjoint identity.
 
 A trusted diagnostic must constrain the latent quantity needed to distinguish
 profile changes from calibration drift. Prior correlations alone cannot create

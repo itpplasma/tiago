@@ -35,6 +35,9 @@ module tiago_joint_model
     use tiago_vmecpp_state, only: vmecpp_state_t
     use tiago_ece_radiometer, only: ece_t
     use tiago_ece_recorded, only: recorded_ece_t, record_ece
+    use tiago_profile_tape, only: profile_tape_t
+    use tiago_recorded_diagnostic, only: calibrated_diagnostic_t
+    use tiago_calibrated_tape, only: calibrated_tape_t
     use tiago_ece_state_medium, only: state_medium_t
     use fortnum_status, only: fortnum_status_t
     use fortnum_multifidelity, only: autoregressive_gp_t
@@ -165,10 +168,7 @@ contains
         do d = 1, size(self%diags)
             associate (slot => self%diags(d))
                 if (self%prof%te_ar1%active) then
-                    select type (instrument => slot%d)
-                        type is (ece_t)
-                        slot%low_fidelity_te = .true.
-                    end select
+                    if (slot%d%uses_low_fidelity_te()) slot%low_fidelity_te = .true.
                     if (slot%low_fidelity_te .and. slot%gain_sigma > 0) &
                         error stop 'joint: AR1 scale replaces the ECE gain nuisance'
                 else if (slot%low_fidelity_te) then
@@ -418,8 +418,8 @@ contains
         end do
     end subroutine joint_sample_at
 
-    subroutine joint_predict_diagnostic(self, theta, d, y, sample, loc, eta, dx_deta, tape)
-        !! Gain-free prediction y of diagnostic d at the current equilibrium.
+    subroutine joint_predict_diagnostic(self, theta, d, y, sample, loc, eta, &
+            dx_deta, tape, record)
         class(joint_model_t), intent(in) :: self
         real(dp), intent(in) :: theta(:)
         integer, intent(in) :: d
@@ -427,37 +427,81 @@ contains
         type(plasma_sample_t), intent(out) :: sample
         type(located_t), allocatable, intent(out) :: loc(:)
         real(dp), allocatable, intent(out) :: eta(:), dx_deta(:, :, :)
-        real(dp), allocatable :: z(:), x(:, :)
         type(recorded_ece_t), intent(out), optional :: tape
-        type(recorded_ece_t) :: local_tape
-        type(state_medium_t) :: medium
-        type(ece_t) :: prepared
-        type(fortnum_status_t) :: status
-
+        class(profile_tape_t), allocatable, intent(out), optional :: record
+        real(dp), allocatable :: z(:), x(:, :)
+        class(profile_tape_t), allocatable :: prepared
         call self%unpack(theta, z=z, eta=eta, d=d)
-        select type (instrument => self%diags(d)%d)
-        type is (ece_t)
-            allocate (medium%state, source=self%state)
-            medium%profiles = self%prof
-            medium%profiles%low_fidelity_te = self%diags(d)%low_fidelity_te
-            medium%z = z
-            call record_ece(instrument, medium, eta, local_tape, status)
-            if (status%code /= 0) then
-                y = ieee_value(0._dp, ieee_quiet_nan)
-                allocate (loc(0), dx_deta(3, 0, size(eta)))
-                return
+        call record_profile(self, self%diags(d)%d, z, eta, &
+            self%diags(d)%low_fidelity_te, y, sample, loc, dx_deta, prepared)
+        if (allocated(prepared)) then
+            if (present(tape)) then
+                select type (native => prepared)
+                    type is (recorded_ece_t)
+                    tape = native
+                end select
             end if
-            y = local_tape%voltage
-            call local_tape%sampled(prepared, sample)
-            allocate (loc(0), dx_deta(3, sample%n, size(eta)))
-            dx_deta = 0
-            if (present(tape)) tape = local_tape
+            if (present(record)) call move_alloc(prepared, record)
             return
-        end select
+        end if
         call self%diags(d)%d%sample_points(eta, x, dx_deta)
         call self%sample_at(z, x, sample, loc, self%diags(d)%low_fidelity_te)
         call self%diags(d)%d%predict(sample, eta, y)
-    end subroutine joint_predict_diagnostic
+    end subroutine
+
+    recursive subroutine record_profile(self, diagnostic, z, eta, low_fidelity_te, &
+            y, sample, loc, dx_deta, tape)
+        class(joint_model_t), intent(in) :: self
+        class(profile_diagnostic_t), intent(in) :: diagnostic
+        real(dp), intent(in) :: z(:), eta(:)
+        logical, intent(in) :: low_fidelity_te
+        real(dp), intent(out) :: y(:)
+        type(plasma_sample_t), intent(out) :: sample
+        type(located_t), allocatable, intent(out) :: loc(:)
+        real(dp), allocatable, intent(out) :: dx_deta(:, :, :)
+        class(profile_tape_t), allocatable, intent(out) :: tape
+        class(profile_tape_t), allocatable :: inner
+        type(state_medium_t) :: medium
+        type(ece_t) :: prepared
+        type(fortnum_status_t) :: status
+        real(dp) :: raw(size(y))
+        integer :: k
+        select type (instrument => diagnostic)
+            type is (calibrated_diagnostic_t)
+            k = instrument%model%n_nuisance()
+            call record_profile(self, instrument%model, z, eta(:k), low_fidelity_te, &
+                raw, sample, loc, dx_deta, inner)
+            if (.not. allocated(inner)) return
+            call instrument%response_predict(raw, eta(k + 1:), y)
+            allocate (calibrated_tape_t :: tape)
+            select type (composed => tape)
+                type is (calibrated_tape_t)
+                call composed%init(instrument, eta, raw, inner)
+            end select
+            deallocate (dx_deta)
+            allocate (dx_deta(3, sample%n, size(eta)))
+            dx_deta = 0
+        type is (ece_t)
+            allocate (medium%state, source=self%state)
+            medium%profiles = self%prof
+            medium%profiles%low_fidelity_te = low_fidelity_te
+            medium%z = z
+            allocate (recorded_ece_t :: tape)
+            select type (native => tape)
+                type is (recorded_ece_t)
+                call record_ece(instrument, medium, eta, native, status)
+                if (status%code /= 0) then
+                    y = ieee_value(0._dp, ieee_quiet_nan)
+                    allocate (loc(0), dx_deta(3, 0, size(eta)))
+                    return
+                end if
+                y = native%voltage
+                call native%sampled(prepared, sample)
+            end select
+            allocate (loc(0), dx_deta(3, sample%n, size(eta)))
+            dx_deta = 0
+        end select
+    end subroutine
 
     subroutine joint_residual(self, theta, r, ok)
         !! Whitened residual; ok = .false. if VMEC++ found no equilibrium.
@@ -536,7 +580,7 @@ contains
         real(dp), allocatable :: coef_cot(:, :), bmnc_cot(:, :), cot(:, :), jeq(:, :), jd(:, :), e(:)
         type(plasma_sample_t) :: sample
         type(kinetic_profiles_t) :: observation_profiles
-        type(recorded_ece_t) :: tape
+        class(profile_tape_t), allocatable :: tape
         type(fortnum_status_t) :: status
         type(located_t), allocatable :: loc(:)
         real(dp), allocatable :: ub_cot(:, :), vb_cot(:, :), pb_all(:, :), eb_all(:, :), r0(:), slope(:)
@@ -626,23 +670,22 @@ contains
                     observation_profiles = self%prof
                     observation_profiles%low_fidelity_te = slot%low_fidelity_te
                     allocate(y(slot%d%n_signals()), e(slot%d%n_signals()))
-                    call self%predict_diagnostic(theta, d, y, sample, loc, eta, dx, tape)
+                    call self%predict_diagnostic(theta, d, y, sample, loc, eta, &
+                        dx, record=tape)
                     call self%unpack(theta, gain=gain, d=d)
                     allocate(jd(size(y), self%n), q_bar(N_QUANTITIES, sample%n), &
                         eta_bar(size(eta)), f_bar(N_PROFILES, sample%n), s_bar(sample%n), &
                         qs_bar(N_QUANTITIES, sample%n))
                     jd = 0.0_dp
-                    select type (instrument => slot%d)
-                    type is (ece_t)
+                    if (allocated(tape)) then
                         allocate (pb_all(self%state%n_params() + self%n_prof, size(y)), &
                                   eb_all(size(eta), size(y)))
-                        call ece_rows(tape, pb_all, eb_all)
-                    end select
+                        call recorded_rows(tape, pb_all, eb_all)
+                    end if
                     do i = 1, size(y)
                         e = 0.0_dp
                         e(i) = 1.0_dp
-                        select type (instrument => slot%d)
-                        type is (ece_t)
+                        if (allocated(tape)) then
                             p_bar = pb_all(:self%state%n_params(), i)
                             zbar = pb_all(self%state%n_params() + 1:, i)
                             eta_bar = eb_all(:, i)
@@ -657,7 +700,7 @@ contains
                             ub_cot(:, row + i) = gain*p_bar(ng + nb + 1:ng + 2*nb)
                             vb_cot(:, row + i) = gain*p_bar(ng + 2*nb + 1:ng + 3*nb)
                             cycle
-                        end select
+                        end if
                         call slot%d%vjp(sample, eta, e, q_bar, eta_bar)
                         ! profiles: latents and s through the profiles
                         f_bar = 0.0_dp
@@ -759,26 +802,27 @@ contains
         end do
     end subroutine joint_jacobian
 
-    subroutine ece_rows(tape, parameter_rows, calibration_rows)
-        type(recorded_ece_t), intent(in) :: tape
+    subroutine recorded_rows(tape, parameter_rows, calibration_rows)
+        class(profile_tape_t), intent(in) :: tape
         real(dp), intent(out) :: parameter_rows(:, :), calibration_rows(:, :)
         integer :: i
         !$omp parallel do default(shared) private(i) schedule(dynamic,1)
-        do i = 1, size(tape%voltage)
-            call ece_row(tape, i, parameter_rows(:, i), calibration_rows(:, i))
+        do i = 1, size(parameter_rows, 2)
+            call recorded_row(tape, i, size(parameter_rows, 2), &
+                parameter_rows(:, i), calibration_rows(:, i))
         end do
         !$omp end parallel do
     end subroutine
 
-    subroutine ece_row(tape, i, parameter_bar, eta_bar)
-        type(recorded_ece_t), intent(in) :: tape
-        integer, intent(in) :: i
+    subroutine recorded_row(tape, i, n, parameter_bar, eta_bar)
+        class(profile_tape_t), intent(in) :: tape
+        integer, intent(in) :: i, n
         real(dp), intent(out) :: parameter_bar(:), eta_bar(:)
-        real(dp) :: voltage_bar(size(tape%voltage)), variance_bar(size(tape%voltage))
+        real(dp) :: voltage_bar(n)
         type(fortnum_status_t) :: status
-        voltage_bar = 0; variance_bar = 0; voltage_bar(i) = 1
-        call tape%vjp(voltage_bar, variance_bar, parameter_bar, eta_bar, status)
-        if (status%code /= 0) error stop 'joint: ECE adjoint failed'
+        voltage_bar = 0; voltage_bar(i) = 1
+        call tape%signal_vjp(voltage_bar, parameter_bar, eta_bar, status)
+        if (status%code /= 0) error stop 'joint: recorded diagnostic adjoint failed'
     end subroutine
 
     subroutine joint_jvp(self, theta, direction, product)

@@ -3,6 +3,7 @@ module tiago_ece_recorded
     use, intrinsic :: ieee_arithmetic, only: ieee_is_finite
     use fortnum_status, only: fortnum_status_t, status_set, FORTNUM_DOMAIN_ERROR
     use tiago_ece_radiometer, only: ece_t
+    use tiago_profile_tape, only: profile_tape_t
     use tiago_ece_opacity_coordinates, only: ece_opacity_coordinates
     use tiago_ece_ray, only: ECE_X_MODE
     use tiago_ece_state_medium, only: state_medium_t
@@ -28,23 +29,44 @@ module tiago_ece_recorded
         real(dp), allocatable :: launch_row(:, :)
     end type
 
-    type, public :: recorded_ece_t
+    type, extends(profile_tape_t), public :: recorded_ece_t
         private
         type(ece_t) :: diagnostic
         type(state_medium_t) :: medium
         type(ece_path_t), allocatable :: paths(:)
         type(plasma_sample_t) :: sample
         real(dp), allocatable :: eta(:), qx(:, :, :), qp(:, :, :), length_row(:, :)
-        logical, public :: valid = .false.
         real(dp), allocatable, public :: voltage(:), variance(:)
     contains
         procedure :: jvp => recorded_jvp
         procedure :: jvp_multi => recorded_jvp_multi
         procedure :: vjp => recorded_vjp
         procedure :: sampled => recorded_sampled
+        procedure :: signal_jvp => recorded_signal_jvp
+        procedure :: signal_vjp => recorded_signal_vjp
     end type
     public :: record_ece
 contains
+    subroutine recorded_signal_jvp(self, parameter_dot, eta_dot, signal_dot, status)
+        class(recorded_ece_t), intent(in) :: self
+        real(dp), intent(in) :: parameter_dot(:), eta_dot(:)
+        real(dp), intent(out) :: signal_dot(:)
+        type(fortnum_status_t), intent(out) :: status
+        real(dp) :: variance_dot(size(signal_dot))
+        call self%jvp(parameter_dot, eta_dot, signal_dot, variance_dot, status)
+    end subroutine
+
+    subroutine recorded_signal_vjp(self, signal_bar, parameter_bar, eta_bar, status)
+        class(recorded_ece_t), intent(in) :: self
+        real(dp), intent(in) :: signal_bar(:)
+        real(dp), intent(out) :: parameter_bar(:), eta_bar(:)
+        type(fortnum_status_t), intent(out) :: status
+        real(dp) :: variance_bar(size(signal_bar))
+        ! The joint likelihood conditions on fixed observed covariance.
+        variance_bar = 0
+        call self%vjp(signal_bar, variance_bar, parameter_bar, eta_bar, status)
+    end subroutine
+
     subroutine record_ece(diagnostic, medium, eta, tape, status)
         type(ece_t), intent(in) :: diagnostic
         type(state_medium_t), intent(in) :: medium

@@ -183,6 +183,8 @@ add_library(tiago_inference STATIC
     src/inference/profile_diagnostic.f90
     src/inference/point_probe.f90
     src/inference/recorded_diagnostic.f90
+    src/inference/profile_tape.f90
+    src/inference/calibrated_tape.f90
     src/inference/integrator_diagnostic.f90
     src/inference/digitizer_diagnostic.f90
     src/inference/magnetic_pickup.f90
@@ -1030,6 +1032,12 @@ if(TIAGO_ENABLE_RECONSTRUCTION)
         ${TIAGO_SOURCE_DIR}/benchmarks/reconstruction/sensors.awk
         ${TIAGO_BINARY_DIR}/tests/joint-grouped -4)
     set_tests_properties(tiago_joint_grouped PROPERTIES FIXTURES_REQUIRED input_li383 TIMEOUT 600)
+    add_test(NAME tiago_joint_calibrated_ece COMMAND ${TIAGO_SOURCE_DIR}/tests/joint_recorded.sh
+        $<TARGET_FILE:test_joint_recorded> ${TIAGO_INPUT_LI383}
+        ${TIAGO_SOURCE_DIR}/benchmarks/reconstruction/sensors.awk
+        ${TIAGO_BINARY_DIR}/tests/joint-calibrated-ece -5)
+    set_tests_properties(tiago_joint_calibrated_ece PROPERTIES
+        FIXTURES_REQUIRED input_li383 TIMEOUT 600)
 endif()
 
 if(TIAGO_IS_TOP_LEVEL)
