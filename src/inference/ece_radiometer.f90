@@ -31,6 +31,7 @@ module tiago_ece_radiometer
         type(calibration_prior_t) :: wall_prior
         real(dp), allocatable :: points(:, :), cell_length(:), parallel_cos2(:)
     contains
+        procedure :: uses_low_fidelity_te => ece_low_fidelity_te
         procedure :: init => ece_init
         procedure :: n_signals => ece_n_signals
         procedure :: n_nuisance => ece_n_nuisance
@@ -46,6 +47,13 @@ module tiago_ece_radiometer
         procedure :: brightness
     end type
 contains
+    logical function ece_low_fidelity_te(self)
+        class(ece_t), intent(in) :: self
+        associate (unused => self)
+        end associate
+        ece_low_fidelity_te = .true.
+    end function
+
     subroutine ece_init(self, channels, response, prior, wall_prior, status)
         class(ece_t), intent(inout) :: self
         type(ece_channel_t), intent(in) :: channels(:)

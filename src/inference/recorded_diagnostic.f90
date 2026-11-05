@@ -27,6 +27,10 @@ module tiago_recorded_diagnostic
         procedure :: predict => calibrated_predict
         procedure :: jvp => calibrated_jvp
         procedure :: vjp => calibrated_vjp
+        procedure :: response_predict
+        procedure :: response_jvp
+        procedure :: response_vjp
+        procedure :: uses_low_fidelity_te => calibrated_low_fidelity_te
     end type
 contains
     integer function calibration_count(self)
@@ -102,17 +106,56 @@ contains
         dx_deta(:, :, :k) = inner_dx
     end subroutine
 
+    logical function calibrated_low_fidelity_te(self)
+        class(calibrated_diagnostic_t), intent(in) :: self
+        calibrated_low_fidelity_te = self%model%uses_low_fidelity_te()
+    end function
+
     subroutine calibrated_predict(self, sample, eta, y)
         class(calibrated_diagnostic_t), intent(in) :: self
         type(plasma_sample_t), intent(in) :: sample
         real(dp), intent(in) :: eta(:)
         real(dp), intent(out) :: y(:)
-        real(dp) :: c(2*self%n_groups), slope(self%n_groups)
-        real(dp) :: raw(size(y)), dy, dg, db
-        integer :: i, k, g
+        real(dp) :: raw(size(y))
+        integer :: k
         k = self%model%n_nuisance()
-        call calibration_values(self, eta(k + 1:), c, slope)
         call self%model%predict(sample, eta(:k), raw)
+        call self%response_predict(raw, eta(k + 1:), y)
+    end subroutine
+
+    subroutine calibrated_jvp(self, sample, eta, q_dot, eta_dot, y_dot)
+        class(calibrated_diagnostic_t), intent(in) :: self
+        type(plasma_sample_t), intent(in) :: sample
+        real(dp), intent(in) :: eta(:), q_dot(:, :), eta_dot(:)
+        real(dp), intent(out) :: y_dot(:)
+        real(dp) :: raw(size(y_dot)), dr(size(y_dot))
+        integer :: k
+        k = self%model%n_nuisance()
+        call self%model%predict(sample, eta(:k), raw)
+        call self%model%jvp(sample, eta(:k), q_dot, eta_dot(:k), dr)
+        call self%response_jvp(raw, eta(k + 1:), dr, eta_dot(k + 1:), y_dot)
+    end subroutine
+
+    subroutine calibrated_vjp(self, sample, eta, y_bar, q_bar, eta_bar)
+        class(calibrated_diagnostic_t), intent(in) :: self
+        type(plasma_sample_t), intent(in) :: sample
+        real(dp), intent(in) :: eta(:), y_bar(:)
+        real(dp), intent(out) :: q_bar(:, :), eta_bar(:)
+        real(dp) :: raw(size(y_bar)), rb(size(y_bar))
+        integer :: k
+        k = self%model%n_nuisance()
+        call self%model%predict(sample, eta(:k), raw)
+        call self%response_vjp(raw, eta(k + 1:), y_bar, rb, eta_bar(k + 1:))
+        call self%model%vjp(sample, eta(:k), rb, q_bar, eta_bar(:k))
+    end subroutine
+
+    subroutine response_predict(self, raw, z, y)
+        class(calibrated_diagnostic_t), intent(in) :: self
+        real(dp), intent(in) :: raw(:), z(:)
+        real(dp), intent(out) :: y(:)
+        real(dp) :: c(2*self%n_groups), slope(self%n_groups), dy, dg, db
+        integer :: i, g
+        call calibration_values(self, z, c, slope)
         !$omp parallel do default(shared) private(i, g, dy, dg, db) if(size(y)>1024)
         do i = 1, size(y)
             g = 2*self%groups(i) - 1
@@ -121,18 +164,15 @@ contains
         !$omp end parallel do
     end subroutine
 
-    subroutine calibrated_jvp(self, sample, eta, q_dot, eta_dot, y_dot)
+    subroutine response_jvp(self, raw, z, raw_dot, z_dot, y_dot)
         class(calibrated_diagnostic_t), intent(in) :: self
-        type(plasma_sample_t), intent(in) :: sample
-        real(dp), intent(in) :: eta(:), q_dot(:, :), eta_dot(:)
+        real(dp), intent(in) :: raw(:), z(:), raw_dot(:), z_dot(:)
         real(dp), intent(out) :: y_dot(:)
-        real(dp) :: c(2*self%n_groups), dc(2*self%n_groups)
-        real(dp) :: slope(self%n_groups), raw(size(y_dot)), dr(size(y_dot))
+        real(dp) :: c(2*self%n_groups), dc(2*self%n_groups), slope(self%n_groups)
         real(dp) :: value, dy, dg, db, dc_prior(size(self%calibration%mean))
-        integer :: i, k, g
-        k = self%model%n_nuisance()
-        call calibration_values(self, eta(k + 1:), c, slope)
-        dc_prior = self%calibration%jvp(eta_dot(k + 1:))
+        integer :: i, g
+        call calibration_values(self, z, c, slope)
+        dc_prior = self%calibration%jvp(z_dot)
         dc = 0
         if (self%gain_only) then
             dc(1::2) = dc_prior
@@ -140,49 +180,43 @@ contains
             dc = dc_prior
         end if
         dc(1::2) = slope*dc(1::2)
-        call self%model%predict(sample, eta(:k), raw)
-        call self%model%jvp(sample, eta(:k), q_dot, eta_dot(:k), dr)
         !$omp parallel do default(shared) private(i, g, value, dy, dg, db) &
         !$omp if(size(y_dot)>1024)
         do i = 1, size(y_dot)
             g = 2*self%groups(i) - 1
             call recorded_affine(raw(i), c(g), c(g + 1), value, dy, dg, db)
-            y_dot(i) = dy*dr(i) + dg*dc(g) + db*dc(g + 1)
+            y_dot(i) = dy*raw_dot(i) + dg*dc(g) + db*dc(g + 1)
         end do
         !$omp end parallel do
     end subroutine
 
-    subroutine calibrated_vjp(self, sample, eta, y_bar, q_bar, eta_bar)
+    subroutine response_vjp(self, raw, z, y_bar, raw_bar, z_bar)
         class(calibrated_diagnostic_t), intent(in) :: self
-        type(plasma_sample_t), intent(in) :: sample
-        real(dp), intent(in) :: eta(:), y_bar(:)
-        real(dp), intent(out) :: q_bar(:, :), eta_bar(:)
-        real(dp) :: c(2*self%n_groups), cbar(2*self%n_groups)
-        real(dp) :: slope(self%n_groups), raw(size(y_bar)), rb(size(y_bar))
+        real(dp), intent(in) :: raw(:), z(:), y_bar(:)
+        real(dp), intent(out) :: raw_bar(:), z_bar(:)
+        real(dp) :: c(2*self%n_groups), cbar(2*self%n_groups), slope(self%n_groups)
         real(dp) :: value, dy, dg, db
-        integer :: i, k, g
-        k = self%model%n_nuisance()
-        call calibration_values(self, eta(k + 1:), c, slope)
-        call self%model%predict(sample, eta(:k), raw)
-        cbar = 0.0_dp
+        integer :: i, g
+        call calibration_values(self, z, c, slope)
+        cbar = 0
         !$omp parallel do default(shared) private(i, g, value, dy, dg, db) &
         !$omp reduction(+:cbar) if(size(y_bar)>1024)
         do i = 1, size(y_bar)
             g = 2*self%groups(i) - 1
             call recorded_affine(raw(i), c(g), c(g + 1), value, dy, dg, db)
-            rb(i) = dy*y_bar(i)
+            raw_bar(i) = dy*y_bar(i)
             cbar(g) = cbar(g) + dg*y_bar(i)
             cbar(g + 1) = cbar(g + 1) + db*y_bar(i)
         end do
         !$omp end parallel do
-        call self%model%vjp(sample, eta(:k), rb, q_bar, eta_bar(:k))
         cbar(1::2) = slope*cbar(1::2)
         if (self%gain_only) then
-            eta_bar(k + 1:) = self%calibration%vjp(cbar(1::2))
+            z_bar = self%calibration%vjp(cbar(1::2))
         else
-            eta_bar(k + 1:) = self%calibration%vjp(cbar)
+            z_bar = self%calibration%vjp(cbar)
         end if
     end subroutine
+
     subroutine calibration_values(self, z, c, slope)
         class(calibrated_diagnostic_t), intent(in) :: self
         real(dp), intent(in) :: z(:)

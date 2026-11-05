@@ -53,6 +53,7 @@ module tiago_profile_diagnostic
         procedure(predict_i), deferred :: predict
         procedure(jvp_i), deferred :: jvp
         procedure(vjp_i), deferred :: vjp
+        procedure :: uses_low_fidelity_te => diagnostic_low_fidelity_te
     end type profile_diagnostic_t
 
     abstract interface
@@ -109,6 +110,13 @@ module tiago_profile_diagnostic
     public :: check_diagnostic_derivatives
 
 contains
+
+    logical function diagnostic_low_fidelity_te(self)
+        class(profile_diagnostic_t), intent(in) :: self
+        associate (unused => self)
+        end associate
+        diagnostic_low_fidelity_te = .false.
+    end function
 
     subroutine check_diagnostic_derivatives(diag, sample, eta, h, jvp_error, adjoint_error)
         !! Test helper for diagnostic authors. jvp_error: maximum relative

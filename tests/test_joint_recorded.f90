@@ -9,6 +9,8 @@ program test_joint_recorded
     use tiago_recorded_diagnostic, only: calibrated_diagnostic_t
     use tiago_calibration, only: calibration_prior_t
     use tiago_point_probe, only: point_probe_t
+    use tiago_profile_tape, only: profile_tape_t
+    use tiago_ece_recorded, only: recorded_ece_t
     use tiago_profile_diagnostic, only: plasma_sample_t, Q_TE
     use tiago_real_space_state, only: located_t
     use tiago_reconstruction, only: rec
@@ -39,6 +41,10 @@ program test_joint_recorded
     call get_command_argument(5, rep_text)
     replica = 0
     if (len_trim(rep_text) > 0) read (rep_text, *) replica
+    if (replica == -5) then
+        call check_wrapped_ece(model, truth)
+        stop
+    end if
     if (replica == -4) then
         call check_grouped(model, truth)
         stop
@@ -264,6 +270,189 @@ program test_joint_recorded
         print '(A,ES14.6)', 'Thomson-only relative profile RMSE=', profile_error
     end if
 contains
+    subroutine check_wrapped_ece(base, injected)
+        type(joint_model_t), intent(in) :: base
+        real(dp), intent(in) :: injected(:)
+        type(joint_model_t) :: wrapped_model
+        type(calibrated_diagnostic_t) :: wrapper, inner_wrapper
+        type(calibration_prior_t) :: scalar_prior, grouped_prior
+        class(profile_tape_t), allocatable :: tape
+        type(recorded_ece_t) :: native
+        type(plasma_sample_t) :: sample
+        type(located_t), allocatable :: loc(:)
+        type(fortnum_status_t) :: code
+        real(dp), allocatable :: z(:), eta(:), dx(:, :, :), direction(:)
+        real(dp), allocatable :: r(:), rp(:), rm(:), tangent(:), bar(:), weights(:)
+        real(dp), allocatable :: pdot(:), pbar(:), edot(:), ebar(:)
+        real(dp) :: raw(4), predicted(4), expected(4), ydot(4), ybar(4), c(2)
+        real(dp) :: h, fd_error, coarse_error, adjoint_error, tape_error
+        integer :: mode, i, k, info, np
+        logical :: ok
+        call scalar_prior%init([1.05_dp, .02_dp], &
+            reshape([.0004_dp, 0._dp, 0._dp, .0001_dp], [2, 2]), info)
+        call require(info == 0, 'scalar ECE wrapper prior')
+        call grouped_prior%init(log([1.02_dp, .98_dp]), &
+            reshape([.0004_dp, .0002_dp, .0002_dp, .0005_dp], [2, 2]), info)
+        call require(info == 0, 'grouped ECE wrapper prior')
+        call base%predict_diagnostic(injected, 3, raw, sample, loc, eta, dx, native)
+        call require(native%valid, 'bare ECE legacy tape parity')
+        do mode = 1, 3
+            wrapped_model = base
+            if (mode == 1) then
+                call wrapper%init(base%diags(3)%d, scalar_prior, info)
+            else if (mode == 2) then
+                call wrapper%init(base%diags(3)%d, grouped_prior, info, &
+                    groups=[1, 1, 2, 2], log_gains=.true.)
+            else
+                call inner_wrapper%init(base%diags(3)%d, scalar_prior, info)
+                call require(info == 0, 'inner ECE wrapper setup')
+                call wrapper%init(inner_wrapper, grouped_prior, info, &
+                    groups=[1, 1, 2, 2], log_gains=.true.)
+            end if
+            call require(info == 0, 'ECE wrapper setup')
+            deallocate (wrapped_model%diags(3)%d, wrapped_model%diags(3)%eta_mean, &
+                wrapped_model%diags(3)%eta_sigma)
+            allocate (wrapped_model%diags(3)%d, source=wrapper)
+            call wrapped_model%setup()
+            wrapped_model%eta_factor(:base%n_eta, :base%n_eta) = base%eta_factor
+            k = base%mag_calibration_index
+            allocate (z(wrapped_model%n)); z = 0
+            z(:k) = injected(:k)
+            z(k + 1:k + 2) = [.3_dp, -.2_dp]
+            if (mode == 3) z(k + 3:k + 4) = [.15_dp, -.1_dp]
+            z(wrapped_model%mag_calibration_index + 1:) = injected(k + 1:)
+            allocate (r(wrapped_model%n_residuals()))
+            call wrapped_model%residual(z, r, ok)
+            call require(ok, 'calibrated ECE joint preparation')
+            call wrapped_model%predict_diagnostic(z, 3, predicted, sample, &
+                loc, eta, dx, record=tape)
+            call require(allocated(tape), 'wrapped ECE provider tape')
+            call require(tape%valid, 'wrapped ECE valid tape')
+            expected = raw
+            if (mode /= 2) then
+                expected = (1.05_dp + .02_dp*.3_dp)*raw + .02_dp - .01_dp*.2_dp
+            end if
+            if (mode > 1) then
+                c = log([1.02_dp, .98_dp]) + [.02_dp*.3_dp, .01_dp*.3_dp - .02_dp*.2_dp]
+                if (mode == 3) c = log([1.02_dp, .98_dp]) + &
+                    [.02_dp*.15_dp, .01_dp*.15_dp - .02_dp*.1_dp]
+                expected(:2) = exp(c(1))*expected(:2)
+                expected(3:) = exp(c(2))*expected(3:)
+            end if
+            call require(maxval(abs(predicted - expected))/maxval(abs(expected)) < &
+                1.e-12_dp, 'wrapped ECE independent affine/log gain oracle')
+            np = wrapped_model%state%n_params() + wrapped_model%n_prof
+            allocate (pdot(np), pbar(np), edot(size(eta)), ebar(size(eta)))
+            pdot = [(sin(.2_dp*i), i=1, np)]
+            edot = [(cos(.3_dp*i), i=1, size(eta))]
+            ybar = [.3_dp, -.2_dp, .7_dp, -.1_dp]
+            call tape%signal_jvp(pdot, edot, ydot, code)
+            call require(code%code == 0, 'wrapped ECE tape tangent')
+            call tape%signal_vjp(ybar, pbar, ebar, code)
+            call require(code%code == 0, 'wrapped ECE tape adjoint')
+            tape_error = abs(dot_product(ydot, ybar) - dot_product(pdot, pbar) - &
+                dot_product(edot, ebar))/max(1._dp, norm2(ydot)*norm2(ybar))
+            call require(tape_error < 1.e-10_dp, 'independent wrapped ECE tape adjoint')
+            allocate (direction(wrapped_model%n), tangent(size(r)), bar(size(z)), &
+                weights(size(r)), rp(size(r)), rm(size(r)))
+            direction = [(sin(real(i, dp)), i=1, size(z))]
+            direction(1) = .01_dp*direction(1)
+            weights = [(cos(real(i, dp)), i=1, size(r))]
+            call wrapped_model%jvp(z, direction, tangent)
+            call wrapped_model%vjp(z, weights, bar)
+            adjoint_error = abs(dot_product(tangent, weights) - &
+                dot_product(direction, bar))/max(1._dp, norm2(tangent))
+            h = 1.e-3_dp
+            call wrapped_model%residual(z + h*direction, rp, ok)
+            call require(ok, 'wrapped ECE positive perturbation')
+            call wrapped_model%residual(z - h*direction, rm, ok)
+            call require(ok, 'wrapped ECE negative perturbation')
+            coarse_error = norm2((rp - rm)/(2*h) - tangent)/norm2(tangent)
+            h = h/2
+            call wrapped_model%residual(z + h*direction, rp, ok)
+            call require(ok, 'wrapped ECE refined positive perturbation')
+            call wrapped_model%residual(z - h*direction, rm, ok)
+            call require(ok, 'wrapped ECE refined negative perturbation')
+            fd_error = norm2((rp - rm)/(2*h) - tangent)/norm2(tangent)
+            call require(fd_error < .35_dp*coarse_error + 1.e-7_dp, &
+                'wrapped ECE finite-difference step convergence')
+            call require(fd_error < 5.e-4_dp, &
+                'wrapped ECE full moving-ray finite difference')
+            call require(adjoint_error < 1.e-9_dp, 'wrapped ECE joint adjoint')
+            print '(A,I0,4ES14.6)', 'wrapped ECE mode/coarse FD/fine FD/adjoints=', &
+                mode, coarse_error, fd_error, adjoint_error, tape_error
+            deallocate (z, r, rp, rm, tangent, bar, weights, direction, &
+                pdot, pbar, edot, ebar)
+        end do
+        call check_wrapped_fidelity(base, injected)
+    end subroutine
+
+    subroutine check_wrapped_fidelity(base, injected)
+        use tiago_multifidelity_profile, only: ar1_profile_t
+        type(joint_model_t), intent(in) :: base
+        real(dp), intent(in) :: injected(:)
+        type(joint_model_t) :: bare, wrapped
+        type(ar1_profile_t) :: prior
+        type(calibration_prior_t) :: scale, gain
+        type(calibrated_diagnostic_t) :: wrapper
+        type(plasma_sample_t) :: sample
+        type(located_t), allocatable :: loc(:)
+        real(dp), allocatable :: z(:), wz(:), residual(:), eta(:), dx(:, :, :)
+        real(dp) :: low(4), high(4), predicted(4), error, separation
+        integer :: info, i, k, offset, n
+        logical :: ok
+        bare = base
+        call scale%init([1.2_dp], reshape([.1_dp**2], [1, 1]), info)
+        call require(info == 0, 'wrapped ECE AR1 scale prior')
+        scale%record%record_id = 'synthetic-ECE-scale'
+        call prior%init(bare%prof%greville, &
+            1200*exp(-.6_dp*bare%prof%greville)/1.2_dp, scale, &
+            log([100._dp, .12_dp, 50._dp, .1_dp]), [.2_dp, .2_dp, .2_dp, .2_dp], &
+            'synthetic', 'constant and calibration tangent', info)
+        call require(info == 0, 'wrapped ECE AR1 profile')
+        call bare%prof%set_multifidelity_te(prior)
+        call bare%setup()
+        allocate (z(bare%n), residual(bare%n_residuals()))
+        z = 0
+        z(:bare%n_rec) = injected(:bare%n_rec)
+        offset = bare%n_rec + bare%prof%te_ar1%offset
+        n = bare%prof%te_ar1%n_params
+        z(offset + 1:offset + n) = [(0.2_dp*sin(.4_dp*i), i=1, n)]
+        call bare%residual(z, residual, ok)
+        call require(ok, 'bare AR1 physical equilibrium')
+        call bare%predict_diagnostic(z, 3, low, sample, loc, eta, dx)
+        bare%diags(3)%low_fidelity_te = .false.
+        call bare%predict_diagnostic(z, 3, high, sample, loc, eta, dx)
+        separation = norm2(high - low)/norm2(low)
+        call require(separation > 1.e-3_dp, 'AR1 low/high prediction control differs')
+        bare%diags(3)%low_fidelity_te = .true.
+        wrapped = bare
+        call gain%init([1._dp], reshape([.02_dp**2], [1, 1]), info)
+        call require(info == 0, 'AR1 identity calibration prior')
+        call wrapper%init(bare%diags(3)%d, gain, info)
+        call require(info == 0, 'AR1 ECE wrapper setup')
+        deallocate (wrapped%diags(3)%d, wrapped%diags(3)%eta_mean, &
+            wrapped%diags(3)%eta_sigma)
+        allocate (wrapped%diags(3)%d, source=wrapper)
+        wrapped%diags(3)%low_fidelity_te = .false.
+        call wrapped%setup()
+        wrapped%eta_factor(:bare%n_eta, :bare%n_eta) = bare%eta_factor
+        allocate (wz(wrapped%n))
+        k = bare%mag_calibration_index
+        wz = 0
+        wz(:k) = z(:k)
+        wz(wrapped%mag_calibration_index + 1:) = z(k + 1:)
+        deallocate (residual)
+        allocate (residual(wrapped%n_residuals()))
+        call wrapped%residual(wz, residual, ok)
+        call require(ok, 'wrapped AR1 physical equilibrium')
+        call wrapped%predict_diagnostic(wz, 3, predicted, sample, loc, eta, dx)
+        error = norm2(predicted - low)/norm2(low)
+        call require(error < 1.e-12_dp, 'active AR1 bare/wrapped ECE prediction parity')
+        print '(A,2ES14.6)', 'wrapped AR1 parity error/low-high separation=', &
+            error, separation
+    end subroutine
+
     subroutine check_grouped(base, injected)
         type(joint_model_t), intent(in) :: base
         real(dp), intent(in) :: injected(:)
