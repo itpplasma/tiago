@@ -47,6 +47,14 @@ The synthetic `tiago_joint_grouped` test checks the complete joint derivative
 and a local anchored fit against an incorrect fixed-calibration baseline; it
 does not establish complete experimental inference or posterior coverage.
 
+Synthetic anchored calibration test: the joint maximum a posteriori fit recovers
+both injected gains while the fixed-calibration comparison holds them at one.
+This is a local fit comparison. The registered `tiago_joint_grouped` test writes
+`grouped-gains.csv` in its work directory; figure metadata retains the plotted
+values.
+
+![Synthetic gain recovery](grouped-calibration.svg)
+
 The joint standard-normal nuisance coordinates are mapped through `eta_factor`;
 its default diagonal contains each slot's `eta_sigma`. Off-diagonal blocks can
 share a calibration or correlate repeated observations. `campaign_factor`
