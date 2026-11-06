@@ -113,3 +113,6 @@ camera calibration; the repository supplies synthetic fixtures only.
 
 For missing recorded channels, see [Bayesian signal prediction](docs/signal-correlation.md)
 and its independent numerical oracle.
+
+[Grouped signal prediction](docs/grouped-signals.md) accounts for shared shot
+offsets and temporal covariance when predicting a missing recorded signal.
