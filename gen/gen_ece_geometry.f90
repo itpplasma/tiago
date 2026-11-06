@@ -1,25 +1,22 @@
 program gen_ece_geometry
-    use fortsym_string, only: str, chars
-    use fortsym_arena, only: arena_t
+    use fortsym_string, only: str, chars, itoa
     use fortsym_expr, only: expr_t, sym, num, operator(+), operator(-), &
-                            operator(*), operator(/), operator(**), sin, cos, exp
+        operator(*), operator(/), operator(**), sin, cos, exp
     use fortsym_diff, only: diff
     use fortsym_subs, only: subs_many
     use fortsym_kernel, only: kernel_spec_t, emit_kernel
     implicit none
-    type(arena_t), target :: arena
     type(kernel_spec_t) :: spec
     type(expr_t) :: roots(100), w(4), t(3), zero(3), angular, f, g, h(4)
     type(expr_t) :: xx, ff(2), gx(3), hx(3, 3), du(3), jp(3, 3), px, gp(3)
     integer :: i, j, k, l, n, mode, nr
     character(20), parameter :: modes(4) = [character(20) :: &
-                                            'vmec_r_x', 'vmec_r_y', 'vmec_z', &
-                                            'vmec_cos']
+        'vmec_r_x', 'vmec_r_y', 'vmec_z', &
+        'vmec_cos']
 
-    call arena%init()
     do i = 1, 3
-        t(i) = sym(arena, 't'//digit(i))
-        zero(i) = num(arena, 0)
+        t(i) = sym('t'//itoa(i))
+        zero(i) = num(0)
     end do
     do i = 1, 4
         w(i) = at('w', i)
@@ -28,13 +25,10 @@ program gen_ece_geometry
         call reset()
         spec%args = [str('w'), str('m'), str('n'), str('theta'), str('phi')]
         spec%arg_shapes = [str('(4)'), str(''), str(''), str(''), str('')]
-        angular = cos(sym(arena, 'm')*sym(arena, 'theta') - &
-                      sym(arena, 'n')*sym(arena, 'phi'))
-        if (mode == 3) angular = sin(sym(arena, 'm')* &
-                                     sym(arena, 'theta') - sym(arena, 'n')*sym(arena, &
-                                                                               'phi'))
-        if (mode == 1) angular = angular*cos(sym(arena, 'phi'))
-        if (mode == 2) angular = angular*sin(sym(arena, 'phi'))
+        angular = cos(sym('m')*sym('theta') - sym('n')*sym('phi'))
+        if (mode == 3) angular = sin(sym('m')*sym('theta') - sym('n')*sym('phi'))
+        if (mode == 1) angular = angular*cos(sym('phi'))
+        if (mode == 2) angular = angular*sin(sym('phi'))
         n = 0
         call mode_root([0, 0, 0], 'value')
         do i = 1, 3
@@ -53,7 +47,7 @@ program gen_ece_geometry
 
     call reset()
     spec%args = [str('t')]
-    f = sym(arena, 't')
+    f = sym('t')
     h = [2*f**3 - 3*f**2 + 1, f**3 - 2*f**2 + f, -2*f**3 + 3*f**2, f**3 - f**2]
     n = 0
     do i = 1, 4
@@ -68,8 +62,8 @@ program gen_ece_geometry
     call reset()
     spec%args = [str('xu'), str('xuu'), str('xuuu'), str('v'), str('vu'), str('vuu')]
     spec%arg_shapes = [str('(3)'), str('(3,3)'), str('(3,3,3)'), str('(2)'), &
-                       str('(3,2)'), str('(3,3,2)')]
-    xx = num(arena, 0)
+        str('(3,2)'), str('(3,3,2)')]
+    xx = num(0)
     do i = 1, 3
         xx = xx + at('xu', i)*t(i)
         do j = 1, 3
@@ -104,12 +98,12 @@ program gen_ece_geometry
     ! Implicit inverse-map jet. A=(X_u)^-1; all parameter rows hold x fixed.
     call reset()
     spec%args = [str('a'), str('x2'), str('gu'), str('hu'), str('xp'), &
-                 str('xup'), str('fp'), str('gup')]
+        str('xup'), str('fp'), str('gup')]
     spec%arg_shapes = [str('(3,3)'), str('(3,3,3)'), str('(3)'), str('(3,3)'), &
-                       str('(3)'), str('(3,3)'), str(''), str('(3)')]
+        str('(3)'), str('(3,3)'), str(''), str('(3)')]
     do i = 1, 3
-        gx(i) = num(arena, 0)
-        du(i) = num(arena, 0)
+        gx(i) = num(0)
+        du(i) = num(0)
         do j = 1, 3
             gx(i) = gx(i) + at('gu', j)*at('a', j, i)
             du(i) = du(i) - at('a', i, j)*at('xp', j)
@@ -117,7 +111,7 @@ program gen_ece_geometry
     end do
     do i = 1, 3
         do j = 1, 3
-            hx(i, j) = num(arena, 0)
+            hx(i, j) = num(0)
             do k = 1, 3
                 do l = 1, 3
                     g = at('hu', k, l)
@@ -133,7 +127,7 @@ program gen_ece_geometry
             end do
         end do
     end do
-    px = sym(arena, 'fp')
+    px = sym('fp')
     do i = 1, 3
         px = px + at('gu', i)*du(i)
     end do
@@ -147,7 +141,7 @@ program gen_ece_geometry
     call root(px, 'px')
     do i = 1, 3
         call root(gx(i), array_ref('gx', i))
-        g = num(arena, 0)
+        g = num(0)
         do j = 1, 3
             g = g + at('a', j, i)*gp(j)
             call root(hx(i, j), array_ref('hx', i, j))
@@ -160,30 +154,30 @@ program gen_ece_geometry
 
     call reset()
     spec%args = [str('rho'), str('u'), str('us'), str('uss'), str('unit'), &
-                 str('up'), str('usp')]
-    f = sym(arena, 'unit')*exp(sym(arena, 'u'))
-    g = 2*sym(arena, 'rho')*sym(arena, 'us')
+        str('up'), str('usp')]
+    f = sym('unit')*exp(sym('u'))
+    g = 2*sym('rho')*sym('us')
     n = 0
     call root(f, 'value')
     call root(f*g, 'dr')
-    call root(f*(g*g + 2*sym(arena, 'us') + &
-                 4*sym(arena, 'rho')**2*sym(arena, 'uss')), 'drr')
-    call root(diff(f, sym(arena, 'u'))*sym(arena, 'up'), 'p')
-    call root(f*g*sym(arena, 'up') + f*2*sym(arena, 'rho')*sym(arena, 'usp'), 'drp')
+    call root(f*(g*g + 2*sym('us') + &
+        4*sym('rho')**2*sym('uss')), 'drr')
+    call root(diff(f, sym('u'))*sym('up'), 'p')
+    call root(f*g*sym('up') + f*2*sym('rho')*sym('usp'), 'drp')
     spec%outputs = [str('value'), str('dr'), str('drr'), str('p'), str('drp')]
     call emit('density_label_jet')
     call reset()
     spec%args = [str('rcc'), str('rss'), str('zsc'), str('zcs')]
     n = 0
-    call root((sym(arena, 'rcc') + sym(arena, 'rss'))/2, array_ref('rc', 1))
-    call root((sym(arena, 'rcc') - sym(arena, 'rss'))/2, array_ref('rc', 2))
-    call root((sym(arena, 'zsc') - sym(arena, 'zcs'))/2, array_ref('zs', 1))
-    call root((sym(arena, 'zsc') + sym(arena, 'zcs'))/2, array_ref('zs', 2))
+    call root((sym('rcc') + sym('rss'))/2, array_ref('rc', 1))
+    call root((sym('rcc') - sym('rss'))/2, array_ref('rc', 2))
+    call root((sym('zsc') - sym('zcs'))/2, array_ref('zs', 1))
+    call root((sym('zsc') + sym('zcs'))/2, array_ref('zs', 2))
     do j = 1, 4
         do i = 1, 2
-            call root(diff(roots(i), sym(arena, chars(spec%args(j)))), array_ref('rr', i, &
+            call root(diff(roots(i), sym(chars(spec%args(j)))), array_ref('rr', i, &
                 j))
-            call root(diff(roots(i + 2), sym(arena, chars(spec%args(j)))), array_ref('zr', &
+            call root(diff(roots(i + 2), sym(chars(spec%args(j)))), array_ref('zr', &
                 i, j))
         end do
     end do
@@ -192,21 +186,14 @@ program gen_ece_geometry
     call emit('vmec_product_pair')
 
 contains
-    function digit(i) result(s)
-        integer, intent(in)::i
-        character(:), allocatable::s
-        character(16)::b
-        write (b, '(I0)') i
-        s = trim(b)
-    end function
     function array_ref(name, i, j, k) result(s)
         character(*), intent(in)::name
         integer, intent(in)::i
         integer, intent(in), optional::j, k
         character(:), allocatable::s
-        s = name//'('//digit(i)
-        if (present(j)) s = s//','//digit(j)
-        if (present(k)) s = s//','//digit(k)
+        s = name//'('//itoa(i)
+        if (present(j)) s = s//','//itoa(j)
+        if (present(k)) s = s//','//itoa(k)
         s = s//')'
     end function
     function at(name, i, j, k) result(e)
@@ -214,7 +201,7 @@ contains
         integer, intent(in)::i
         integer, intent(in), optional::j, k
         type(expr_t)::e
-        e = sym(arena, array_ref(name, i, j, k))
+        e = sym(array_ref(name, i, j, k))
     end function
     subroutine reset()
         type(kernel_spec_t)::fresh
@@ -240,9 +227,9 @@ contains
             case (1)
                 radial = radial + 1
             case (2)
-                e = diff(e, sym(arena, 'theta'))
+                e = diff(e, sym('theta'))
             case (3)
-                e = diff(e, sym(arena, 'phi'))
+                e = diff(e, sym('phi'))
             end select
         end do
         call root(w(radial + 1)*e, name)

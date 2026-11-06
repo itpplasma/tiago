@@ -1,39 +1,36 @@
 program gen_interferometer
     use, intrinsic :: iso_fortran_env, only: dp => real64
     use fortsym_string, only: str, chars
-    use fortsym_arena, only: arena_t
     use fortsym_expr, only: expr_t, sym, real_expr, pi_expr, operator(+), &
-                            operator(-), operator(*), operator(/), sin, cos, atan2
+        operator(-), operator(*), operator(/), sin, cos, atan2
     use fortsym_diff, only: diff
     use fortsym_kernel, only: kernel_spec_t, emit_kernel
     use fortsym_engine, only: engine_result_t
     use fortsym_engine_symengine, only: symengine_engine_t, make_symengine_engine
     implicit none
-    type(arena_t), target :: arena
     type(symengine_engine_t) :: engine
     type(expr_t) :: v(8), f(2), re, pi, electron, gas
     character(len=16) :: names(8)
     integer :: i
 
-    call arena%init()
-    engine = make_symengine_engine(arena)
+    engine = make_symengine_engine()
     ! CODATA 2022 classical electron radius [m], fixed physical constant.
-    re = real_expr(arena, 2.8179403205e-15_dp)
-    pi = pi_expr(arena)
+    re = real_expr(2.8179403205e-15_dp)
+    pi = pi_expr()
     names = [character(len=16) :: 'column', 'wavelength', 'neutral', &
-             'neutral_scale', 'environment', 'env_gain', 'phase0', 'path']
+        'neutral_scale', 'environment', 'env_gain', 'phase0', 'path']
     call variables(8)
     electron = 3*re*v(2)*v(1)/2
     gas = 4*pi*v(3)*v(4)/v(2)
     ! phi(2 omega) - 2 phi(omega): the common vacuum path cancels.
     f(1) = electron - gas + v(6)*v(5) + v(7) &
-           + 4*pi*v(8)/v(2) - 4*pi*v(8)/v(2)
+        + 4*pi*v(8)/v(2) - 4*pi*v(8)/v(2)
     call emit('dispersion_phase', 8, f(:1))
     names(1) = 'phase'
     call variables(7)
     ! Rebuild after changing the first symbol.
     f(1) = (v(1) + 4*pi*v(3)*v(4)/v(2) - v(6)*v(5) - v(7)) &
-           /(3*re*v(2)/2)
+        /(3*re*v(2)/2)
     call emit('dispersion_column', 7, f(:1))
 
     names(:5) = [character(len=16) :: 'phase', 'ai', 'aq', 'oi', 'oq']
@@ -50,7 +47,7 @@ contains
     subroutine variables(n)
         integer, intent(in) :: n
         do i = 1, n
-            v(i) = sym(arena, trim(names(i)))
+            v(i) = sym(trim(names(i)))
         end do
     end subroutine
 

@@ -4,7 +4,6 @@ program gen_kinetic
     !!   n_i = n_D + n_Z, n_D = ne (Z - Zeff) / (Z - 1), n_Z = ne (Zeff - 1) / (Z (Z - 1)),
     !! from quasi-neutrality ne = n_D + Z n_Z and Zeff ne = n_D + Z^2 n_Z.
     use fortsym_string, only: str, chars
-    use fortsym_arena, only: arena_t
     use fortsym_expr, only: expr_t, sym, operator(+), operator(-), &
         operator(*), operator(/)
     use fortsym_diff, only: diff
@@ -12,7 +11,6 @@ program gen_kinetic
     use fortsym_engine, only: engine_result_t
     use fortsym_engine_symengine, only: symengine_engine_t, make_symengine_engine
     implicit none
-    type(arena_t), target :: arena
     type(symengine_engine_t) :: engine
     type(engine_result_t) :: simplified
     type(expr_t) :: ne, te, ti, zeff, pf, z, e, nd, nz, roots(6)
@@ -20,15 +18,14 @@ program gen_kinetic
     character(len=:), allocatable :: code
     integer :: i, j, unit
 
-    call arena%init()
-    engine = make_symengine_engine(arena)
-    ne = sym(arena, 'ne')
-    te = sym(arena, 'te')
-    ti = sym(arena, 'ti')
-    zeff = sym(arena, 'zeff')
-    pf = sym(arena, 'pfast')
-    z = sym(arena, 'zimp')
-    e = sym(arena, 'charge')
+    engine = make_symengine_engine()
+    ne = sym('ne')
+    te = sym('te')
+    ti = sym('ti')
+    zeff = sym('zeff')
+    pf = sym('pfast')
+    z = sym('zimp')
+    e = sym('charge')
     nd = ne * (z - zeff) / (z - 1)
     nz = ne * (zeff - 1) / (z * (z - 1))
     roots(1) = e * (ne * te + (nd + nz) * ti) + pf

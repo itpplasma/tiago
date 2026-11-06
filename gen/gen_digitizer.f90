@@ -1,21 +1,18 @@
 program gen_digitizer
     use fortsym_string, only: str, chars
-    use fortsym_arena, only: arena_t
     use fortsym_expr, only: expr_t, sym, operator(-), operator(*), operator(/)
     use fortsym_diff, only: diff
     use fortsym_kernel, only: kernel_spec_t, emit_kernel
     use fortsym_engine, only: engine_result_t
     use fortsym_engine_symengine, only: symengine_engine_t, make_symengine_engine
     implicit none
-    type(arena_t), target :: arena
     type(symengine_engine_t) :: engine
     type(expr_t) :: volts, vres, voff
     type(expr_t) :: roots(4)
-    call arena%init()
-    engine = make_symengine_engine(arena)
-    volts = sym(arena, 'volts')
-    vres = sym(arena, 'vres')
-    voff = sym(arena, 'voff')
+    engine = make_symengine_engine()
+    volts = sym('volts')
+    vres = sym('vres')
+    voff = sym('voff')
     ! Ideal linear scale of an ADC input: counts = (volts - offset) / resolution.
     roots(1) = (volts - voff)/vres
     roots(2) = diff(roots(1), volts)

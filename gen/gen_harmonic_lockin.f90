@@ -1,17 +1,14 @@
 program gen_harmonic_lockin
     use fortsym_string, only: str, chars
-    use fortsym_arena, only: arena_t
     use fortsym_expr, only: expr_t, sym, operator(-), &
         operator(*), operator(/), sin, cos
     use fortsym_diff, only: diff
     use fortsym_kernel, only: kernel_spec_t, emit_kernel
     implicit none
-    type(arena_t), target :: arena
     type(expr_t) :: v(4), f(3)
     character(len=16) :: names(4)
     integer :: i
 
-    call arena%init()
     names(:4) = [character(len=16) :: "sample", "offset", "gain", "theta"]
     call variables(4)
     f(1) = (v(1) - v(2))/v(3)
@@ -22,7 +19,7 @@ contains
     subroutine variables(n)
         integer, intent(in) :: n
         do i = 1, n
-            v(i) = sym(arena, trim(names(i)))
+            v(i) = sym(trim(names(i)))
         end do
     end subroutine
 

@@ -1,17 +1,14 @@
 program gen_ece_transfer
     use fortsym_string, only: str, chars
-    use fortsym_arena, only: arena_t
     use fortsym_expr, only: expr_t, sym, operator(+), operator(-), &
-                            operator(*), operator(/), operator(**), exp
+        operator(*), operator(/), operator(**), exp
     use fortsym_diff, only: diff
     use fortsym_kernel, only: kernel_spec_t, emit_kernel
     implicit none
-    type(arena_t), target :: arena
     type(expr_t) :: v(5), f, p, loss, term
     character(16) :: names(5)
     integer :: i
 
-    call arena%init()
     names(1) = 'tau'
     call variables(1)
     f = 1 - exp(-v(1))
@@ -35,7 +32,7 @@ program gen_ece_transfer
     call emit('ece_reflection_loss', 1, 1 - v(1))
 
     names = [character(16) :: 'near_emission', 'far_emission', 'loss', 'wall_loss', &
-             'wall_te']
+        'wall_te']
     call variables(5)
     p = 1 - v(3)
     ! Reciprocal ray between two walls with common reflectivity/temperature.
@@ -55,7 +52,7 @@ contains
         integer, intent(in) :: n
         integer :: j
         do j = 1, n
-            v(j) = sym(arena, trim(names(j)))
+            v(j) = sym(trim(names(j)))
         end do
     end subroutine
 

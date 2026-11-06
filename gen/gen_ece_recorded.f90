@@ -1,16 +1,13 @@
 program gen_ece_recorded
     use fortsym_string, only: str, chars
-    use fortsym_arena, only: arena_t
     use fortsym_expr, only: expr_t, sym, operator(+), operator(-), &
         operator(*), operator(/), operator(**), sqrt, exp
     use fortsym_diff, only: diff
     use fortsym_kernel, only: kernel_spec_t, emit_kernel
     implicit none
-    type(arena_t), target :: arena
     type(expr_t) :: v(6), f, radius
     character(16) :: names(6)
 
-    call arena%init()
     names(1) = 'h'
     call variables(1)
     call emit('ece_launch_scale', 1, sqrt(1 - 2*v(1)))
@@ -42,7 +39,7 @@ contains
         integer, intent(in) :: n
         integer :: j
         do j = 1, n
-            v(j) = sym(arena, trim(names(j)))
+            v(j) = sym(trim(names(j)))
         end do
     end subroutine
 

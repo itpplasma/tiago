@@ -1,22 +1,19 @@
 program gen_nonthermal
     use fortsym_string, only: str, chars
-    use fortsym_arena, only: arena_t
     use fortsym_expr, only: expr_t, sym, tanh, cosh, operator(+), operator(-), &
         operator(*), operator(/), operator(**)
     use fortsym_diff, only: diff
     use fortsym_subs, only: subs
     use fortsym_kernel, only: kernel_spec_t, emit_kernel
     implicit none
-    type(arena_t), target :: arena
     type(expr_t) :: s, p0, zc, zk, clo, chi, klo, khi, c, k, value, roots(5)
     type(kernel_spec_t) :: spec
     character(len=:), allocatable :: code
     integer :: unit
-    call arena%init()
-    s = sym(arena, 's'); p0 = sym(arena, 'p0')
-    zc = sym(arena, 'zc'); zk = sym(arena, 'zk')
-    clo = sym(arena, 'clo'); chi = sym(arena, 'chi')
-    klo = sym(arena, 'klo'); khi = sym(arena, 'khi')
+    s = sym('s'); p0 = sym('p0')
+    zc = sym('zc'); zk = sym('zk')
+    clo = sym('clo'); chi = sym('chi')
+    klo = sym('klo'); khi = sym('khi')
     ! Equivalent logistic map without exponentials that overflow in prior tails.
     c = clo + (chi - clo)*(1 + tanh(zc/2))/2
     k = klo + (khi - klo)*(1 + tanh(zk/2))/2

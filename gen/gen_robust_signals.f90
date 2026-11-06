@@ -1,20 +1,17 @@
 program gen_robust_signals
     use fortsym_string, only: str, chars
-    use fortsym_arena, only: arena_t
     use fortsym_expr, only: expr_t, sym, num, log, sqrt, operator(+), &
-                            operator(-), operator(*), operator(/), operator(**)
+        operator(-), operator(*), operator(/), operator(**)
     use fortsym_diff, only: diff
     use fortsym_kernel, only: kernel_spec_t, emit_kernel
     implicit none
-    type(arena_t), target :: arena
     type(expr_t) :: residual, nu, u, value
-    call arena%init()
-    residual = sym(arena, 'residual'); nu = sym(arena, 'nu')
+    residual = sym('residual'); nu = sym('nu')
     u = residual**2/nu
-    value = sqrt((nu + num(arena, 1))*log(num(arena, 1) + u))
+    value = sqrt((nu + num(1))*log(num(1) + u))
     call emit('student_residual', value)
-    value = residual*sqrt((nu + num(arena, 1))/nu)* &
-            (num(arena, 1) - u/num(arena, 4) + num(arena, 13)*u**2/num(arena, 96))
+    value = residual*sqrt((nu + num(1))/nu)* &
+        (num(1) - u/num(4) + num(13)*u**2/num(96))
     call emit('student_residual_small', value)
 contains
     subroutine emit(name, value)

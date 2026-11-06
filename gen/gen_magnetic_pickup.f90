@@ -1,22 +1,19 @@
 program gen_magnetic_pickup
     use fortsym_string, only: str, chars
-    use fortsym_arena, only: arena_t
     use fortsym_expr, only: expr_t, sym, operator(+), operator(-), &
         operator(*), sin, cos
     use fortsym_diff, only: diff
     use fortsym_kernel, only: kernel_spec_t, emit_kernel
     implicit none
-    type(arena_t), target :: arena
     type(expr_t) :: w, gain, delay, hr, hi, roots(6)
     type(kernel_spec_t) :: spec
     integer :: unit, last
     character(:), allocatable :: code
-    call arena%init()
-    w = sym(arena, 'omega')
-    gain = sym(arena, 'gain')
-    delay = sym(arena, 'delay')
-    hr = sym(arena, 'hr')
-    hi = sym(arena, 'hi')
+    w = sym('omega')
+    gain = sym('gain')
+    delay = sym('delay')
+    hr = sym('hr')
+    hi = sym('hi')
     roots(1) = w*gain*(hi*cos(w*delay) - hr*sin(w*delay))
     roots(2) = -w*gain*(hr*cos(w*delay) + hi*sin(w*delay))
     roots(3) = diff(roots(1), gain)

@@ -1,31 +1,28 @@
 program gen_thomson
     use, intrinsic :: iso_fortran_env, only: dp => real64
     use fortsym_string, only: str, chars
-    use fortsym_arena, only: arena_t
     use fortsym_expr, only: expr_t, sym, real_expr, pi_expr, operator(+), &
-                            operator(-), operator(*), operator(/), operator(**), exp, sqrt
+        operator(-), operator(*), operator(/), operator(**), exp, sqrt
     use fortsym_diff, only: diff
     use fortsym_kernel, only: kernel_spec_t, emit_kernel
     implicit none
-    type(arena_t), target :: arena
     type(expr_t) :: p(16), f, a, chi, d, u2, y, xi, delta
     integer :: i
     character(16) :: argnames(16)
-    call arena%init()
 
     call args(['te    ', 'ratio ', 'mu    ', 't     '])
-    a = real_expr(arena, 510998.95069_dp)/p(1)
+    a = real_expr(510998.95069_dp)/p(1)
     delta = (p(2) - 1)**2/(2*(1 - p(3))*p(2))
     chi = sqrt(1 + delta)
     u2 = (1 + p(3))/(1 - p(3))
     y = 1/sqrt(chi**2 + u2)
     xi = chi + p(4)/a
-    f = 2*chi/(y**3*a)*(y**2/(xi**2 + u2)**real_expr(arena, 1.5_dp) &
-                        - 3/(xi**2 + u2)**real_expr(arena, 2.5_dp))
+    f = 2*chi/(y**3*a)*(y**2/(xi**2 + u2)**real_expr(1.5_dp) &
+        - 3/(xi**2 + u2)**real_expr(2.5_dp))
     call emit('ts_depolarization', f, [1])
 
     call args(['te     ', 'ratio  ', 'mu     ', 'lambda0', 'k2     ', 'depol  '])
-    a = real_expr(arena, 510998.95069_dp)/p(1)
+    a = real_expr(510998.95069_dp)/p(1)
     d = 2*(1 - p(3))*p(2) + (p(2) - 1)**2
     delta = (p(2) - 1)**2/(2*(1 - p(3))*p(2))
     ! Rationalized chi-1 avoids cancellation in the cold limit.
@@ -35,22 +32,22 @@ program gen_thomson
     call emit('ts_spectral', f, [1, 5, 6])
 
     call args(['te', 'k1', 'k2', 'k3'])
-    f = -real_expr(arena, 510998.95069_dp)/p(1)**2*(p(3) - (p(2) + p(4))/2)
+    f = -real_expr(510998.95069_dp)/p(1)**2*(p(3) - (p(2) + p(4))/2)
     call emit('ts_bessel_chain', f, [integer ::])
 
     call args(['ne      ', 'band    ', 'energy  ', 'lambda0 ', 'omega   ', &
-               'length  ', 'optics  ', 'absolute', 'outcoupl', 'spectral', 'gain    '])
+        'length  ', 'optics  ', 'absolute', 'outcoupl', 'spectral', 'gain    '])
     f = p(1)*p(2)*p(3)*p(4)*p(5)*p(6)*p(7)*p(8)*p(9)*p(10) &
-        *real_expr(arena, (2.8179403205e-15_dp)**2/(6.62607015e-34_dp*299792458.0_dp))
+        *real_expr((2.8179403205e-15_dp)**2/(6.62607015e-34_dp*299792458.0_dp))
     call emit('ts_photoelectrons', f, [(i, i=1, 10)])
     f = f*p(11)
     call emit('ts_recorded', f, [(i, i=1, 11)])
 
     call args(['pressure', 'gas_temp', 'energy  ', 'lambda0 ', 'omega   ', &
-               'length  ', 'response', 'absolute', 'outcoupl', 'gain    ', 'alpha   '])
-    f = p(1)/(real_expr(arena, 1.380649e-23_dp)*p(2)) &
-        *16*pi_expr(arena)**4*p(11)**2/p(4)**4 &
-        *p(3)*p(4)/(real_expr(arena, 6.62607015e-34_dp*299792458.0_dp)) &
+        'length  ', 'response', 'absolute', 'outcoupl', 'gain    ', 'alpha   '])
+    f = p(1)/(real_expr(1.380649e-23_dp)*p(2)) &
+        *16*pi_expr()**4*p(11)**2/p(4)**4 &
+        *p(3)*p(4)/(real_expr(6.62607015e-34_dp*299792458.0_dp)) &
         *p(5)*p(6)*p(7)*p(8)*p(9)*p(10)
     call emit('ts_rayleigh', f, [(i, i=1, 11)])
 
@@ -62,7 +59,7 @@ contains
         character(len=*), intent(in) :: names(:)
         integer :: j
         do j = 1, size(names)
-            p(j) = sym(arena, trim(names(j)))
+            p(j) = sym(trim(names(j)))
             argnames(j) = names(j)
         end do
     end subroutine
