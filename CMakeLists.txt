@@ -705,6 +705,9 @@ add_test(NAME tiago_local_mixture COMMAND test_local_mixture
 set_tests_properties(tiago_local_mixture PROPERTIES TIMEOUT 60)
 
 find_package(Python3 COMPONENTS Interpreter REQUIRED)
+add_test(NAME tiago_grouped_prediction COMMAND ${Python3_EXECUTABLE}
+    ${TIAGO_SOURCE_DIR}/tests/check_grouped_prediction.py $<TARGET_FILE:tiago_linear_infer>)
+set_tests_properties(tiago_grouped_prediction PROPERTIES TIMEOUT 60)
 add_test(NAME tiago_signal_correlation COMMAND ${Python3_EXECUTABLE}
     ${TIAGO_SOURCE_DIR}/tests/check_signal_correlation.py $<TARGET_FILE:tiago_signal_predict>)
 set_tests_properties(tiago_signal_correlation PROPERTIES TIMEOUT 60)

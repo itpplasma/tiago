@@ -43,6 +43,10 @@ distribution. It includes finite-training uncertainty and the observed
 marginal density. Predicted channels remain predictive quantities; they are
 not independent observations for a second physical likelihood.
 
+[Grouped signal prediction](grouped-signals.md) composes the same native
+Gaussian engine with group offsets and correlated residuals. It integrates
+finite noise hypotheses and retains covariance for whole-group averages.
+
 ## Generative model
 
 The latent parameters are defined on the input side and never inverted from
