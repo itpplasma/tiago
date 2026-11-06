@@ -1,6 +1,14 @@
 # Regenerate the generated kernels
 
 Ordinary TIAGO builds use the checked-in Fortran kernels without a CAS.
+The generators use FortSym's arena-free constructors and need FortSym
+[`b9ea95c5a0475b016b1e149875a9bec9d8562533`](https://github.com/lazy-fortran/fortsym/commit/b9ea95c5a0475b016b1e149875a9bec9d8562533)
+or later. That revision reproduces every checked-in kernel byte for byte except
+`mse_local`, `kinetic_pressure`, `circular_state` and `xics_emissivity`, which
+were generated with the older revisions named below and differ only in which
+common subexpressions become temporaries.
+The revisions below record where each kernel was first generated.
+
 For `gen_magnetics`, `gen_digitizer` and `gen_interferometer`, use
 FortSym's [reciprocal simplifier fix](https://github.com/lazy-fortran/fortsym/commit/063008070086aaf2d78f6e9d9a8fddff44c74a46)
 with its pinned FortGen dependency. This fixes a SymEngine cancellation crash

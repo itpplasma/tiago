@@ -1,6 +1,5 @@
 program gen_mse
     use fortsym_string, only: str, chars
-    use fortsym_arena, only: arena_t
     use fortsym_expr, only: expr_t, sym, operator(+), operator(-), &
         operator(*), operator(/), operator(**), atan2
     use fortsym_diff, only: diff
@@ -8,7 +7,6 @@ program gen_mse
     use fortsym_engine, only: engine_result_t
     use fortsym_engine_symengine, only: symengine_engine_t, make_symengine_engine
     implicit none
-    type(arena_t), target :: arena
     type(symengine_engine_t) :: engine
     type(engine_result_t) :: simplified
     type(expr_t) :: x(9), roots(6), num, den
@@ -19,10 +17,9 @@ program gen_mse
         ['bx', 'by', 'bz', 'ax', 'ay', 'az', 'cx', 'cy', 'cz']
     integer :: i, unit
 
-    call arena%init()
-    engine = make_symengine_engine(arena)
+    engine = make_symengine_engine()
     do i = 1, 9
-        x(i) = sym(arena, names(i))
+        x(i) = sym(names(i))
     end do
     ! h . (v x B) = (h x v) . B; likewise for zero axis z.
     roots(1) = x(5)*x(3) - x(6)*x(2)
@@ -40,7 +37,7 @@ program gen_mse
     call emit('mse_rows', roots)
 
     do i = 1, 9
-        x(i) = sym(arena, field_names(i))
+        x(i) = sym(field_names(i))
         spec%args(i) = str(field_names(i))
     end do
     num = x(4)*x(1) + x(5)*x(2) + x(6)*x(3)

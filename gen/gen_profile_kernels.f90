@@ -10,7 +10,6 @@ program gen_profile_kernels
     !!                   Student-t prior and its first two derivatives.
     use, intrinsic :: iso_fortran_env, only: dp => real64
     use fortsym_string, only: str, chars
-    use fortsym_arena, only: arena_t
     use fortsym_expr, only: expr_t, sym, real_expr, pi_expr, operator(+), &
         operator(-), operator(*), operator(/), operator(**), sin, cos, exp, sqrt, log
     use fortsym_diff, only: diff
@@ -18,7 +17,6 @@ program gen_profile_kernels
     use fortsym_engine, only: engine_result_t
     use fortsym_engine_symengine, only: symengine_engine_t, make_symengine_engine
     implicit none
-    type(arena_t), target :: arena
     type(symengine_engine_t) :: engine
     type(engine_result_t) :: simplified
     type(expr_t) :: t, u(3), p(4), x(3), b, roots(40), f, n, ne, te, zeff, zi, el, zt, nu
@@ -31,11 +29,10 @@ program gen_profile_kernels
     type(expr_t) :: r
     integer :: i, j, k, unit
 
-    call arena%init()
-    engine = make_symengine_engine(arena)
+    engine = make_symengine_engine()
 
     ! Cubic Hermite basis and its t-derivative.
-    t = sym(arena, 't')
+    t = sym('t')
     roots(1) = 2*t**3 - 3*t**2 + 1
     roots(2) = t**3 - 2*t**2 + t
     roots(3) = -2*t**3 + 3*t**2
@@ -53,10 +50,10 @@ program gen_profile_kernels
     ! Shifted circles: R = R0 + Delta (1 - rho^2) + a rho cos(theta),
     ! Z = a rho sin(theta), toroidal angle phi; |B| = B0 R0 / R.
     do i = 1, 3
-        u(i) = sym(arena, trim(unames(i)))
+        u(i) = sym(trim(unames(i)))
     end do
     do i = 1, 4
-        p(i) = sym(arena, trim(pnames(i)))
+        p(i) = sym(trim(pnames(i)))
     end do
     r = p(1) + p(3)*(1 - u(1)**2) + p(2)*u(1)*cos(u(2))
     x(1) = r*cos(u(3))
@@ -115,10 +112,10 @@ program gen_profile_kernels
     call emit('circular_state', roots(:k))
 
     ! Cold resonance n e B / (2 pi m_e) = f, CODATA 2018 e and m_e.
-    f = sym(arena, 'f')
-    n = sym(arena, 'harmonic')
-    roots(1) = 2*pi_expr(arena)*real_expr(arena, 9.1093837015e-31_dp)*f / &
-        (n*real_expr(arena, 1.602176634e-19_dp))
+    f = sym('f')
+    n = sym('harmonic')
+    roots(1) = 2*pi_expr()*real_expr(9.1093837015e-31_dp)*f / &
+        (n*real_expr(1.602176634e-19_dp))
     roots(2) = diff(roots(1), f)
     call reset_spec(2, 2)
     spec%args = [str('f'), str('harmonic')]
@@ -127,11 +124,11 @@ program gen_profile_kernels
 
     ! Coronal excitation of an impurity line, up to a constant:
     ! eps = ne n_Z exp(-E / Te) / sqrt(Te),  n_Z = ne (Zeff - 1) / (Z (Z - 1)).
-    ne = sym(arena, 'ne')
-    te = sym(arena, 'te')
-    zeff = sym(arena, 'zeff')
-    zi = sym(arena, 'z_imp')
-    el = sym(arena, 'e_line')
+    ne = sym('ne')
+    te = sym('te')
+    zeff = sym('zeff')
+    zi = sym('z_imp')
+    el = sym('e_line')
     roots(1) = ne*ne*(zeff - 1)/(zi*(zi - 1))*exp(-el/te)/sqrt(te)
     roots(2) = diff(roots(1), ne)
     roots(3) = diff(roots(1), te)
@@ -143,8 +140,8 @@ program gen_profile_kernels
 
     ! Unit Student-t prior with nu degrees of freedom, -log density up to its
     ! normalization: phi = (nu + 1) / 2 log(1 + z^2 / nu).
-    zt = sym(arena, 'z')
-    nu = sym(arena, 'nu')
+    zt = sym('z')
+    nu = sym('nu')
     roots(1) = (nu + 1)/2*log(1 + zt*zt/nu)
     roots(2) = diff(roots(1), zt)
     roots(3) = diff(roots(2), zt)
