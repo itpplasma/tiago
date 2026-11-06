@@ -303,7 +303,7 @@ if(TIAGO_ENABLE_RECONSTRUCTION)
     set(FORTPLOT_BUILD_FORTARRAY_ADAPTER OFF CACHE BOOL "" FORCE)
     FetchContent_Declare(fortplot
         GIT_REPOSITORY https://github.com/lazy-fortran/fortplot.git
-        GIT_TAG af5f26e1d35547e9136faec0ba87c1279ae8f04f)
+        GIT_TAG 35a9cd26ab20cf50ba6f7347d7daf13566e0dc91)
     FetchContent_MakeAvailable(fortplot)
     find_package(LAPACK REQUIRED)
 
