@@ -684,6 +684,8 @@ target_link_libraries(benchmark_pressure_reference PRIVATE tiago_inference)
 
 add_executable(test_kinetic_profiles tests/test_kinetic_profiles.f90)
 target_link_libraries(test_kinetic_profiles PRIVATE tiago_inference)
+add_executable(tiago_signal_predict src/cli/tiago_signal_predict.f90)
+target_link_libraries(tiago_signal_predict PRIVATE tiago_inference_core)
 add_executable(tiago_linear_infer src/cli/tiago_linear_infer.f90)
 target_link_libraries(tiago_linear_infer PRIVATE tiago_inference_core)
 
@@ -703,6 +705,9 @@ add_test(NAME tiago_local_mixture COMMAND test_local_mixture
 set_tests_properties(tiago_local_mixture PROPERTIES TIMEOUT 60)
 
 find_package(Python3 COMPONENTS Interpreter REQUIRED)
+add_test(NAME tiago_signal_correlation COMMAND ${Python3_EXECUTABLE}
+    ${TIAGO_SOURCE_DIR}/tests/check_signal_correlation.py $<TARGET_FILE:tiago_signal_predict>)
+set_tests_properties(tiago_signal_correlation PROPERTIES TIMEOUT 60)
 add_test(NAME tiago_linear_inference COMMAND ${Python3_EXECUTABLE}
     ${TIAGO_SOURCE_DIR}/tests/check_linear_inference.py $<TARGET_FILE:tiago_linear_infer>)
 set_tests_properties(tiago_linear_inference PROPERTIES TIMEOUT 60)

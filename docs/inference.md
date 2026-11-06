@@ -35,6 +35,14 @@ omitting them changes model evidence even if the parameter fit is unchanged.
 This conditional calculation does not establish completeness of nonlinear
 posterior modes or suitability of a profile or calibration prior.
 
+## Learning correlations between signals
+
+[Joint-signal prediction](signal-correlation.md) uses a conjugate Bayesian
+Gaussian model to predict missing recorded channels with a Student-t
+distribution. It includes finite-training uncertainty and the observed
+marginal density. Predicted channels remain predictive quantities; they are
+not independent observations for a second physical likelihood.
+
 ## Generative model
 
 The latent parameters are defined on the input side and never inverted from
