@@ -30,7 +30,8 @@ Status: research code under active development; interfaces may change.
 
 Requirements: CMake 3.24 or newer, Fortran and C compilers, netCDF-C,
 libcurl, and Python 3 for the test suite. The linear Gaussian inference
-reference test additionally requires NumPy. libneo, fortnum and json-fortran are
+reference test additionally requires NumPy; the learned-signal correlation test
+also requires SciPy. libneo, fortnum and json-fortran are
 fetched at pinned commits.
 
 ```bash
@@ -109,3 +110,6 @@ Energetic-particle wall-loss events can be converted to surface loads and raw
 infrared signals with the separate [`tiago_wall` API](docs/wall-synthetic.md).
 It requires explicit physical source normalization, material assumptions and
 camera calibration; the repository supplies synthetic fixtures only.
+
+For missing recorded channels, see [Bayesian signal prediction](docs/signal-correlation.md)
+and its independent numerical oracle.

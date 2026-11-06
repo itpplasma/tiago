@@ -10,6 +10,7 @@ set(_tiago_core_source "${CMAKE_CURRENT_LIST_DIR}/../src")
 add_library(tiago_inference_core STATIC
     "${_tiago_core_source}/inference/local_posterior.f90"
     "${_tiago_core_source}/inference/linear_posterior.f90"
+    "${_tiago_core_source}/inference/signal_correlation.f90"
     "${_tiago_core_source}/inference/inference_engines.f90")
 target_link_libraries(tiago_inference_core PUBLIC fortnum ${LAPACK_LIBRARIES})
 
