@@ -5,6 +5,36 @@ magnetic reconstruction (`tiago_reconstruct`, README and STATUS.md) is
 unchanged and remains the benchmarked reference path. This document is the
 contract for the inference core and for the profile diagnostics built on it.
 
+## Linear Gaussian conditional fits
+
+`tiago_linear_posterior::linear_posterior_t` represents whitened observations
+with a fixed design matrix and independent zero-mean Gaussian parameter priors.
+`configure(design, data, log_likelihood_normalization, sd, status)` accepts
+finite arrays, positive prior standard deviations and the complete likelihood
+normalization. Proper priors also permit fewer observations than parameters.
+Correlated priors and observational covariance can be transformed into these
+coordinates by the caller.
+
+`tiago_linear_infer INPUT OUTPUT` solves independent cases with LAPACK and uses
+the shared Laplace engine for exact Gaussian covariance and evidence. Cases run
+in parallel when OpenMP is enabled. The input is whitespace-delimited:
+
+```text
+number_of_cases
+m n log_likelihood_normalization
+prior_standard_deviations(1:n)
+whitened_observation_1 whitened_design_row_1(1:n)
+... m observation rows, followed by the next case ...
+```
+
+The output for each case is its one-based index, parameter count, log evidence
+and squared residual norm, followed by one mean vector and `n` covariance rows.
+The residual norm includes the Gaussian prior penalty. The caller must retain
+all normalization constants and any orthogonal residual when compressing data;
+omitting them changes model evidence even if the parameter fit is unchanged.
+This conditional calculation does not establish completeness of nonlinear
+posterior modes or suitability of a profile or calibration prior.
+
 ## Generative model
 
 The latent parameters are defined on the input side and never inverted from

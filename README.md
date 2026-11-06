@@ -29,7 +29,8 @@ Status: research code under active development; interfaces may change.
 ## Building
 
 Requirements: CMake 3.24 or newer, Fortran and C compilers, netCDF-C,
-libcurl, and Python 3 for the test suite. libneo, fortnum and json-fortran are
+libcurl, and Python 3 for the test suite. The linear Gaussian inference
+reference test additionally requires NumPy. libneo, fortnum and json-fortran are
 fetched at pinned commits.
 
 ```bash
