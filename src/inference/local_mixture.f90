@@ -54,8 +54,47 @@ module tiago_local_mixture
             logical, intent(out) :: ok
         end subroutine
     end interface
-    public :: multi_start_map, sample_local_mixture
+    public :: multi_start_map, sample_local_mixture, compare_local_mixtures
 contains
+    subroutine compare_local_mixtures(mixtures, log_priors, probabilities, &
+            log_evidence, status)
+        !! Each model may have its own dimension; densities need common data units.
+        !! Proper priors are necessary, not a check of local Gaussian accuracy.
+        type(local_mixture_t), intent(in) :: mixtures(:)
+        real(dp), intent(in) :: log_priors(:)
+        real(dp), allocatable, intent(out) :: probabilities(:)
+        real(dp), intent(out) :: log_evidence
+        type(fortnum_status_t), intent(out) :: status
+        real(dp), allocatable :: logw(:)
+        real(dp) :: peak, nan
+        integer :: i, n
+
+        nan = ieee_value(1.0_dp, ieee_quiet_nan)
+        log_evidence = nan
+        n = size(mixtures)
+        allocate (probabilities(n))
+        probabilities = nan
+        call status_set(status, FORTNUM_DOMAIN_ERROR, &
+            'model comparison needs finite normalized priors and valid evidences')
+        if (n == 0 .or. size(log_priors) /= n) return
+        if (.not. all(ieee_is_finite(log_priors))) return
+        peak = maxval(log_priors)
+        if (abs(peak + log(sum(exp(log_priors - peak)))) > 1.0e-10_dp) return
+        allocate (logw(n))
+        do i = 1, n
+            if (.not. mixtures(i)%evidence_valid) return
+            if (.not. allocated(mixtures(i)%modes)) return
+            if (size(mixtures(i)%modes) == 0) return
+            if (.not. all(mixtures(i)%modes%gaussian%proper)) return
+            if (.not. ieee_is_finite(mixtures(i)%log_evidence)) return
+            logw(i) = mixtures(i)%log_evidence + log_priors(i)
+        end do
+        peak = maxval(logw)
+        log_evidence = peak + log(sum(exp(logw - peak)))
+        probabilities = exp(logw - log_evidence)
+        call status_set(status, FORTNUM_OK, '')
+    end subroutine
+
     subroutine multi_start_map(model, starts, n, directory, opts, mixture, status, &
             prepare)
         !! prepare activates the supplied model/branch BEFORE every start.

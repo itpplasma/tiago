@@ -293,7 +293,7 @@ Chris&AI
 `tiago_local_mixture::multi_start_map` searches supplied candidates and prior
 starts independently, then returns `local_mixture_t%modes`. It accepts either
 `joint_model_t` or `tiago_reconstruction_posterior::reconstruction_posterior_t`.
-Both use the existing MAP, Gauss–Newton Laplace and PSIS engines; NUTS remains
+Both use the existing MAP, Laplace and PSIS engines; NUTS remains
 available separately for each mode through `sample_nuts`. Equilibrium solves
 are serial because the reconstruction provider has shared mutable state.
 
@@ -350,8 +350,10 @@ existing predicted chi-squared decrease threshold (default 0.001); set
 This search does not certify that all modes have been found.
 
 Each mode has a Gaussian with its own mean, covariance and Cholesky factor.
-The reported Hessian is the existing Gauss–Newton approximation `H = J^T J`
-of the whitened posterior residual, rather than the full nonlinear Hessian.
+The default Hessian is the Gauss–Newton approximation `H = J^T J` of the
+whitened posterior residual. Models requesting `observed_curvature()` use
+the finite-difference observed posterior Hessian. Qualify the chosen
+curvature for the target posterior.
 Its log evidence is
 
     log Z_k = -chi2_k/2 + c_k + n/2 log(2 pi) - log det(H_k)/2.
@@ -436,3 +438,48 @@ equilibrium reconstruction. Run it with
 `ctest --test-dir build -R tiago_temporal_inference --output-on-failure`.
 The checker accepts `--times` for smaller exploratory cases and needs no NumPy
 installation, external data or equilibrium solver.
+
+## Comparing models with different dimensions
+
+Fit each physical model in its own `multi_start_map` call when its parameter
+count differs. Each call first combines that model's local modes. Then
+`compare_local_mixtures` combines the model evidences with normalized model
+priors:
+
+```fortran
+type(local_mixture_t) :: models(2)
+real(real64), allocatable :: probability(:)
+real(real64) :: log_evidence
+! Populate models(1) and models(2) with separate multi_start_map calls.
+call compare_local_mixtures(models, log([0.7_real64, 0.3_real64]), &
+    probability, log_evidence, status)
+```
+
+The example assigns prior probabilities 0.7 and 0.3. `probability` contains
+the resulting model probabilities; `log_evidence` is the evidence of their
+model-averaged data distribution. Use the same observations, likelihood
+measure and compatible shared-parameter priors in both models. The routine
+rejects absent, improper or nonfinite evidences and unnormalized model priors.
+It cannot establish mode completeness or the accuracy of the supplied
+Laplace approximations. In particular, `evidence_valid` checks formal inputs,
+not experimental or approximation qualification.
+
+A no-island model has an atom at zero width and no island phase. Its
+probability is separate from the island model's continuous width distribution.
+Report model probabilities and any physically useful width exceedance
+probability explicitly. A continuous prior alone gives zero probability to
+exactly zero width. A local mixture is a Laplace approximation, not a
+variationally optimized distribution.
+
+`tiago_model_comparison` checks the composition against independent numerical
+integration after analytically marginalizing a shared Gaussian nuisance. Its
+dimensionless observations measure a common level and that level plus an
+absolute-valued signature. The alternative has two sign aliases; they are
+not physical island phases, and the signature is not an island width. The
+check covers different parameter dimensions, unequal model priors, duplicate
+starts, a strong signature, a weak signature and zero sensitivity. In the
+Gaussian regime, absolute evidence and model probabilities agree with the
+reference. A near-boundary case deliberately exposes inaccurate local
+Gaussian evidence. Such results require a more suitable approximation or a
+reference calculation before scientific use. The same test verifies that a
+large constant residual does not stall the MAP fit.

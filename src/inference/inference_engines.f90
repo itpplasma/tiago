@@ -54,7 +54,7 @@ contains
         real(dp) :: floor
         real(dp), allocatable :: r(:), r_trial(:), jac(:, :), a(:, :), m(:, :), g(:), h(:), d(:)
         real(dp), allocatable :: theta_trial(:)
-        real(dp) :: chi2, chi2_trial, predicted, rho, mu, nu
+        real(dp) :: predicted, rho, mu, nu
         integer :: n, i, info
         logical :: ok
         external :: dposv
@@ -72,7 +72,6 @@ contains
             message = 'no equilibrium at the start values'
             return
         end if
-        chi2 = sum(r**2)
         call model%jacobian(theta, jac)
         if (.not. all(ieee_is_finite(jac))) then
             message = 'nonfinite Jacobian'
@@ -122,15 +121,13 @@ contains
             end if
             theta_trial = theta + h
             call model%residual(theta_trial, r_trial, ok)
-            chi2_trial = huge(1.0_dp)
             if (ok) ok = all(ieee_is_finite(r_trial))
-            if (ok) chi2_trial = sum(r_trial**2)
             rho = -1.0_dp
-            if (ok) rho = (chi2 - chi2_trial) / predicted
+            ! Difference before reduction preserves small changes above a constant floor.
+            if (ok) rho = dot_product(r - r_trial, r + r_trial) / predicted
             if (rho > 0.0_dp) then
                 theta = theta_trial
                 r = r_trial
-                chi2 = chi2_trial
                 steps = steps + 1
                 call model%jacobian(theta, jac)
                 if (.not. all(ieee_is_finite(jac))) then
