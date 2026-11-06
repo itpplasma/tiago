@@ -683,6 +683,14 @@ target_link_libraries(benchmark_pressure_reference PRIVATE tiago_inference)
 
 add_executable(test_kinetic_profiles tests/test_kinetic_profiles.f90)
 target_link_libraries(test_kinetic_profiles PRIVATE tiago_inference)
+add_executable(test_model_comparison tests/test_model_comparison.f90)
+target_link_libraries(test_model_comparison PRIVATE tiago_inference)
+file(MAKE_DIRECTORY "${TIAGO_BINARY_DIR}/tests/model_comparison/null"
+    "${TIAGO_BINARY_DIR}/tests/model_comparison/alternative")
+add_test(NAME tiago_model_comparison COMMAND test_model_comparison
+    ${TIAGO_BINARY_DIR}/tests/model_comparison)
+set_tests_properties(tiago_model_comparison PROPERTIES TIMEOUT 60)
+
 add_executable(test_local_mixture tests/test_local_mixture.f90)
 target_link_libraries(test_local_mixture PRIVATE tiago_inference)
 file(MAKE_DIRECTORY "${TIAGO_BINARY_DIR}/tests/local_mixture/two_mode")
