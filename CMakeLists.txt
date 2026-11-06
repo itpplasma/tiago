@@ -194,6 +194,7 @@ add_library(tiago_inference STATIC
     src/generated/thermal_energy_density.f90
     src/inference/energy_consistency.f90
     src/generated/xics_emissivity.f90
+    src/generated/student_t_prior.f90
     src/inference/sight_geometry.f90
     src/generated/medium_pullback.f90
     src/generated/density_label_jet.f90
@@ -442,6 +443,8 @@ end module tiago_vmecpp_paths
     target_link_libraries(test_vmecpp_equilibrium PRIVATE tiago_reconstruction)
     add_executable(test_joint_model tests/test_joint_model.f90)
     target_link_libraries(test_joint_model PRIVATE tiago_reconstruction)
+    add_executable(test_calibration tests/test_calibration.f90)
+    target_link_libraries(test_calibration PRIVATE tiago_reconstruction)
     add_executable(test_reconstruction_shape_cache tests/test_reconstruction_shape_cache.f90)
     target_link_libraries(test_reconstruction_shape_cache PRIVATE tiago_reconstruction)
     add_executable(tiago_infer src/cli/tiago_infer.f90)
@@ -795,6 +798,12 @@ if(TIAGO_ENABLE_RECONSTRUCTION)
                 ${TIAGO_SOURCE_DIR}/benchmarks/reconstruction/sensors.awk
                 ${TIAGO_BINARY_DIR}/tests/joint_model)
     set_tests_properties(tiago_joint_model PROPERTIES
+        FIXTURES_REQUIRED input_li383 TIMEOUT 900 ENVIRONMENT "OMP_NUM_THREADS=4;OPENBLAS_NUM_THREADS=1")
+    add_test(NAME tiago_calibration
+        COMMAND $<TARGET_FILE:test_calibration> ${TIAGO_INPUT_LI383}
+                ${CMAKE_SOURCE_DIR}/benchmarks/reconstruction/sensors.awk
+                ${CMAKE_BINARY_DIR}/tests/calibration)
+    set_tests_properties(tiago_calibration PROPERTIES
         FIXTURES_REQUIRED input_li383 TIMEOUT 900 ENVIRONMENT "OMP_NUM_THREADS=4;OPENBLAS_NUM_THREADS=1")
     add_test(NAME tiago_infer_smoke
         COMMAND ${TIAGO_SOURCE_DIR}/tests/infer_smoke.sh $<TARGET_FILE:tiago_infer> ${TIAGO_INPUT_LI383}

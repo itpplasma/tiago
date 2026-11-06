@@ -6,6 +6,11 @@ module tiago_thomson_scattering
     !! since each part of the volume scatters in proportion to its density.
     !! Signals are (ne_1 .. ne_n, Te_1 .. Te_n). With aligned = .false. a rigid
     !! shift (dR, dZ) of all volumes is the nuisance eta, as for the point probe.
+    !! Each volume records the laser that probes it; several lasers through the
+    !! same positions are separate volumes. The density calibration is not part
+    !! of the instrument: calibration_groups() maps the ne signals to their
+    !! laser for the joint model's log-scale calibration latents (Te, from the
+    !! spectral shape, is calibration-free).
     use, intrinsic :: iso_fortran_env, only: dp => real64
     use tiago_profile_diagnostic, only: profile_diagnostic_t, plasma_sample_t, Q_NE, Q_TE
     use tiago_sight_geometry, only: gauss_legendre01, to_rpz
@@ -18,6 +23,7 @@ module tiago_thomson_scattering
         real(dp) :: direction(3) = [0.0_dp, 0.0_dp, 1.0_dp] !! laser direction
         real(dp) :: length = 0.0_dp !! [m]
         integer :: npoints = 3
+        integer :: laser = 1 !! laser index (>= 1)
     end type thomson_volume_t
 
     type, public, extends(profile_diagnostic_t) :: thomson_t
@@ -34,6 +40,7 @@ module tiago_thomson_scattering
         procedure :: predict => thomson_predict
         procedure :: jvp => thomson_jvp
         procedure :: vjp => thomson_vjp
+        procedure :: calibration_groups => thomson_calibration_groups
     end type thomson_t
 
 contains
@@ -96,6 +103,13 @@ contains
             text = 'Te '//self%volumes(i - n)%label
         end if
     end function thomson_label
+
+    function thomson_calibration_groups(self) result(group)
+        !! Per signal: laser index for ne_i, 0 for Te_i.
+        class(thomson_t), intent(in) :: self
+        integer, allocatable :: group(:)
+        group = [self%volumes%laser, spread(0, 1, size(self%volumes))]
+    end function thomson_calibration_groups
 
     subroutine thomson_points(self, eta, x, dx_deta)
         class(thomson_t), intent(in) :: self
