@@ -16,7 +16,7 @@ explicit small-angle guard.
 
 ```fortran
 call ece_opacity(te, ne, bfield, frequency, mode, harmonic, &
-    alpha, emissivity, index2, jacobian, status, x1_regime)
+    alpha, emissivity, index2, jacobian, status, x1_regime, damping_limit)
 ```
 
 Inputs are electron temperature `te` in eV, electron density `ne` in inverse
@@ -81,14 +81,18 @@ Nonpositive propagation indices and strong damping are rejected. The
 weak-damping checks require `alpha*c/(4*pi*frequency*sqrt(index2))<=0.1` and,
 for O1/X2, `abs(r*Im(F_7/2))<=0.1`. These conservative guards delimit the
 implemented approximations; they are not an accuracy certificate for every
-accepted point. Cutoff tunnelling, mode conversion, oblique propagation,
+accepted point. The optional argument `damping_limit` (default 0.1, positive)
+replaces 0.1 in both checks. At second-harmonic X-mode in a 2 keV,
+3e19 m^-3 core the default already rejects cells within 0.3% of the cold
+resonance, so a caller modelling such a plasma must choose a larger limit and
+validate the result against an independent transport code. Cutoff tunnelling, mode conversion, oblique propagation,
 non-Maxwellian distributions and general complex dispersion are excluded.
 
 ## Composition with transport
 
 ```fortran
 call thermal_ece_transfer(te, ne, bfield, frequency, mode, harmonic, length, &
-    rho, wall_te, trace, status, x1_regime)
+    rho, wall_te, trace, status, x1_regime, damping_limit)
 ```
 
 Cell arrays run observer first, as in `thermal_transfer`. `length` is in

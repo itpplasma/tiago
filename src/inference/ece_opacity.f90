@@ -21,15 +21,17 @@ module tiago_ece_opacity
     public :: ece_opacity, ece_opacity_batch, ECE_O_MODE, ECE_X_MODE
 contains
     pure subroutine ece_opacity(te, ne, bfield, frequency, mode, harmonic, &
-                                alpha, emissivity, index2, jacobian, status, x1_regime)
+            alpha, emissivity, index2, jacobian, status, x1_regime, &
+            damping_limit)
         real(dp), intent(in) :: te, ne, bfield, frequency
         integer, intent(in) :: mode, harmonic
         real(dp), intent(out) :: alpha, emissivity, index2, jacobian(3, 4)
         integer, intent(out) :: status
         integer, intent(in), optional :: x1_regime
+        real(dp), intent(in), optional :: damping_limit
         complex(dp) :: f5, f7, d5, d7
         real(dp) :: coord(4), cr(4, 4), value(2), row(2, 8), &
-                    chained(2, 4), emission(1), erow(1, 4), frow(4), ratio
+            chained(2, 4), emission(1), erow(1, 4), frow(4), ratio, limit
         integer :: regime, k, code
         alpha = 0.0_dp
         emissivity = 0.0_dp
@@ -43,6 +45,9 @@ contains
         regime = ECE_X1_FINITE
         if (present(x1_regime)) regime = x1_regime
         if (regime /= ECE_X1_TENUOUS .and. regime /= ECE_X1_FINITE) return
+        limit = 0.1_dp
+        if (present(damping_limit)) limit = damping_limit
+        if (.not. (limit > 0.0_dp)) return
         if (harmonic == 1) then
             call ece_opacity_coordinates(te, ne, bfield, frequency, coord, cr)
         else
@@ -70,7 +75,7 @@ contains
         if (code /= 0) return
         if (mode == ECE_O_MODE) then
             if (harmonic == 1) then
-                if (abs(coord(3)*aimag(f7)) > 0.1_dp) return
+                if (abs(coord(3)*aimag(f7)) > limit) return
                 call ece_opacity_o1(te, ne, bfield, frequency, real(f5, dp), aimag(f5), &
                                     real(f7, dp), aimag(f7), value, row)
             else if (coord(4) <= 0.0_dp) then
@@ -81,7 +86,7 @@ contains
                                          real(f7, dp), aimag(f7), value, row)
             end if
         else if (harmonic == 2) then
-            if (abs(coord(3)*aimag(f7)) > 0.1_dp) return
+            if (abs(coord(3)*aimag(f7)) > limit) return
             call ece_opacity_x2(te, ne, bfield, frequency, real(f5, dp), aimag(f5), &
                                 real(f7, dp), aimag(f7), value, row)
         else if (regime == ECE_X1_TENUOUS) then
@@ -96,7 +101,7 @@ contains
         if (value(1) < 0.0_dp .or. value(2) <= 0.0_dp) return
         ratio = value(1)*299792458.0_dp/ &
                 (4*acos(-1.0_dp)*frequency*sqrt(value(2)))
-        if (ratio > 0.1_dp) return
+        if (ratio > limit) return
         frow = [real(d5, dp), aimag(d5), real(d7, dp), aimag(d7)]
         chained = row(:, :4)
         do k = 1, 4
@@ -117,12 +122,13 @@ contains
     end subroutine
 
     subroutine ece_opacity_batch(te, ne, bfield, frequency, mode, harmonic, alpha, &
-                                 emissivity, index2, jacobian, status, x1_regime)
+            emissivity, index2, jacobian, status, x1_regime, damping_limit)
         real(dp), intent(in) :: te(:), ne(:), bfield(:), frequency(:)
         integer, intent(in) :: mode(:), harmonic(:)
         real(dp), intent(out) :: alpha(:), emissivity(:), index2(:), jacobian(:, :, :)
         integer, intent(out) :: status(:)
         integer, intent(in), optional :: x1_regime
+        real(dp), intent(in), optional :: damping_limit
         integer :: j, n
         n = size(te)
         status = ECE_OPACITY_INPUT
@@ -133,7 +139,8 @@ contains
         !$omp parallel do schedule(static)
         do j = 1, n
             call ece_opacity(te(j), ne(j), bfield(j), frequency(j), mode(j), harmonic(j), &
-                        alpha(j), emissivity(j), index2(j), jacobian(:, :, j), status(j), x1_regime)
+                alpha(j), emissivity(j), index2(j), jacobian(:, :, j), status(j), x1_regime, &
+                damping_limit)
         end do
         !$omp end parallel do
     end subroutine

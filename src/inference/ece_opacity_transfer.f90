@@ -17,12 +17,13 @@ module tiago_ece_opacity_transfer
     public :: thermal_ece_transfer
 contains
     subroutine thermal_ece_transfer(te, ne, bfield, frequency, mode, harmonic, length, &
-                                    rho, wall_te, trace, status, x1_regime)
+            rho, wall_te, trace, status, x1_regime, damping_limit)
         real(dp), intent(in) :: te(:), ne(:), bfield(:), frequency, length(:), rho, wall_te
         integer, intent(in) :: mode, harmonic
         type(ece_opacity_transfer_t), intent(out) :: trace
         integer, intent(out) :: status
         integer, intent(in), optional :: x1_regime
+        real(dp), intent(in), optional :: damping_limit
         real(dp) :: alpha(size(te)), emission(size(te)), n2(size(te)), rows(3, 4, size(te))
         integer :: codes(size(te)), regime, n
         status = 1
@@ -31,7 +32,8 @@ contains
         regime = ECE_X1_FINITE
         if (present(x1_regime)) regime = x1_regime
         call ece_opacity_batch(te, ne, bfield, spread(frequency, 1, n), spread(mode, 1, n), &
-                               spread(harmonic, 1, n), alpha, emission, n2, rows, codes, regime)
+            spread(harmonic, 1, n), alpha, emission, n2, rows, codes, regime, &
+            damping_limit)
         if (any(codes /= 0)) then
             status = maxval(codes)
             return
