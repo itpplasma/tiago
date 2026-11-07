@@ -1,6 +1,6 @@
 # Profile diagnostics
 
-Thomson scattering, ECE, interferometry and XICS observe kinetic profiles at
+Thomson scattering, ECE, interferometry, XICS and CXRS observe kinetic profiles at
 points or along chords in real space. They implement the profile-diagnostic
 contract of [docs/inference.md](inference.md) (`profile_diagnostic_t`): each
 instrument declares its sample points (R, phi, Z), predicts its signals from
@@ -73,6 +73,28 @@ returns the brightness `s_i int eps dl` and `int eps T dl / int eps dl` with
 plasma, so the rules need no boundary crossings; the kink of the integrand at
 the boundary limits their accuracy to O(h^2) there.
 
+**Charge-exchange recombination spectroscopy** (`tiago_cxrs`). Each channel
+pairs a sight chord with the neutral beam it views (`cxrs_beam_t`: origin,
+direction, 1/e radius `w`, effective stopping cross-section `sigma`). It
+returns the brightness `s_c int em dl` and the emission-weighted ion
+temperature `int em Ti dl / int em dl` along the chord, with
+
+```text
+em = g exp(-a) ne (Zeff - 1) / (Z (Z - 1)),   g = exp(-r_perp^2 / w^2),
+a  = sigma int_0^xi ne ds   along the beam axis,
+```
+
+where `r_perp` is the distance from the beam axis and `xi` the projection on
+it from the beam origin (FortSym kernel `cxrs_emission`, default `Z = 6`).
+Each sight point carries its own Gauss rule on `[0, xi]` of the beam axis, so
+the attenuation and its derivative with respect to the density along the beam
+are exact sums over sample points. The charge-exchange rate, beam energy
+fractions and etendue are constant per channel and absorbed in `s_c`; halo
+neutrals, the density and energy dependence of `sigma` and plasma rotation are
+not modelled. The temperature is the second spectral moment of the sum of
+Doppler-broadened lines, which a single-Gaussian fit approximates. Place the
+beam origin outside the plasma: the attenuation starts there.
+
 Sampling the state (Newton per point) and the VJP reduction are
 OpenMP-parallel; the instruments themselves are cheap sums over the samples.
 
@@ -90,7 +112,11 @@ proportional to 1 - s, Zeff = 2) and checks, on concentric circles:
 - the inverse map against `rho = sqrt((R - R0)^2 + Z^2) / a`;
 - the Thomson volume averages against closed-form polynomial integrals;
 - `int ne dl`, the XICS brightness and the emissivity-weighted Ti on a vertical
-  chord against closed-form integrals.
+  chord against closed-form integrals;
+- the CXRS brightness and emission-weighted Ti for a vertical beam entering
+  at the boundary, whose axial attenuation is a closed-form cubic, and an
+  oblique sight line between its boundary crossings, against composite
+  Simpson sums of the closed-form integrand to 1e-10.
 
 For every instrument it then runs the contract's `check_diagnostic_derivatives`
 and, with a Shafranov shift, compares the JVP of the complete chain

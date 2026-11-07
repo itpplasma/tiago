@@ -41,6 +41,23 @@ be edited by hand. Validate with TIAGO's `tiago_mse` and
 `tiago_profile_instruments` CTest tests after generation; symbolic generation
 does not replace their independent physical and FD oracles.
 
+# Regenerate the CXRS emission kernel
+
+`gen_cxrs` emits `src/generated/cxrs_emission.f90`, the charge-exchange
+emission of an attenuated beam and its partial derivatives in ne, Zeff and the
+attenuation. It was generated with FortSym
+`bca0bc4e9ebe3eeadf3a8d1c2afc821f95f6b09c`:
+
+```sh
+cmake -S gen -B build-codegen -G Ninja -DFORTSYM_BUILD=/path/to/fortsym/build
+cmake --build build-codegen --target gen_cxrs
+build-codegen/gen_cxrs
+git diff --exit-code -- src/generated/cxrs_emission.f90
+```
+
+`tiago_profile_instruments` checks the operator against an independent
+quadrature of the closed-form emission.
+
 # Regenerate the kinetic pressure kernel
 
 `gen_kinetic` emits `src/generated/kinetic_pressure.f90` (pressure from ne,
