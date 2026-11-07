@@ -1,5 +1,5 @@
 program test_profile_instruments
-    !! Thomson scattering, interferometer and XICS on the profile-diagnostic
+    !! Thomson scattering, interferometer, XICS and CXRS on the profile-diagnostic
     !! contract, sampled from a real-space state by tiago_state_sampler.
     !! Usage: test_profile_instruments            (analytic shifted-circle state)
     !!        test_profile_instruments <wout.nc>  (VMEC nested state)
@@ -18,18 +18,23 @@ program test_profile_instruments
     use tiago_sight_geometry, only: chord_t
     use tiago_thomson_scattering, only: thomson_t, thomson_volume_t
     use tiago_line_integrals, only: interferometer_t, xics_t
+    use tiago_cxrs, only: cxrs_t, cxrs_beam_t
     use tiago_dispersion_interferometer, only: dispersion_interferometer_t
     use tiago_calibration, only: calibration_prior_t
     implicit none
 
     real(dp), parameter :: pi = acos(-1.0_dp)
     real(dp), parameter :: n0 = 5.0e19_dp, t0 = 3.0e3_dp, ti0 = 1.5e3_dp, zeff0 = 2.0_dp
+    ! Geometry of the CXRS oracle (cxrs_oracle).
+    real(dp), parameter :: cx_alpha = 0.3_dp, cx_z0 = 0.1_dp, cx_width = 0.15_dp
+    real(dp), parameter :: cx_sigma = 1.0e-20_dp, cx_u0 = sqrt(0.84_dp)
     integer :: failures, i
     character(len=1024) :: wout
     class(real_space_state_t), allocatable :: state
     type(thomson_t) :: ts
     type(interferometer_t) :: interf
     type(xics_t) :: xics
+    type(cxrs_t) :: cxrs
     type(dispersion_interferometer_t) :: dispersion
     real(dp), allocatable :: p0(:), vstate(:)
     real(dp) :: tol_fd
@@ -57,6 +62,7 @@ program test_profile_instruments
     call check_chain('Thomson', ts, 1.0e-6_dp)
     call check_chain('interferometer', interf, 1.0e-6_dp)
     call check_chain('XICS', xics, 1.0e-6_dp)
+    call check_chain('CXRS', cxrs, 1.0e-6_dp)
     call check_chain('dispersion I/Q', dispersion, 1.0e-4_dp)
     if (failures > 0) then
         write(error_unit, '(I0,A)') failures, ' check(s) failed'
@@ -165,7 +171,94 @@ contains
         call close('XICS emissivity-weighted Ti', y(2), ti0 * 5.0_dp / 6.0_dp * u0**2, &
             1.0e-5_dp)
         xics%e_line = 3.1e3_dp
+        call cxrs_oracle()
     end subroutine analytic_oracles
+
+    subroutine cxrs_oracle()
+        !! Vertical beam at R = 3.4 entering the plasma at z = -u0, so that
+        !! ne = n0 (u0^2 - z^2) on its axis and the attenuation is the cubic
+        !! a(z) = sigma n0 (u0^2 (z + u0) - (z^3 + u0^3) / 3). The sight line
+        !! in the plane x = 3.4 runs between its boundary crossings; its
+        !! distance from the beam axis is |y|. Reference: composite Simpson
+        !! sums of the closed-form integrand.
+        integer, parameter :: nsimp = 20000
+        type(chord_t) :: chord(1)
+        type(cxrs_beam_t) :: beam(1)
+        real(dp), allocatable :: y(:)
+        real(dp) :: tlo, thi, t, h, f, em, bsum, tsum
+        integer :: k, status
+
+        tlo = cx_crossing(-1.0_dp)
+        thi = cx_crossing(1.0_dp)
+        chord(1) = chord_t('CX', cx_sight(tlo), [0.0_dp, cos(cx_alpha), sin(cx_alpha)], &
+            thi - tlo, 40, 6)
+        beam(1) = cxrs_beam_t([3.4_dp, 0.0_dp, -cx_u0], [0.0_dp, 0.0_dp, 1.0_dp], &
+            cx_width, cx_sigma, 4, 4)
+        call cxrs%init(chord, beam, status)
+        call check(status == 0, 'CXRS init')
+        call predict(cxrs, y)
+        h = (thi - tlo) / nsimp
+        bsum = 0.0_dp
+        tsum = 0.0_dp
+        do k = 0, nsimp
+            t = tlo + k * h
+            f = merge(1.0_dp, merge(4.0_dp, 2.0_dp, mod(k, 2) == 1), k == 0 .or. k == nsimp)
+            em = cx_emission(t)
+            bsum = bsum + f * em
+            tsum = tsum + f * em * ti0 * (1.0_dp - cx_s(cx_sight(t)))
+        end do
+        bsum = bsum * h / 3.0_dp
+        tsum = tsum * h / 3.0_dp
+        call close('CXRS brightness', y(1), bsum, 1.0e-10_dp)
+        call close('CXRS emission-weighted Ti', y(2), tsum / bsum, 1.0e-10_dp)
+        call check(exp(-cx_attenuation(0.0_dp)) < 0.8_dp, 'CXRS oracle is attenuated')
+        call cxrs%init(chord, [cxrs_beam_t(width=-1.0_dp)], status)
+        call check(status == 2, 'CXRS rejects a non-positive beam width')
+        call cxrs%init(chord, beam([1, 1]), status)
+        call check(status == 1, 'CXRS rejects mismatched beams')
+    end subroutine cxrs_oracle
+
+    pure function cx_sight(tt) result(x)
+        real(dp), intent(in) :: tt
+        real(dp) :: x(3)
+        x = [3.4_dp, tt * cos(cx_alpha), cx_z0 + tt * sin(cx_alpha)]
+    end function cx_sight
+
+    pure real(dp) function cx_s(x)
+        real(dp), intent(in) :: x(3)
+        cx_s = (hypot(x(1), x(2)) - 3.0_dp)**2 + x(3)**2
+    end function cx_s
+
+    pure real(dp) function cx_attenuation(z)
+        real(dp), intent(in) :: z
+        cx_attenuation = cx_sigma * n0 * (cx_u0**2 * (z + cx_u0) - (z**3 + cx_u0**3) / 3.0_dp)
+    end function cx_attenuation
+
+    pure real(dp) function cx_emission(tt)
+        real(dp), intent(in) :: tt
+        real(dp) :: x(3)
+        x = cx_sight(tt)
+        cx_emission = exp(-x(2)**2 / cx_width**2) * exp(-cx_attenuation(x(3))) &
+            * n0 * (1.0_dp - cx_s(x)) * (zeff0 - 1.0_dp) / 30.0_dp
+    end function cx_emission
+
+    real(dp) function cx_crossing(sgn)
+        !! Bisection for s = 1 along the sight line from t = 0 (inside).
+        real(dp), intent(in) :: sgn
+        real(dp) :: a, b, m
+        integer :: it
+        a = 0.0_dp
+        b = 3.0_dp * sgn
+        do it = 1, 200
+            m = 0.5_dp * (a + b)
+            if (cx_s(cx_sight(m)) < 1.0_dp) then
+                a = m
+            else
+                b = m
+            end if
+        end do
+        cx_crossing = 0.5_dp * (a + b)
+    end function cx_crossing
 
     pure real(dp) function anti1(z, c)
         real(dp), intent(in) :: z, c
@@ -219,6 +312,11 @@ contains
             [0.0_dp, 1.0_dp, 0.0_dp], 4.0_dp * size0, 200, 4)
         call interf%init(chords)
         call xics%init(chords)
+        chords%npanel = 50
+        call cxrs%init(chords, [(cxrs_beam_t(xb + (xb - xa), xa - xb, 0.3_dp * size0, &
+            1.0_dp / (n0 * size0), 8, 4), k = 1, 3)], status)
+        call check(status == 0, 'CXRS init from state')
+        chords%npanel = 200
         cm = [1.0e-5_dp, 1.0_dp, 1.2_dp, 0.1_dp, -0.2_dp, 0.3_dp, &
             1.0_dp, 0.2_dp]
         sd = [1.0e-8_dp, 0.1_dp, 0.1_dp, 0.1_dp, 0.1_dp, 0.1_dp, &

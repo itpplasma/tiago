@@ -195,6 +195,7 @@ add_library(tiago_inference STATIC
     src/generated/thermal_energy_density.f90
     src/inference/energy_consistency.f90
     src/generated/xics_emissivity.f90
+    src/generated/cxrs_emission.f90
     src/generated/student_t_prior.f90
     src/inference/sight_geometry.f90
     src/generated/medium_pullback.f90
@@ -250,6 +251,7 @@ add_library(tiago_inference STATIC
     src/inference/ece_radiometer.f90
     src/inference/ece_recorded.f90
     src/inference/line_integrals.f90
+    src/inference/cxrs.f90
     src/generated/dispersion_phase.f90
     src/generated/dispersion_column.f90
     src/generated/dispersion_iq.f90
@@ -887,6 +889,10 @@ if(FORTSYM_BUILD)
         -DGENERATOR=$<TARGET_FILE:gen_digitizer> -DSOURCE=${TIAGO_SOURCE_DIR}
         -DOUTPUT=${TIAGO_BINARY_DIR}/tests/digitizer-codegen
         -P ${TIAGO_SOURCE_DIR}/tests/check_digitizer_codegen.cmake)
+    add_test(NAME tiago_cxrs_codegen COMMAND ${CMAKE_COMMAND}
+        -DGENERATOR=$<TARGET_FILE:gen_cxrs> -DSOURCE=${TIAGO_SOURCE_DIR}
+        -DOUTPUT=${TIAGO_BINARY_DIR}/tests/cxrs-codegen
+        -P ${TIAGO_SOURCE_DIR}/tests/check_cxrs_codegen.cmake)
     add_test(NAME tiago_interferometer_generated COMMAND ${CMAKE_COMMAND}
         -DGENERATOR=$<TARGET_FILE:gen_interferometer>
         -DSOURCE=${TIAGO_SOURCE_DIR}
