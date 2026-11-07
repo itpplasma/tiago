@@ -690,6 +690,8 @@ add_executable(tiago_signal_predict src/cli/tiago_signal_predict.f90)
 target_link_libraries(tiago_signal_predict PRIVATE tiago_inference_core)
 add_executable(tiago_linear_infer src/cli/tiago_linear_infer.f90)
 target_link_libraries(tiago_linear_infer PRIVATE tiago_inference_core)
+add_executable(tiago_ece_transfer_batch src/cli/tiago_ece_transfer_batch.f90)
+target_link_libraries(tiago_ece_transfer_batch PRIVATE tiago_inference)
 
 add_executable(test_model_comparison tests/test_model_comparison.f90)
 target_link_libraries(test_model_comparison PRIVATE tiago_inference)
@@ -716,6 +718,9 @@ set_tests_properties(tiago_signal_correlation PROPERTIES TIMEOUT 60)
 add_test(NAME tiago_linear_inference COMMAND ${Python3_EXECUTABLE}
     ${TIAGO_SOURCE_DIR}/tests/check_linear_inference.py $<TARGET_FILE:tiago_linear_infer>)
 set_tests_properties(tiago_linear_inference PROPERTIES TIMEOUT 60)
+add_test(NAME tiago_ece_transfer_batch COMMAND ${Python3_EXECUTABLE}
+    ${TIAGO_SOURCE_DIR}/tests/check_ece_transfer_batch.py $<TARGET_FILE:tiago_ece_transfer_batch>)
+set_tests_properties(tiago_ece_transfer_batch PROPERTIES TIMEOUT 60)
 
 add_executable(test_temporal_inference tests/test_temporal_inference.f90)
 target_link_libraries(test_temporal_inference PRIVATE tiago_inference)
