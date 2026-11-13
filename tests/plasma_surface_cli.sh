@@ -48,3 +48,11 @@ if "$cli" --plasma-surface "$out/bad-header/surface.txt" --bprobes "$out/poloida
     exit 1
 fi
 grep -q 'malformed plasma surface grid size' "$out/bad-header/error.log"
+
+mkdir -p "$out/bad-flux"
+if "$cli" --plasma-surface "$out/surface.txt" --bprobes "$out/poloidal.diagno" \
+    --plasma-linked-flux NaN --output-dir "$out/bad-flux" > "$out/bad-flux/error.log" 2>&1; then
+    echo 'nonfinite linked flux accepted' >&2
+    exit 1
+fi
+grep -q 'nonfinite linked flux' "$out/bad-flux/error.log"

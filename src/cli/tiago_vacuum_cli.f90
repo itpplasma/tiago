@@ -1,6 +1,7 @@
 program tiago_vacuum_cli
     use, intrinsic :: iso_fortran_env, only: dp => real64, i32 => int32, &
         error_unit
+    use, intrinsic :: ieee_arithmetic, only: ieee_is_finite
     use tiago_diagnostic_types, only: flux_loop_t, segmented_rogowski_t, bprobe_t
     use tiago_flux_loops, only: read_flux_loop_file, finalize_flux_signals
     use tiago_segmented_rogowski, only: read_segmented_rogowski_file
@@ -461,6 +462,7 @@ subroutine run_solver(coil_path, flux_path, segrog_path, output_dir, &
     if (len_trim(plasma_surface) > 0) then
         call surface%init_from_surface_file(trim(plasma_surface), normal_fraction)
         if (have_linked_flux) then
+            if (.not. ieee_is_finite(plasma_linked_flux)) call die('nonfinite linked flux')
             surface%diamagnetic_flux = plasma_linked_flux
             surface%linked_flux_known = .true.
         end if
