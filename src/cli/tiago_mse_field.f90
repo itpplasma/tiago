@@ -94,6 +94,7 @@ program tiago_mse_field
     end if
     if (ierr /= 0) call die(message)
 
+    call reject_output_alias()
     open (newunit=unit, file=trim(output_path), action='write', status='replace', &
           iostat=ios)
     if (ios /= 0) call die('cannot write '//trim(output_path))
@@ -152,18 +153,30 @@ contains
     subroutine grid_field()
         use, intrinsic :: ieee_arithmetic, only: ieee_is_finite
         type(grid_field_t) :: grid
-        real(dp), parameter :: unset = -huge(1.0_dp)
         real(dp) :: currents(128), b(3), radius, phi
-        integer :: n, j, code
+        integer :: n, j, code, first, last, comma
+        character(len=:), allocatable :: token
         logical :: inside
 
-        currents = unset
-        read(current_text, *, iostat=code) currents
-        if (code > 0) call die('cannot read --mgrid-currents')
-        n = count(currents /= unset)
-        if (n == 0) call die('--mgrid-currents is empty')
-        if (.not. all(ieee_is_finite(currents(:n)))) &
-            call die('--mgrid-currents must be finite')
+        n = 0
+        first = 1
+        do
+            comma = index(trim(current_text(first:)), ',')
+            last = len_trim(current_text)
+            if (comma > 0) last = first + comma - 2
+            token = trim(adjustl(current_text(first:last)))
+            if (len(token) == 0) call die('--mgrid-currents contains an empty entry')
+            if (verify(token, '0123456789+-.eEdD') /= 0) &
+                call die('--mgrid-currents requires comma-separated numbers')
+            n = n + 1
+            if (n > size(currents)) call die('--mgrid-currents has more than 128 entries')
+            read(token, *, iostat=code) currents(n)
+            if (code /= 0) call die('cannot read --mgrid-currents entry')
+            if (.not. ieee_is_finite(currents(n))) call die('--mgrid-currents must be finite')
+            if (comma == 0) exit
+            first = last + 2
+            if (first > len_trim(current_text)) call die('--mgrid-currents contains an empty entry')
+        end do
         call grid%load_mgrid(trim(mgrid_path), currents(:n), code, message)
         if (code /= 0) call die(message)
         allocate(field(3, size(channels)))
@@ -177,11 +190,47 @@ contains
         end do
     end subroutine grid_field
 
+    subroutine reject_output_alias()
+        integer :: probe, code, j, k
+        logical :: connected
+        character(len=1024) :: inputs(6), outputs(2)
+
+        inputs = [mse_path, wout_path, spectre_path, mgrid_path, coil_path, extcur_path]
+        outputs = [output_path, jacobian_path]
+        do j = 1, size(inputs)
+            if (len_trim(inputs(j)) == 0) cycle
+            open(newunit=probe, file=trim(inputs(j)), action='read', status='old', &
+                 access='stream', form='unformatted', iostat=code)
+            if (code /= 0) call die('cannot open '//trim(inputs(j)))
+            do k = 1, size(outputs)
+                if (len_trim(outputs(k)) == 0) cycle
+                inquire(file=trim(outputs(k)), opened=connected)
+                if (connected) then
+                    close(probe)
+                    call die('output aliases input '//trim(inputs(j)))
+                end if
+            end do
+            close(probe)
+        end do
+        if (len_trim(jacobian_path) == 0) return
+        if (trim(output_path) == trim(jacobian_path)) call die('output files must differ')
+        ! Opening without replacement preserves any existing data for this check.
+        open(newunit=probe, file=trim(output_path), action='readwrite', status='unknown', &
+             access='stream', form='unformatted', iostat=code)
+        if (code /= 0) call die('cannot open '//trim(output_path))
+        inquire(file=trim(jacobian_path), opened=connected)
+        close(probe)
+        if (connected) call die('output files must differ')
+    end subroutine reject_output_alias
+
     subroutine value(target)
         character(len=*), intent(out) :: target
+        integer :: code
+
         i = i + 1
         if (i > command_argument_count()) call die(trim(arg)//' needs a value')
-        call get_command_argument(i, target)
+        call get_command_argument(i, target, status=code)
+        if (code /= 0) call die(trim(arg)//' value is too long or unreadable')
     end subroutine value
 
     subroutine die(text)

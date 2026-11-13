@@ -7,6 +7,7 @@ must reproduce it within the 2e-3 relative field agreement of the two codes.
 """
 import csv
 import math
+import os
 from pathlib import Path
 import subprocess
 import sys
@@ -94,6 +95,40 @@ def vacuum_cases(executable, grid):
         points = [[4, 0, z] for z in (0.2, 0.5, 1.0)]
         channels = tmp/'channels.txt'
         geometries = write_channels(channels, points)
+        retained_coils = coils.read_text()
+        for options in (['--output', coils],
+                        ['--output', tmp/'angles.csv', '--field-jacobian', coils]):
+            attempt = subprocess.run([executable, '--mse', str(channels), '--coils', str(coils),
+                                      *map(str,options)], capture_output=True, text=True)
+            assert attempt.returncode != 0 and 'output aliases input' in attempt.stderr
+            assert coils.read_text() == retained_coils
+        new_output = tmp/'new.csv'
+        attempt = subprocess.run([executable, '--mse', str(channels), '--coils', str(coils),
+                                  '--output', str(new_output), '--field-jacobian',
+                                  str(tmp)+'/./new.csv'], capture_output=True, text=True)
+        assert attempt.returncode != 0 and 'output files must differ' in attempt.stderr
+        output = tmp/'protected.csv'
+        for alias in (output, tmp/'protected-link.csv', tmp/'protected-hard.csv'):
+            output.write_text('retained output\n')
+            if alias != output:
+                try:
+                    if alias.name.endswith('hard.csv'):
+                        os.link(output, alias)
+                    else:
+                        alias.symlink_to(output)
+                except OSError:
+                    continue
+            attempt = subprocess.run([executable, '--mse', str(channels), '--coils', str(coils),
+                                      '--output', str(output), '--field-jacobian', str(alias)],
+                                     capture_output=True, text=True)
+            assert attempt.returncode != 0 and 'output files must differ' in attempt.stderr
+            assert output.read_text() == 'retained output\n'
+        for bad in ('2,,3', ',2', '2,', '2 /', '2*1', '2 -0.5', 'nan,2',
+                    ','.join(['1']*129), ','.join(['1.0']*400)):
+            attempt = subprocess.run([executable, '--mse', str(channels), '--mgrid', str(grid),
+                                      '--mgrid-currents', bad, '--output', str(tmp/'bad.csv')],
+                                     capture_output=True, text=True)
+            assert attempt.returncode != 0 and '--mgrid-currents' in attempt.stderr, bad
         for currents, options in [([2, -3], []), ([1250, -400], ['--extcur', extcur])]:
             jacobian = tmp/'jacobian.csv'
             rows, fields = run(executable, channels, tmp/'out.csv', '--coils', coils,
