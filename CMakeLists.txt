@@ -108,6 +108,20 @@ set_target_properties(tiago_solver PROPERTIES
     Fortran_STANDARD_REQUIRED YES)
 target_link_libraries(tiago_solver PUBLIC tiago_diagnostics)
 
+# Field-line tracing, Poincare sections and island width and phase on any
+# total field: coils, a plasma source, or both.
+add_library(tiago_islands STATIC
+    src/generated/fieldline_slope.f90
+    src/generated/cylindrical_components.f90
+    src/generated/map_invariants.f90
+    src/generated/helical_phase.f90
+    src/islands/field_lines.f90
+    src/islands/island_measure.f90)
+set_target_properties(tiago_islands PROPERTIES
+    Fortran_STANDARD 2018
+    Fortran_STANDARD_REQUIRED YES)
+target_link_libraries(tiago_islands PUBLIC tiago_solver fortnum)
+
 # Small VMEC equilibrium fetched on demand by `tiago_vacuum_cli --plasma-sample`
 # and used by the plasma regression test.
 set(TIAGO_WOUT_SIMSOPT_SMALL_URL
@@ -1193,6 +1207,36 @@ if(FORTSYM_BUILD)
         -DGENERATOR=$<TARGET_FILE:gen_magnetic_pickup> -DSOURCE=${TIAGO_SOURCE_DIR}
         -DOUTPUT=${TIAGO_BINARY_DIR}/tests/magnetic-pickup-codegen
         -P ${TIAGO_SOURCE_DIR}/tests/check_magnetic_pickup_codegen.cmake)
+endif()
+
+add_executable(tiago_island src/cli/tiago_island.f90)
+set_source_files_properties(src/cli/tiago_island.f90 PROPERTIES Fortran_PREPROCESS ON)
+if(TIAGO_ENABLE_SPECTRE)
+    target_compile_definitions(tiago_island PRIVATE TIAGO_ENABLE_SPECTRE)
+endif()
+target_link_libraries(tiago_island PRIVATE tiago_islands)
+file(WRITE ${TIAGO_BINARY_DIR}/tests/island-empty.nml "&island /
+")
+add_test(NAME tiago_island_rejects_empty_field
+    COMMAND $<TARGET_FILE:tiago_island> ${TIAGO_BINARY_DIR}/tests/island-empty.nml)
+set_tests_properties(tiago_island_rejects_empty_field PROPERTIES
+    PASS_REGULAR_EXPRESSION "no field given")
+add_test(NAME tiago_island_poincare_only COMMAND ${CMAKE_COMMAND}
+    -DTIAGO_ISLAND=$<TARGET_FILE:tiago_island>
+    -DOUTPUT=${TIAGO_BINARY_DIR}/tests/island-poincare-only
+    -P ${TIAGO_SOURCE_DIR}/tests/check_island_poincare.cmake)
+add_executable(test_island_measure tests/test_island_measure.f90)
+target_link_libraries(test_island_measure PRIVATE tiago_islands)
+add_test(NAME tiago_island_measure COMMAND test_island_measure)
+add_executable(test_island_vmec tests/test_island_vmec.f90)
+target_link_libraries(test_island_vmec PRIVATE tiago_islands)
+add_test(NAME tiago_island_vmec COMMAND test_island_vmec ${TIAGO_WOUT_SIMSOPT_SMALL})
+set_tests_properties(tiago_island_vmec PROPERTIES FIXTURES_REQUIRED wout_li383)
+if(FORTSYM_BUILD)
+    add_test(NAME tiago_island_codegen COMMAND ${CMAKE_COMMAND}
+        -DGENERATOR=$<TARGET_FILE:gen_islands> -DSOURCE=${CMAKE_CURRENT_SOURCE_DIR}
+        -DOUTPUT=${CMAKE_CURRENT_BINARY_DIR}/tests/island-codegen
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/check_island_codegen.cmake)
 endif()
 
 add_executable(test_harmonic_lockin tests/test_harmonic_lockin.f90)

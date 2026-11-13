@@ -69,6 +69,7 @@ Magnetics and reconstruction:
 - [Magnetic diagnostics and plasma response](docs/magnetics.md)
 - [Equilibrium reconstruction](docs/reconstruction.md)
 - [MSE](docs/mse.md), [sensor sets](docs/sensor-sets.md)
+- [Field lines and islands](docs/islands.md): axis, O and X points, island width and phase
 
 Recorded signals and inference:
 - [Recorded signals and calibration](docs/recorded-signals.md),
