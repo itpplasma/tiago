@@ -10,9 +10,9 @@ program gen_ece_geometry
     type(expr_t) :: roots(100), w(4), t(3), zero(3), angular, f, g, h(4)
     type(expr_t) :: xx, ff(2), gx(3), hx(3, 3), du(3), jp(3, 3), px, gp(3)
     integer :: i, j, k, l, n, mode, nr
-    character(20), parameter :: modes(4) = [character(20) :: &
+    character(20), parameter :: modes(6) = [character(20) :: &
         'vmec_r_x', 'vmec_r_y', 'vmec_z', &
-        'vmec_cos']
+        'vmec_cos', 'vmec_rs_x', 'vmec_rs_y']
 
     do i = 1, 3
         t(i) = sym('t'//itoa(i))
@@ -21,14 +21,16 @@ program gen_ece_geometry
     do i = 1, 4
         w(i) = at('w', i)
     end do
-    do mode = 1, 4
+    do mode = 1, 6
         call reset()
         spec%args = [str('w'), str('m'), str('n'), str('theta'), str('phi')]
         spec%arg_shapes = [str('(4)'), str(''), str(''), str(''), str('')]
         angular = cos(sym('m')*sym('theta') - sym('n')*sym('phi'))
-        if (mode == 3) angular = sin(sym('m')*sym('theta') - sym('n')*sym('phi'))
-        if (mode == 1) angular = angular*cos(sym('phi'))
-        if (mode == 2) angular = angular*sin(sym('phi'))
+        ! Modes 5 and 6: sine terms of R (lasym = T), x and y components.
+        if (mode == 3 .or. mode >= 5) &
+            angular = sin(sym('m')*sym('theta') - sym('n')*sym('phi'))
+        if (mode == 1 .or. mode == 5) angular = angular*cos(sym('phi'))
+        if (mode == 2 .or. mode == 6) angular = angular*sin(sym('phi'))
         n = 0
         call mode_root([0, 0, 0], 'value')
         do i = 1, 3

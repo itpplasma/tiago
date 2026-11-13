@@ -52,7 +52,9 @@ contains
                 message = 'MSE channel '//trim(num)//': midpoint outside the plasma'
                 return
             end if
-            call state%vector_jets(loc(j)%u, jets(j), status)
+            ! Parameter columns are costly for large states; build them only on request.
+            call state%vector_jets(loc(j)%u, jets(j), status, &
+                parameters=present(param_jacobian))
             if (status /= locate_ok) then
                 message = 'MSE channel '//trim(num)//': the state supplies no vector field'
                 return

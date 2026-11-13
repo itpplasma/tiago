@@ -92,6 +92,8 @@ add_library(tiago_solver STATIC
     src/generated/vmec_r_y.f90
     src/generated/vmec_z.f90
     src/generated/vmec_cos.f90
+    src/generated/vmec_rs_x.f90
+    src/generated/vmec_rs_y.f90
     src/generated/vmec_vector_component.f90
     src/solver/vmec_state.f90)
 if(TIAGO_ENABLE_SPECTRE)
@@ -299,6 +301,13 @@ if(TIAGO_ENABLE_SPECTRE)
     target_compile_definitions(tiago_vacuum_cli PRIVATE TIAGO_ENABLE_SPECTRE)
 endif()
 target_link_libraries(tiago_vacuum_cli PRIVATE tiago_solver tiago_build_config)
+
+add_executable(tiago_mse_field src/cli/tiago_mse_field.f90)
+set_source_files_properties(src/cli/tiago_mse_field.f90 PROPERTIES Fortran_PREPROCESS ON)
+if(TIAGO_ENABLE_SPECTRE)
+    target_compile_definitions(tiago_mse_field PRIVATE TIAGO_ENABLE_SPECTRE)
+endif()
+target_link_libraries(tiago_mse_field PRIVATE tiago_inference tiago_solver)
 
 # Equilibrium reconstruction (tiago_reconstruct): Levenberg-Marquardt in Tiago
 # (LAPACK), figures from fortplot, equilibria and their adjoint from VMEC++
@@ -511,6 +520,13 @@ if(TIAGO_ENABLE_SPECTRE)
         ${TIAGO_SOURCE_DIR}/tests/data/spectre/qa_vmec_cartesian.dat 128)
     set_tests_properties(tiago_spectre_vmec tiago_spectre_vmec_refined PROPERTIES
         FIXTURES_REQUIRED qa_nested TIMEOUT 180)
+    find_package(Python3 COMPONENTS Interpreter REQUIRED)
+    add_test(NAME tiago_mse_field_cli COMMAND ${Python3_EXECUTABLE}
+        ${TIAGO_SOURCE_DIR}/tests/check_mse_field.py $<TARGET_FILE:tiago_mse_field>
+        ${nested_wout} ${TIAGO_SOURCE_DIR}/tests/data/spectre/qa_nested.h5
+        ${TIAGO_SOURCE_DIR}/tests/data/spectre/qa_vmec_cartesian.dat)
+    set_tests_properties(tiago_mse_field_cli PROPERTIES
+        FIXTURES_REQUIRED qa_nested TIMEOUT 120)
 else()
     add_test(NAME tiago_cli_spectre_disabled COMMAND $<TARGET_FILE:tiago_vacuum_cli>
         --plasma-spectre absent.h5 --bprobes absent.diagno)
@@ -559,6 +575,11 @@ add_executable(test_mse_state tests/test_mse_state.f90)
 target_link_libraries(test_mse_state PRIVATE tiago_inference)
 add_test(NAME tiago_mse_state COMMAND $<TARGET_FILE:test_mse_state> ${TIAGO_WOUT_SIMSOPT_SMALL})
 set_tests_properties(tiago_mse_state PROPERTIES FIXTURES_REQUIRED wout_li383)
+add_executable(test_vmec_lasym tests/test_vmec_lasym.f90)
+target_link_libraries(test_vmec_lasym PRIVATE tiago_inference)
+add_test(NAME tiago_vmec_lasym COMMAND $<TARGET_FILE:test_vmec_lasym> ${TIAGO_WOUT_SIMSOPT_SMALL}
+    ${TIAGO_BINARY_DIR}/tests/wout_li383_rotated.nc)
+set_tests_properties(tiago_vmec_lasym PROPERTIES FIXTURES_REQUIRED wout_li383)
 
 add_executable(test_sensor_set tests/test_sensor_set.f90)
 target_link_libraries(test_sensor_set PRIVATE tiago_solver)

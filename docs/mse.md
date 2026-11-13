@@ -132,8 +132,32 @@ midpoints, with the labels moving by the implicit-function theorem,
 half-grid surfaces (agreement of gamma within 5e-4 rad, tolerance 2e-3 rad;
 the residual is the radial interpolation of R and Z at ns = 16) and the
 parameter derivative against central differences (relative 2e-7).
+A non-symmetric wout (`lasym = T`) also supplies `bsupumns`, `bsupvmns`
+and the sine and cosine partners of R and Z; `tiago_vmec_lasym` checks it
+on the LI383 equilibrium turned rigidly about the Z axis, written as a
+non-symmetric wout, against the symmetric original at the turned points
+(field and angle to round-off), and its parameter derivative against
+central differences.
 No MSE measurements are wired into `tiago_reconstruct` yet; its current VMEC
 boundary-field representation does not supply this internal field.
+
+## Interior field CLI
+
+```
+build/tiago_mse_field --mse channels.txt --wout wout.nc --output angles.csv
+build/tiago_mse_field --mse channels.txt --spectre spectre.h5 --output angles.csv
+```
+
+evaluates the interior field of one equilibrium at the channel midpoints and
+writes `label,gamma_rad,x_m,y_m,z_m,b_x_T,b_y_T,b_z_T`. A wout goes through
+`mse_state_angles`; a SPECTRE file (build with `TIAGO_ENABLE_SPECTRE=ON`)
+through `spectre_source_t%sample_interior_bfield` and `mse_angles`. A
+midpoint outside the plasma stops the run. Fields from other codes enter as
+one of these two formats. `tiago_mse_field_cli` evaluates six channels in the
+nested QA equilibrium given both as wout and as SPECTRE file and compares
+each angle with the angle computed in the test from an independent VMEC
+Fourier field table at the same points (tolerance 2e-3 rad, the field
+agreement of the two representations).
 
 ## CLI and verification
 

@@ -191,6 +191,9 @@ they do not generate an ECE absorption coefficient. See
 `21d157b394e775a999a8d9ed0be409eac1eb9574` for Fourier geometry through third
 label derivatives, higher Hermite basis derivatives, the contravariant vector
 field contraction, density jets and inverse-map spatial/parameter rows.
+The sine terms of R for non-symmetric equilibria (`vmec_rs_x`, `vmec_rs_y`)
+were added with FortSym `dbaa8e319ac5343e8c12a7938ca6a233d672a682`, which
+reproduces the other kernels of this generator byte for byte.
 
 ```sh
 cmake --build build-codegen --target gen_ece_geometry
@@ -199,7 +202,7 @@ ctest --test-dir build -R tiago_ece_geometry --output-on-failure
 ```
 
 With `TIAGO_FORTSYM_BUILD` set, `tiago_ece_geometry_codegen` regenerates all
-nine outputs in an isolated build directory and compares the committed files.
+eleven outputs in an isolated build directory and compares the committed files.
 The [medium contract](../docs/ece-geometry.md) records the knot, axis and
 provider-adjoint limitations.
 
