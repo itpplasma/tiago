@@ -181,7 +181,7 @@ contains
             err = max(err, abs(lab%label(i) - oracle_label(k, p0)))
         end do
         call check(.not. any(lab%lost), 'circulating: no line lost', 0.0_dp)
-        ! Return sampling converges as 1/turns: 9e-5 at 250 turns, 2e-6 at 4000.
+        ! Finite-return errors are 9e-5 at 250 turns and 2e-6 at 4000 turns.
         call check(err < 1.0e-5_dp, 'circulating: label = invariant-curve mean of s', err)
         call check(maxval(abs(lab%label - lab%s_start)) > 1.0e-4_dp, &
             'circulating: perturbation moves the label', maxval(abs(lab%label - lab%s_start)))

@@ -79,7 +79,7 @@ iota = 1/2. The chart is the circular state, s = r^2 / a^2.
 - For circulating lines, the label agrees within 1e-5 (4000 turns) with the
   mean of s over the invariant curve K = const, weighted by
   dxi / (dxi/dphi) and computed by quadrature without tracing. The
-  difference falls as 1/turns (9e-5 at 250 turns, 2e-6 at 4000).
+  difference is 9e-5 at 250 turns and 2e-6 at 4000 turns.
 - Inside the island, two lines started at mirror points about the O point
   get one label within 2e-4, closer to the resonant s than their start.
 - The field tabulated on a 61 x 72 x 61 grid reproduces the analytic field
