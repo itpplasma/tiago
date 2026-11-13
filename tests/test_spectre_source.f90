@@ -11,7 +11,8 @@ program test_spectre_source
     character(len=1024) :: fixture, reffile, mode, line
     real(dp) :: row(11), u(3), x(3, 1), b(3, 1), expected(3)
     real(dp) :: ctr(3), e(3, 3), worst, h, delta(3), ap(3, 1), am(3, 1)
-    real(dp) :: da(3, 3), curl(3), p(3, 1), rel
+    real(dp) :: da(3, 3), curl(3), p(3, 1), rel, checked(3, 1)
+    integer :: point_status(1)
     integer :: ierr, unit, io, nrows, k
 
     call get_command_argument(1, fixture)
@@ -52,6 +53,9 @@ program test_spectre_source
         u = [row(1) - 1.0_dp + 0.5_dp*(row(2) + 1.0_dp), row(3), row(4)]
         call field%coords%evaluate_cart(u, x(:, 1))
         call solver%sample_bfield(x, b, interior=.true.)
+        call source%sample_interior_bfield_status(x, checked, point_status)
+        if (point_status(1) /= 0) error stop 'valid interior status rejected'
+        if (any(checked /= b)) error stop 'status sampling changed interior field'
         call field%coords%covariant_basis(u, e)
         ctr = [0.5_dp*row(7), row(8), row(9)]
         expected = matmul(e, ctr)
@@ -60,6 +64,11 @@ program test_spectre_source
     close (unit)
     if (nrows /= 90) error stop 'missing reference rows'
     call check('90 interior Cartesian B samples vs SPECTRE reference', worst, 1.0e-8_dp)
+
+    x(:, 1) = [100.0_dp, 0.0_dp, 0.0_dp]
+    call source%sample_interior_bfield_status(x, checked, point_status)
+    if (point_status(1) == 0) error stop 'exterior interior-status sample accepted'
+    if (any(checked /= 0.0_dp)) error stop 'failed sample must return a zero field'
 
     ! curl A = B, finite differences in physical Cartesian coordinates, away
     ! from the sheet. This checks the exterior A required by flux loops.

@@ -23,6 +23,7 @@ module tiago_spectre_source
         procedure :: sample_bfield => spectre_source_bfield
         procedure :: sample_vector_potential => spectre_source_potential
         procedure :: sample_interior_bfield => spectre_source_interior
+        procedure :: sample_interior_bfield_status => spectre_source_interior_status
     end type spectre_source_t
 
 contains
@@ -119,20 +120,39 @@ contains
         class(spectre_source_t), intent(in) :: self
         real(dp), intent(in) :: points(:, :)
         real(dp), intent(out) :: values(:, :)
+        integer :: status(size(points, 2))
+
+        if (.not. self%enabled) error stop 'SPECTRE source not initialized'
+        call self%sample_interior_bfield_status(points, values, status)
+        if (any(status /= SPECTRE_SUCCESS)) error stop 'cannot locate interior SPECTRE point'
+    end subroutine spectre_source_interior
+
+    subroutine spectre_source_interior_status(self, points, values, status)
+        use, intrinsic :: ieee_arithmetic, only: ieee_is_finite
+        class(spectre_source_t), intent(in) :: self
+        real(dp), intent(in) :: points(:, :)
+        real(dp), intent(out) :: values(:, :)
+        integer, intent(out) :: status(:)
         real(dp) :: u(3)
         integer :: j, ierr
 
-        if (.not. self%enabled) error stop 'SPECTRE source not initialized'
-!$omp parallel do private(j, u, ierr) schedule(static)
+        values = 0.0_dp
+        status = 1
+        if (.not. self%enabled) return
+        !$omp parallel do private(j, u, ierr) schedule(static)
         do j = 1, size(points, 2)
+            if (.not. all(ieee_is_finite(points(:, j)))) cycle
             call locate(self, points(:, j), u, ierr)
-            if (ierr /= SPECTRE_SUCCESS) error stop 'cannot locate interior SPECTRE point'
-            if (u(1) >= real(self%plasma_volumes, dp)) &
-                error stop 'interior point outside SPECTRE plasma'
+            status(j) = ierr
+            if (ierr /= SPECTRE_SUCCESS) cycle
+            if (u(1) >= real(self%plasma_volumes, dp)) then
+                status(j) = SPECTRE_OUTSIDE_DOMAIN
+                cycle
+            end if
             call chart_bfield(self%field, u, values(:, j))
         end do
-!$omp end parallel do
-    end subroutine spectre_source_interior
+        !$omp end parallel do
+    end subroutine spectre_source_interior_status
 
     subroutine chart_bfield(field, u, b)
         class(magnetic_field_t), intent(in) :: field
