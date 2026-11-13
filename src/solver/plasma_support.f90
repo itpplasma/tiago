@@ -62,6 +62,7 @@ module tiago_plasma_support
         procedure :: init_from_vmec => plasma_init_from_vmec
         procedure :: init_from_boundary => plasma_init_from_boundary
         procedure :: init_from_surface => plasma_init_from_surface
+        procedure :: init_from_surface_file => plasma_init_from_surface_file
         procedure :: shape_response => plasma_shape_response
         procedure :: n_shape_columns => plasma_n_shape_columns
         procedure :: shape_column_name => plasma_shape_column_name
@@ -104,6 +105,53 @@ contains
         if (volume < 0.0_dp) self%sheet = -self%sheet
         self%enabled = .true.
     end subroutine plasma_init_from_surface
+
+    subroutine plasma_init_from_surface_file(self, path, max_normal_fraction)
+        !! Casing surface sampled by any equilibrium code (GVEC, MILCA, ...).
+        !! Text file: a line "ntheta nphi", then ntheta*nphi rows, theta fastest,
+        !!     x y z  dx/dtheta (3)  dx/dphi (3)  B (3)
+        !! in Cartesian SI units on the uniform full-torus grid
+        !! theta_j = 2 pi j/ntheta, phi_k = 2 pi k/nphi (j, k from 0) of any
+        !! periodic parametrisation of a closed flux surface. B is the total
+        !! field on the plasma side. The trapezoidal rule is exact in the angles,
+        !! so the parametrisation need not be the geometric toroidal angle.
+        class(plasma_support_t), intent(inout) :: self
+        character(len=*), intent(in) :: path
+        real(dp), intent(out), optional :: max_normal_fraction
+        real(dp), allocatable :: xs(:, :), xt(:, :), xp(:, :), b(:, :)
+        real(dp) :: row(12), nrm(3), fraction
+        integer :: unit, ios, ntheta, nphi, k
+
+        open(newunit=unit, file=path, status='old', action='read', iostat=ios)
+        if (ios /= 0) then
+            write(error_unit, '(A)') 'cannot open plasma surface file '//trim(path)
+            error stop 'cannot open plasma surface file'
+        end if
+        read(unit, *, iostat=ios) ntheta, nphi
+        if (ios /= 0 .or. ntheta < 4 .or. nphi < 4) &
+            error stop 'plasma surface file needs "ntheta nphi" with at least 4x4 points'
+        allocate(xs(3, ntheta*nphi), xt(3, ntheta*nphi), xp(3, ntheta*nphi), b(3, ntheta*nphi))
+        fraction = 0.0_dp
+        do k = 1, ntheta*nphi
+            read(unit, *, iostat=ios) row
+            if (ios /= 0) error stop 'missing or malformed row in plasma surface file'
+            xs(:, k) = row(1:3)
+            xt(:, k) = row(4:6)
+            xp(:, k) = row(7:9)
+            b(:, k) = row(10:12)
+            nrm = cross(xt(:, k), xp(:, k))
+            fraction = max(fraction, abs(dot_product(nrm, b(:, k))) &
+                / max(norm2(nrm) * norm2(b(:, k)), tiny(1.0_dp)))
+        end do
+        read(unit, *, iostat=ios) row(1)
+        close(unit)
+        if (ios == 0) error stop 'plasma surface file has more rows than ntheta*nphi'
+        ! The current-only sheet omits magnetic charge, so B must be tangential.
+        if (fraction > 1.0e-6_dp) error stop 'plasma surface is not a flux surface (B.n /= 0)'
+        if (present(max_normal_fraction)) max_normal_fraction = fraction
+        call self%init_from_surface(xs, xt, xp, b, 2.0_dp * pi / real(ntheta, dp), &
+            2.0_dp * pi / real(nphi, dp))
+    end subroutine plasma_init_from_surface_file
 
     subroutine plasma_init_from_vmec(self, wout_file, nphi, ntheta, &
             covariant, conservative)

@@ -30,6 +30,7 @@ program tiago_vacuum_cli
     logical :: have_seg
     character(len=512) :: plasma_wout
     character(len=512) :: plasma_spectre = ''
+    character(len=512) :: plasma_surface = ''
     real(dp) :: plasma_linked_flux = 0.0_dp
     logical :: have_linked_flux = .false.
     integer(i32) :: plasma_nphi
@@ -78,8 +79,18 @@ program tiago_vacuum_cli
         call die('nothing to evaluate: pass --flux, --segrog, --bprobes and/or --mse')
     end if
     if (len_trim(coil_path) == 0 .and. len_trim(plasma_wout) == 0 .and. &
-        len_trim(plasma_spectre) == 0 .and. .not. use_plasma_sample) then
+        len_trim(plasma_spectre) == 0 .and. len_trim(plasma_surface) == 0 .and. &
+        .not. use_plasma_sample) then
         call die('no field source: pass --coils and/or --plasma-wout')
+    end if
+    if (len_trim(plasma_surface) > 0) then
+        if (len_trim(plasma_wout) > 0 .or. use_plasma_sample .or. &
+            len_trim(plasma_spectre) > 0) &
+            call die('--plasma-surface excludes the other plasma sources')
+        if (covariant_plasma .or. conservative_plasma) &
+            call die('VMEC coefficient options do not apply to --plasma-surface')
+        if (len_trim(plasma_response_out_path) + len_trim(plasma_shape_out_path) > 0) &
+            call die('VMEC coefficient responses do not apply to --plasma-surface')
     end if
     if (len_trim(plasma_spectre) > 0) then
         if (len_trim(plasma_wout) > 0 .or. use_plasma_sample) &
@@ -93,8 +104,8 @@ program tiago_vacuum_cli
         call die('--plasma-spectre requires a build with TIAGO_ENABLE_SPECTRE=ON')
 #endif
     end if
-    if (have_linked_flux .and. len_trim(plasma_spectre) == 0) &
-        call die('--plasma-linked-flux requires --plasma-spectre')
+    if (have_linked_flux .and. len_trim(plasma_spectre) + len_trim(plasma_surface) == 0) &
+        call die('--plasma-linked-flux requires --plasma-spectre or --plasma-surface')
     call validate_options(samples_per_segment, nfp_value, seg_area, plasma_nphi, plasma_ntheta)
     call prepare_plasma_support(plasma_wout, use_plasma_sample)
     call ensure_paths(output_dir, flux_out_path, segrog_out_path)
@@ -197,6 +208,10 @@ subroutine parse_options(argc, output_dir, flux_out_path, segrog_out_path, &
             i = i + 1
             call ensure_arg(argc, i, '--plasma-spectre')
             call get_command_argument(i, plasma_spectre)
+        case ('--plasma-surface')
+            i = i + 1
+            call ensure_arg(argc, i, '--plasma-surface')
+            call get_command_argument(i, plasma_surface)
         case ('--plasma-linked-flux')
             i = i + 1
             call ensure_arg(argc, i, '--plasma-linked-flux')
@@ -384,6 +399,7 @@ subroutine run_solver(coil_path, flux_path, segrog_path, output_dir, &
     use tiago_segmented_rogowski, only: read_segmented_rogowski_file
     use tiago_vacuum_forward, only: vacuum_solver_t, quadrature_rule_t
     use tiago_bprobes, only: read_bprobe_file
+    use tiago_plasma_support, only: plasma_support_t
     character(len=*), intent(in) :: coil_path
     character(len=*), intent(in) :: flux_path
     character(len=*), intent(in) :: segrog_path
@@ -406,7 +422,9 @@ subroutine run_solver(coil_path, flux_path, segrog_path, output_dir, &
 #ifdef TIAGO_ENABLE_SPECTRE
     type(spectre_source_t) :: source
 #endif
+    type(plasma_support_t) :: surface
     type(quadrature_rule_t) :: rule
+    real(dp) :: normal_fraction
     type(flux_loop_t), allocatable :: loops(:)
     type(segmented_rogowski_t), allocatable :: segs(:)
     real(dp), allocatable :: fluxes(:)
@@ -440,6 +458,15 @@ subroutine run_solver(coil_path, flux_path, segrog_path, output_dir, &
     end if
 #endif
 
+    if (len_trim(plasma_surface) > 0) then
+        call surface%init_from_surface_file(trim(plasma_surface), normal_fraction)
+        if (have_linked_flux) then
+            surface%diamagnetic_flux = plasma_linked_flux
+            surface%linked_flux_known = .true.
+        end if
+        call solver%set_plasma_source(surface)
+        call write_surface_provenance(trim(output_dir)//'/plasma_model.txt', normal_fraction)
+    end if
     if (len_trim(plasma_wout) > 0) then
         call solver%enable_plasma_from_vmec(plasma_wout, plasma_nphi, &
             plasma_ntheta, covariant_plasma, conservative_plasma)
@@ -643,6 +670,20 @@ subroutine write_spectre_provenance(solver, path)
         write(unit, '(A,ES24.16)') 'signed_linked_flux_Wb = ', solver%plasma_flux()
     close(unit)
 end subroutine write_spectre_provenance
+
+subroutine write_surface_provenance(path, normal_fraction)
+    character(len=*), intent(in) :: path
+    real(dp), intent(in) :: normal_fraction
+    integer :: unit, status
+    open(newunit=unit, file=path, status='replace', iostat=status)
+    if (status /= 0) call die('cannot write plasma model provenance: '//path)
+    write(unit, '(A)') 'source = sampled flux surface'
+    write(unit, '(A)') 'surface = '//trim(plasma_surface)
+    write(unit, '(A)') 'exterior = virtual casing on plasma boundary'
+    write(unit, '(A,ES24.16)') 'max_relative_normal_field = ', normal_fraction
+    write(unit, '(A,L1)') 'linked_flux_supplied = ', have_linked_flux
+    close(unit)
+end subroutine write_surface_provenance
 
 subroutine write_plasma_provenance(solver, path)
     type(vacuum_solver_t), intent(in) :: solver
@@ -920,8 +961,10 @@ subroutine usage_and_stop(status)
     write(error_unit, '(A)') '       [--plasma-wout file] [--plasma-sample]'
     write(error_unit, '(A)') '       [--plasma-spectre file.h5] '// &
         '(requires TIAGO_ENABLE_SPECTRE=ON)'
+    write(error_unit, '(A)') '       [--plasma-surface file] '// &
+        '(sampled flux surface: ntheta nphi, then x x_theta x_phi B rows)'
     write(error_unit, '(A)') '       [--plasma-linked-flux Wb] '// &
-        '(signed flux for SPECTRE idia=1 loops)'
+        '(signed flux for SPECTRE or surface idia=1 loops)'
     write(error_unit, '(A)') '       [--plasma-covariant | --plasma-conservative | '// &
         '--plasma-contravariant]'
     write(error_unit, '(A)') '       [--plasma-nphi N_per_period] [--plasma-ntheta N] (default 64 64)'

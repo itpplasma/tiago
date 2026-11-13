@@ -643,6 +643,11 @@ add_test(NAME tiago_mse_cli
         ${TIAGO_SOURCE_DIR}/tests/data/mse_coils.coils
         ${TIAGO_SOURCE_DIR}/examples/mse_channels.txt ${TIAGO_BINARY_DIR}/tests/mse_cli)
 
+add_executable(plasma_surface_fixture tests/plasma_surface_fixture.f90)
+add_test(NAME tiago_plasma_surface_cli
+    COMMAND sh ${TIAGO_SOURCE_DIR}/tests/plasma_surface_cli.sh $<TARGET_FILE:tiago_vacuum_cli>
+        $<TARGET_FILE:plasma_surface_fixture> ${TIAGO_BINARY_DIR}/tests/plasma_surface_cli)
+
 # CLI: the README example and argument errors (message, exit status 1)
 add_test(NAME tiago_cli_sample
     COMMAND $<TARGET_FILE:tiago_vacuum_cli>

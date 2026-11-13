@@ -120,6 +120,26 @@ implements it with the VMEC virtual casing above, including its responses. A
 solver keeps a copy of a source installed with
 `solver%set_plasma_source(source)`.
 
+### Sampled flux surface
+
+Any equilibrium code can supply the casing surface as a text file, for
+example GVEC or MILCA states that have no reader in Tiago:
+
+```bash
+./build/tiago_vacuum_cli --plasma-surface surface.txt \
+    --bprobes probes.diagno --output-dir signals
+```
+
+The first line holds `ntheta nphi`, followed by `ntheta*nphi` rows with theta
+varying fastest. Each row is the Cartesian position, its derivatives with
+respect to theta and phi and the total field on the plasma side, twelve
+numbers in metres and tesla, on the uniform full-torus grid
+`theta_j = 2 pi j/ntheta`, `phi_k = 2 pi k/nphi` (j, k from 0). Any periodic
+parametrisation works, since the trapezoidal rule integrates
+`(x_theta x x_phi) x B` exactly in the angles; phi need not be the
+geometric toroidal angle. A relative normal field above `1e-6` is rejected.
+`--plasma-linked-flux` supplies the signed toroidal flux for `idia=1` loops.
+
 ### SPECTRE
 
 With `-DTIAGO_ENABLE_SPECTRE=ON` (see [building.md](building.md)):
