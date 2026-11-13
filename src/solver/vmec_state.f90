@@ -9,7 +9,10 @@ module tiago_vmec_state
     !! are these node values,
     !!     p = (rmnc(:, 1:ns), zmns(:, 1:ns), bmnc(:, 2:ns)),
     !! on which the map depends linearly at fixed labels. A VMEC adjoint maps a
-    !! cotangent of p to its own inputs. Stellarator-symmetric (lasym = F) only.
+    !! cotangent of p to its own inputs. For lasym = T the sine terms of R and
+    !! |B|, B^theta and B^phi and the cosine terms of Z are part of the state
+    !! but held fixed: they are not parameters, so p and its derivatives are
+    !! those of the symmetric coefficients.
     use, intrinsic :: iso_fortran_env, only: dp => real64
     use netcdf, only: nf90_open, nf90_close, nf90_inq_varid, nf90_get_var, &
         nf90_noerr, nf90_nowrite
@@ -20,6 +23,8 @@ module tiago_vmec_state
     use tiago_vmec_z, only: vmec_z
     use tiago_vmec_cos, only: vmec_cos
     use tiago_vmec_vector_component, only: vmec_vector_component
+    use tiago_vmec_rs_x, only: vmec_rs_x
+    use tiago_vmec_rs_y, only: vmec_rs_y
     implicit none
     private
 
@@ -29,6 +34,9 @@ module tiago_vmec_state
         real(dp), allocatable :: rho_full(:), rho_half(:)
         real(dp), allocatable :: rmnc(:, :), zmns(:, :), bmnc(:, :) !! bmnc(:, 1:ns-1) = half grid
         real(dp), allocatable :: bsupumnc(:,:), bsupvmnc(:,:)
+        !> Non-symmetric terms, allocated only for lasym = T (same layout).
+        real(dp), allocatable :: rmns(:, :), zmnc(:, :), bmns(:, :)
+        real(dp), allocatable :: bsupumns(:,:), bsupvmns(:,:)
     contains
         procedure :: vector_jets => vmec_vector_jets
         procedure :: load => vmec_load
@@ -65,11 +73,6 @@ contains
         call get_int('nfp', self%nfp)
         call get_int('lasym__logical__', lasym)
         if (ierr /= 0) return
-        if (lasym /= 0) then
-            ierr = 2
-            message = 'vmec_state_t supports stellarator-symmetric equilibria only'
-            return
-        end if
         allocate(self%xm(self%mnmax), self%xn(self%mnmax), self%xm_nyq(self%mnmax_nyq), &
             self%xn_nyq(self%mnmax_nyq), self%rmnc(self%mnmax, self%ns), &
             self%zmns(self%mnmax, self%ns), buf(self%mnmax_nyq, self%ns))
@@ -79,6 +82,13 @@ contains
         call get_var1('xn_nyq', self%xn_nyq)
         call get_var2('rmnc', self%rmnc)
         call get_var2('zmns', self%zmns)
+        if (lasym /= 0) then
+            allocate(self%rmns(self%mnmax, self%ns), self%zmnc(self%mnmax, self%ns))
+            call get_var2('rmns', self%rmns)
+            call get_var2('zmnc', self%zmnc)
+            call get_var2('bmns', buf)
+            self%bmns = buf(:, 2:self%ns)
+        end if
         call get_var2('bmnc', buf)
         if (present(vector)) then
             if (vector) then
@@ -87,6 +97,12 @@ contains
                 self%bsupumnc = buf(:, 2:self%ns)
                 call get_var2('bsupvmnc', buf)
                 self%bsupvmnc = buf(:, 2:self%ns)
+                if (lasym /= 0) then
+                    call get_var2('bsupumns', buf)
+                    self%bsupumns = buf(:, 2:self%ns)
+                    call get_var2('bsupvmns', buf)
+                    self%bsupvmns = buf(:, 2:self%ns)
+                end if
             end if
         end if
         if (nf90_close(ncid) /= nf90_noerr .and. ierr == 0) ierr = 1
@@ -204,6 +220,15 @@ contains
             z = z + cz * s
             dr = dr + [dcr * c, -self%xm(mn) * cr * s, self%xn(mn) * cr * s]
             dz = dz + [dcz * s, self%xm(mn) * cz * c, -self%xn(mn) * cz * c]
+            if (.not. allocated(self%rmns)) cycle
+            cr = dot_product(wf(:nf), self%rmns(mn, ff:ff + nf - 1))
+            dcr = dot_product(dwf(:nf), self%rmns(mn, ff:ff + nf - 1))
+            cz = dot_product(wf(:nf), self%zmnc(mn, ff:ff + nf - 1))
+            dcz = dot_product(dwf(:nf), self%zmnc(mn, ff:ff + nf - 1))
+            r = r + cr * s
+            z = z + cz * c
+            dr = dr + [dcr * s, self%xm(mn) * cr * c, -self%xn(mn) * cr * c]
+            dz = dz + [dcz * c, -self%xm(mn) * cz * s, self%xn(mn) * cz * s]
         end do
         b = 0.0_dp
         dbdu = 0.0_dp
@@ -215,6 +240,11 @@ contains
             dcr = dot_product(dwh(:nh), self%bmnc(mn, fh:fh + nh - 1))
             b = b + cr * c
             dbdu = dbdu + [dcr * c, -self%xm_nyq(mn) * cr * s, self%xn_nyq(mn) * cr * s]
+            if (.not. allocated(self%bmns)) cycle
+            cr = dot_product(wh(:nh), self%bmns(mn, fh:fh + nh - 1))
+            dcr = dot_product(dwh(:nh), self%bmns(mn, fh:fh + nh - 1))
+            b = b + cr * s
+            dbdu = dbdu + [dcr * s, self%xm_nyq(mn) * cr * c, -self%xn_nyq(mn) * cr * c]
         end do
         cp = cos(u(3))
         sp = sin(u(3))
@@ -234,7 +264,8 @@ contains
         real(dp), intent(out) :: u(3)
         real(dp), parameter :: pi = acos(-1.0_dp)
         real(dp) :: wf(max_weights), dwf(max_weights), cr(self%mnmax), &
-            cz(self%mnmax), v(3), xv(3), r, z, ang, best, d
+            cz(self%mnmax), sr(self%mnmax), sz(self%mnmax), v(3), xv(3), r, z, ang, &
+            best, d
         integer :: ff, nf, i, j, mn
 
         best = huge(1.0_dp)
@@ -244,6 +275,11 @@ contains
             do mn = 1, self%mnmax
                 cr(mn) = dot_product(wf(:nf), self%rmnc(mn, ff:ff + nf - 1))
                 cz(mn) = dot_product(wf(:nf), self%zmns(mn, ff:ff + nf - 1))
+                sr(mn) = 0.0_dp
+                sz(mn) = 0.0_dp
+                if (.not. allocated(self%rmns)) cycle
+                sr(mn) = dot_product(wf(:nf), self%rmns(mn, ff:ff + nf - 1))
+                sz(mn) = dot_product(wf(:nf), self%zmnc(mn, ff:ff + nf - 1))
             end do
             do j = 0, 15
                 v = [0.25_dp * i, 2.0_dp * pi * j / 16.0_dp, atan2(x(2), x(1))]
@@ -251,8 +287,8 @@ contains
                 z = 0.0_dp
                 do mn = 1, self%mnmax
                     ang = self%xm(mn) * v(2) - self%xn(mn) * v(3)
-                    r = r + cr(mn) * cos(ang)
-                    z = z + cz(mn) * sin(ang)
+                    r = r + cr(mn) * cos(ang) + sr(mn) * sin(ang)
+                    z = z + cz(mn) * sin(ang) + sz(mn) * cos(ang)
                 end do
                 xv = [r * cos(v(3)), r * sin(v(3)), z]
                 d = sum((xv - x)**2)
@@ -401,6 +437,29 @@ contains
                     jet%xuu(i, :, :) = jet%xuu(i, :, :) + d2*val
                     x3(i, :, :, :) = x3(i, :, :, :) + d3*val
                 end do
+                if (.not. allocated(self%rmns)) cycle
+                do i = 1, 3
+                    select case (i)
+                    case (1)
+                        call vmec_rs_x(wf(k, :), self%xm(mn), self%xn(mn), u(2), u(3), &
+                                       val, d, d2, d3)
+                        val = val*self%rmns(mn, ff + k - 1)
+                    case (2)
+                        call vmec_rs_y(wf(k, :), self%xm(mn), self%xn(mn), u(2), u(3), &
+                                       val, d, d2, d3)
+                        val = val*self%rmns(mn, ff + k - 1)
+                    case (3)
+                        call vmec_cos(wf(k, :), self%xm(mn), self%xn(mn), u(2), u(3), &
+                                      val, d, d2, d3)
+                        val = val*self%zmnc(mn, ff + k - 1)
+                    end select
+                    basis = self%rmns(mn, ff + k - 1)
+                    if (i == 3) basis = self%zmnc(mn, ff + k - 1)
+                    jet%x(i) = jet%x(i) + val
+                    jet%xu(i, :) = jet%xu(i, :) + d*basis
+                    jet%xuu(i, :, :) = jet%xuu(i, :, :) + d2*basis
+                    x3(i, :, :, :) = x3(i, :, :, :) + d3*basis
+                end do
             end do
         end do
         do mn = 1, self%mnmax_nyq
@@ -417,6 +476,19 @@ contains
                         radial(1) = self%bsupumnc(mn, fh + k - 1)
                     else
                         radial(1) = self%bsupvmnc(mn, fh + k - 1)
+                    end if
+                    v(i) = v(i) + radial(1)*val
+                    vu(:, i) = vu(:, i) + radial(1)*d
+                    vuu(:, :, i) = vuu(:, :, i) + radial(1)*d2
+                end do
+                if (.not. allocated(self%bsupumns)) cycle
+                call vmec_z(wh(k, :), self%xm_nyq(mn), self%xn_nyq(mn), &
+                            u(2), u(3), val, d, d2, d3)
+                do i = 1, 2
+                    if (i == 1) then
+                        radial(1) = self%bsupumns(mn, fh + k - 1)
+                    else
+                        radial(1) = self%bsupvmns(mn, fh + k - 1)
                     end if
                     v(i) = v(i) + radial(1)*val
                     vu(:, i) = vu(:, i) + radial(1)*d

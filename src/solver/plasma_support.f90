@@ -738,26 +738,33 @@ contains
         class(plasma_support_t), intent(in) :: self
         real(dp), intent(in) :: w(:, :, :)
         real(dp), allocatable, intent(out) :: resp(:, :)
-        real(dp), allocatable :: cu(:), cv(:)
+        real(dp), allocatable :: cu(:), wu(:, :), wv(:, :)
         real(dp) :: arg, m, n, denom
         integer :: k, mode, s, nm
 
         nm = size(self%xm_nyq)
-        allocate(resp(size(w, 3), self%n_mode_columns()), cu(size(w, 3)), cv(size(w, 3)))
+        allocate(resp(size(w, 3), self%n_mode_columns()), cu(size(w, 3)))
         resp = 0.0_dp
-!$omp parallel do schedule(static) private(mode, k, s, arg, cu, cv, m, n, denom)
+        ! The projections onto jt and jp do not depend on the mode; computing
+        ! them once instead of per mode keeps the sums bit-identical.
+        allocate(wu(size(w, 3), size(self%xs, 2)), wv(size(w, 3), size(self%xs, 2)))
+        !$omp parallel do schedule(static) private(k, s)
+        do k = 1, size(self%xs, 2)
+            do s = 1, size(w, 3)
+                wu(s, k) = dot_product(w(:, k, s), self%jt(:, k))
+                wv(s, k) = dot_product(w(:, k, s), self%jp(:, k))
+            end do
+        end do
+        !$omp end parallel do
+        !$omp parallel do schedule(static) private(mode, k, arg, cu, m, n, denom)
         do mode = 1, nm
             do k = 1, size(self%xs, 2)
                 arg = self%xm_nyq(mode) * self%theta(k) - self%xn_nyq(mode) * self%phi(k)
-                do s = 1, size(w, 3)
-                    cu(s) = dot_product(w(:, k, s), self%jt(:, k))
-                    cv(s) = dot_product(w(:, k, s), self%jp(:, k))
-                end do
-                resp(:, mode) = resp(:, mode) + cu * cos(arg)
-                resp(:, nm + mode) = resp(:, nm + mode) + cv * cos(arg)
+                resp(:, mode) = resp(:, mode) + wu(:, k) * cos(arg)
+                resp(:, nm + mode) = resp(:, nm + mode) + wv(:, k) * cos(arg)
                 if (self%lasym) then
-                    resp(:, 2 * nm + mode) = resp(:, 2 * nm + mode) + cu * sin(arg)
-                    resp(:, 3 * nm + mode) = resp(:, 3 * nm + mode) + cv * sin(arg)
+                    resp(:, 2 * nm + mode) = resp(:, 2 * nm + mode) + wu(:, k) * sin(arg)
+                    resp(:, 3 * nm + mode) = resp(:, 3 * nm + mode) + wv(:, k) * sin(arg)
                 end if
             end do
             if (self%conservative) then
