@@ -282,6 +282,20 @@ git diff --exit-code -- src/generated/nonthermal_pressure.f90
 `tiago_kinetic_profiles` checks the independent pressure formula and reverse
 chain, including the central thermal-pressure dependence and prior tails.
 
+## Island kernels
+
+`gen_islands` emits the field-line slope R B_R/B_φ, R B_Z/B_φ, the
+Cartesian-to-cylindrical field rotation, Greene's residue with the map
+determinant and the helical phase m θ − n φ, each with its Jacobian. The
+committed kernels were generated with FortSym
+`dbaa8e319ac5343e8c12a7938ca6a233d672a682`:
+
+```sh
+cmake --build build-codegen --target gen_islands
+build-codegen/gen_islands
+ctest --test-dir build -R tiago_island --output-on-failure
+```
+
 # Regenerate the field-line direction
 
 `gen_field_line` (FortSym `dbaa8e319ac5343e8c12a7938ca6a233d672a682`) emits
