@@ -1,9 +1,11 @@
 program tiago_island
     !! Magnetic axis, island O and X points, width and phase, and an optional
-    !! Poincare section, for a field of coils and/or a SPECTRE state.
+    !! Poincare section, for a field of coils, a SPECTRE state and/or a nested
+    !! VMEC state (inside its plasma).
     !! Usage: tiago_island input.nml   (namelist &island, see docs/islands.md)
     use, intrinsic :: iso_fortran_env, only: dp => real64, error_unit
     use tiago_field_lines, only: cartesian_line_field_t, read_scaled_coils
+    use tiago_vmec_state, only: vmec_state_t
     use tiago_island_measure, only: trace_options_t, island_point_t, &
         island_width_t, periodic_point, island_width, poincare_section
 #ifdef TIAGO_ENABLE_SPECTRE
@@ -13,7 +15,7 @@ program tiago_island
     integer, parameter :: max_files = 16, path_len = 1024
     real(dp), parameter :: pi = acos(-1.0_dp)
     character(len=path_len) :: coil_files(max_files) = '', spectre_file = ''
-    character(len=path_len) :: coil_extcur(max_files) = ''
+    character(len=path_len) :: coil_extcur(max_files) = '', vmec_wout = ''
     character(len=path_len) :: output = 'island', input
     real(dp) :: coil_scales(max_files) = 1.0_dp
     real(dp) :: phi0 = 0.0_dp, axis_seed(2) = 0, o_seed(2) = 0, x_seed(2) = 0
@@ -26,7 +28,7 @@ program tiago_island
     integer :: map_turns = 2, m = 2, n = 1, scans = 14, width_fixed_steps = 0
     integer :: poincare_lines = 0, poincare_crossings = 0, max_steps = 2000000
     logical :: measure_x = .true., measure_width = .true.
-    namelist /island/ coil_files, coil_scales, coil_extcur, spectre_file, output, phi0, &
+    namelist /island/ coil_files, coil_scales, coil_extcur, spectre_file, vmec_wout, output, phi0, &
         axis_seed, o_seed, x_seed, half_span, width_turns, r_min, point_rtol, &
         point_atol, point_max_step, map_delta, root_tol, width_rtol, width_atol, &
         width_max_step, map_turns, m, n, scans, width_fixed_steps, &
@@ -53,7 +55,9 @@ program tiago_island
         field%has_coils = .true.
     end if
     if (len_trim(spectre_file) > 0) call attach_spectre()
-    if (nfiles == 0 .and. len_trim(spectre_file) == 0) call die('no field given')
+    if (len_trim(vmec_wout) > 0) call attach_vmec()
+    if (nfiles == 0 .and. len_trim(spectre_file) == 0 .and. len_trim(vmec_wout) == 0) &
+        call die('no field given')
     field%r_min = r_min
 
     popt%rtol = point_rtol
@@ -116,6 +120,16 @@ contains
         call die('spectre_file requires a build with TIAGO_ENABLE_SPECTRE=ON')
 #endif
     end subroutine attach_spectre
+
+    subroutine attach_vmec()
+        type(vmec_state_t), allocatable :: state
+        character(len=:), allocatable :: message
+        integer :: ierr
+        allocate (state)
+        call state%load(trim(vmec_wout), ierr, message, vector=.true.)
+        if (ierr /= 0) call die(message)
+        call move_alloc(state, field%state)
+    end subroutine attach_vmec
 
     subroutine write_poincare()
         !! Lines started on the axis-O chord, recorded every map_turns turns.

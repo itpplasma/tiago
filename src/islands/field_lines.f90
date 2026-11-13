@@ -4,11 +4,15 @@ module tiago_field_lines
     !! b = (B_R, B_phi, B_Z) [T]. A field is any sum of filament coils and one
     !! plasma source that provides its TOTAL interior field (SPECTRE, or a
     !! nested source plus coils), so vacuum, nested and island states are
-    !! traced and measured by the same code.
+    !! traced and measured by the same code. A nested state (VMEC) adds its
+    !! interior field inside rho <= 1, so a nested equilibrium plus a changed
+    !! coil field is traced the same way.
     use, intrinsic :: iso_fortran_env, only: dp => real64
     use, intrinsic :: ieee_arithmetic, only: ieee_is_finite
     use tiago_coil_kernels, only: coil_set_t, build_coil_set
     use tiago_plasma_field_source, only: plasma_field_source_t
+    use tiago_real_space_state, only: real_space_state_t, located_t, &
+        vector_jets_t, locate_ok
     use tiago_cylindrical_components, only: cylindrical_components
     implicit none
     private
@@ -32,10 +36,13 @@ module tiago_field_lines
 
     type, extends(line_field_t) :: cartesian_line_field_t
         !! Coil filaments plus an optional plasma source's total interior
-        !! field; with a SPECTRE source the coils are normally left empty.
+        !! field (SPECTRE) and an optional nested state's field (VMEC). A
+        !! point outside the nested state's plasma (rho > 1) is outside the
+        !! domain.
         type(coil_set_t) :: coils
         logical :: has_coils = .false.
         class(plasma_field_source_t), allocatable :: plasma
+        class(real_space_state_t), allocatable :: state
         real(dp) :: r_min = 0.0_dp
     contains
         procedure :: sample => cartesian_sample
@@ -49,6 +56,9 @@ contains
         real(dp), intent(out) :: b(3)
         integer, intent(out) :: status
         real(dp) :: point(3, 1), bc(3, 1), total(3), cyl(2), jac(2, 3)
+        type(located_t) :: loc
+        type(vector_jets_t) :: jet
+        integer :: st
 
         b = 0.0_dp
         status = 1
@@ -63,6 +73,13 @@ contains
         if (allocated(self%plasma)) then
             call self%plasma%sample_interior_bfield(point, bc)
             total = total + bc(:, 1)
+        end if
+        if (allocated(self%state)) then
+            call self%state%locate(point(:, 1), loc)
+            if (loc%status /= locate_ok .or. loc%u(1) > 1.0_dp) return
+            call self%state%vector_jets(loc%u, jet, st, parameters=.false.)
+            if (st /= locate_ok) return
+            total = total + jet%b
         end if
         call cylindrical_components(x(2), total(1), total(2), cyl, jac)
         b = [cyl(1), cyl(2), total(3)]

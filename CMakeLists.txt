@@ -1182,6 +1182,10 @@ set_tests_properties(tiago_island_rejects_empty_field PROPERTIES
 add_executable(test_island_measure tests/test_island_measure.f90)
 target_link_libraries(test_island_measure PRIVATE tiago_islands)
 add_test(NAME tiago_island_measure COMMAND test_island_measure)
+add_executable(test_island_vmec tests/test_island_vmec.f90)
+target_link_libraries(test_island_vmec PRIVATE tiago_islands)
+add_test(NAME tiago_island_vmec COMMAND test_island_vmec ${TIAGO_WOUT_SIMSOPT_SMALL})
+set_tests_properties(tiago_island_vmec PROPERTIES FIXTURES_REQUIRED wout_li383)
 if(FORTSYM_BUILD)
     add_test(NAME tiago_island_codegen COMMAND ${CMAKE_COMMAND}
         -DGENERATOR=$<TARGET_FILE:gen_islands> -DSOURCE=${CMAKE_CURRENT_SOURCE_DIR}
