@@ -17,6 +17,7 @@ module tiago_plasma_support
     !! misses the toroidal flux inside the boundary, which DIAGNO (and Tiago) add
     !! as phiedge for loops flagged idia = 1.
     use, intrinsic :: iso_fortran_env, only: dp => real64, i32 => int32, error_unit
+    use, intrinsic :: ieee_arithmetic, only: ieee_is_finite
     use tiago_plasma_field_source, only: plasma_field_source_t
     use netcdf, only: nf90_open, nf90_close, nf90_inq_varid, nf90_get_var, &
         nf90_inquire_dimension, nf90_inq_dimid, nf90_noerr, nf90_nowrite
@@ -113,8 +114,8 @@ contains
         !! in Cartesian SI units on the uniform full-torus grid
         !! theta_j = 2 pi j/ntheta, phi_k = 2 pi k/nphi (j, k from 0) of any
         !! periodic parametrisation of a closed flux surface. B is the total
-        !! field on the plasma side. The trapezoidal rule is exact in the angles,
-        !! so the parametrisation need not be the geometric toroidal angle.
+        !! field on the plasma side; the tangent cross product supplies the
+        !! surface element for any periodic parametrisation.
         class(plasma_support_t), intent(inout) :: self
         character(len=*), intent(in) :: path
         real(dp), intent(out), optional :: max_normal_fraction
@@ -128,18 +129,21 @@ contains
             error stop 'cannot open plasma surface file'
         end if
         read(unit, *, iostat=ios) ntheta, nphi
-        if (ios /= 0 .or. ntheta < 4 .or. nphi < 4) &
+        if (ios /= 0) error stop 'malformed plasma surface grid size'
+        if (ntheta < 4 .or. nphi < 4) &
             error stop 'plasma surface file needs "ntheta nphi" with at least 4x4 points'
         allocate(xs(3, ntheta*nphi), xt(3, ntheta*nphi), xp(3, ntheta*nphi), b(3, ntheta*nphi))
         fraction = 0.0_dp
         do k = 1, ntheta*nphi
             read(unit, *, iostat=ios) row
             if (ios /= 0) error stop 'missing or malformed row in plasma surface file'
+            if (.not. all(ieee_is_finite(row))) error stop 'nonfinite plasma surface row'
             xs(:, k) = row(1:3)
             xt(:, k) = row(4:6)
             xp(:, k) = row(7:9)
             b(:, k) = row(10:12)
             nrm = cross(xt(:, k), xp(:, k))
+            if (norm2(nrm) <= tiny(1.0_dp)) error stop 'degenerate plasma surface tangents'
             fraction = max(fraction, abs(dot_product(nrm, b(:, k))) &
                 / max(norm2(nrm) * norm2(b(:, k)), tiny(1.0_dp)))
         end do

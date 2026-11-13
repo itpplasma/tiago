@@ -29,3 +29,22 @@ if "$cli" --plasma-surface "$out/tilted/surface.txt" --bprobes "$out/poloidal.di
     exit 1
 fi
 grep -q 'not a flux surface' "$out/tilted/error.log"
+
+for mode in nonfinite degenerate; do
+    mkdir -p "$out/$mode"
+    "$fixture" "$out/$mode" "$mode"
+    if "$cli" --plasma-surface "$out/$mode/surface.txt" --bprobes "$out/poloidal.diagno" \
+        --output-dir "$out/$mode" > "$out/$mode/error.log" 2>&1; then
+        echo "invalid $mode surface accepted" >&2
+        exit 1
+    fi
+    grep -q "$mode plasma surface" "$out/$mode/error.log"
+done
+mkdir -p "$out/bad-header"
+printf 'missing dimensions\n' > "$out/bad-header/surface.txt"
+if "$cli" --plasma-surface "$out/bad-header/surface.txt" --bprobes "$out/poloidal.diagno" \
+    --output-dir "$out/bad-header" > "$out/bad-header/error.log" 2>&1; then
+    echo 'malformed surface dimensions accepted' >&2
+    exit 1
+fi
+grep -q 'malformed plasma surface grid size' "$out/bad-header/error.log"

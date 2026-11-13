@@ -7,6 +7,7 @@ program plasma_surface_fixture
     !!   toroidal circle at 4 m outside: 0 (no net poloidal current linked).
     !! Usage: plasma_surface_fixture <dir> [tilted]; "tilted" adds a normal field.
     use, intrinsic :: iso_fortran_env, only: dp => real64
+    use, intrinsic :: ieee_arithmetic, only: ieee_value, ieee_quiet_nan
     implicit none
     real(dp), parameter :: pi = acos(-1.0_dp), r0 = 3.0_dp, a = 0.5_dp
     real(dp), parameter :: bp = 0.1_dp, b0 = 2.0_dp
@@ -29,6 +30,8 @@ program plasma_surface_fixture
             xp = [-r * sin(ph), r * cos(ph), 0.0_dp]
             b = bp * xt / a + b0 * r0 / r * xp / r
             if (trim(mode) == 'tilted') b = b + 0.01_dp * [cos(th) * cos(ph), cos(th) * sin(ph), sin(th)]
+            if (trim(mode) == 'nonfinite') b(1) = ieee_value(0.0_dp, ieee_quiet_nan)
+            if (trim(mode) == 'degenerate') xt = 0.0_dp
             write(unit, '(12ES25.16E3)') x, xt, xp, b
         end do
     end do

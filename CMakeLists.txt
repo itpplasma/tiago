@@ -16,7 +16,7 @@ endif()
 include(FetchContent)
 
 set(TIAGO_LIBNEO_GIT "https://github.com/itpplasma/libneo.git" CACHE STRING "libneo upstream to fetch")
-set(TIAGO_LIBNEO_TAG "42b04688a2fa2805bb84273c68dc35e78b50f72e" CACHE STRING "libneo commit/branch/tag used by Tiago")
+set(TIAGO_LIBNEO_TAG "9fd5e184b693342895ab138c786888ca899f2552" CACHE STRING "libneo commit/branch/tag used by Tiago")
 option(TIAGO_ENABLE_SPECTRE "Build the libneo SPECTRE plasma source (HDF5, fortnum)" OFF)
 option(TIAGO_MATCH_LIBNEO_BRANCH "Use the matching libneo branch when available" OFF)
 # Use a local effective ref so removing an override restores the pinned default.
