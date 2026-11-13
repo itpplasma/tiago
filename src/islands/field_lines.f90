@@ -69,24 +69,33 @@ contains
         if (all(ieee_is_finite(b))) status = 0
     end subroutine cartesian_sample
 
-    subroutine read_scaled_coils(paths, scales, coils)
+    subroutine read_scaled_coils(paths, scales, coils, extcur)
         !! STELLOPT/MAKEGRID coil files, each with its file currents multiplied
-        !! by one scale factor, joined into one filament set. A file's closing
-        !! point carries zero current, so the joints between files and coils
-        !! are current-free jumpers.
+        !! by one scale factor, joined into one filament set. A nonblank
+        !! extcur(k) names an EXTCUR file that sets the group currents of file
+        !! k before scaling. A file's closing point carries zero current, so
+        !! the joints between files and coils are current-free jumpers.
         use tiago_coil_loader, only: load_coils_into_field
         use neo_biotsavart_field, only: biotsavart_field_t
         character(len=*), intent(in) :: paths(:)
         real(dp), intent(in) :: scales(:)
         type(coil_set_t), intent(out) :: coils
+        character(len=*), intent(in), optional :: extcur(:)
         type(biotsavart_field_t) :: one
+        logical :: with_extcur
         real(dp), allocatable :: x(:), y(:), z(:), current(:)
         integer :: k
 
         if (size(paths) /= size(scales)) error stop 'one scale per coil file'
         allocate (x(0), y(0), z(0), current(0))
         do k = 1, size(paths)
-            call load_coils_into_field(one, trim(paths(k)))
+            with_extcur = .false.
+            if (present(extcur)) with_extcur = len_trim(extcur(k)) > 0
+            if (with_extcur) then
+                call load_coils_into_field(one, trim(paths(k)), trim(extcur(k)))
+            else
+                call load_coils_into_field(one, trim(paths(k)))
+            end if
             x = [x, one%coils%x]
             y = [y, one%coils%y]
             z = [z, one%coils%z]
