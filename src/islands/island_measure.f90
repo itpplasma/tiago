@@ -26,6 +26,7 @@ module tiago_island_measure
     use, intrinsic :: iso_fortran_env, only: dp => real64
     use, intrinsic :: ieee_arithmetic, only: ieee_is_finite
     use tiago_field_lines, only: line_field_t
+    use tiago_plasma_field_source, only: field_hint_t
     use tiago_fieldline_slope, only: fieldline_slope
     use tiago_map_invariants, only: map_invariants
     use tiago_helical_phase, only: helical_phase
@@ -85,11 +86,14 @@ contains
         type(ode_workspace_t) :: work
         type(ode_solution_t) :: sol
         type(fortnum_status_t) :: stat
+        type(field_hint_t) :: hint
         real(dp) :: k1(2), k2(2), k3(2), k4(2), k5(2), k6(2), tmp(2)
         real(dp) :: next(2), err(2), h, phi
         integer :: j, count, nfev, fault
 
         finish = start
+        ! Each trajectory owns its seed, including concurrent return maps.
+        hint = field_hint_t()
         status = 1
         fault = 0
         if (abs(turns) <= tiny(1.0_dp) .or. opt%max_step <= 0 .or. opt%rtol <= 0 &
@@ -129,7 +133,7 @@ contains
             integer :: st
             dy = 0
             if (fault /= 0) return
-            call field%sample([y(1), t, y(2)], b, st)
+            call field%sample_with_hint([y(1), t, y(2)], b, st, hint)
             if (st /= 0 .or. abs(b(2)) <= tiny(1.0_dp)) then
                 fault = 1
                 return

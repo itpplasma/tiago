@@ -10,6 +10,7 @@ module island_oracle_field
     !! of K through the X point, which gives the width in closed form.
     use, intrinsic :: iso_fortran_env, only: dp => real64
     use tiago_field_lines, only: line_field_t
+    use tiago_plasma_field_source, only: field_hint_t
     implicit none
     real(dp), parameter :: r0 = 3.0_dp, b0 = 1.0_dp, iota0 = 0.4_dp
     real(dp), parameter :: iota2 = 0.2_dp, a = 0.5_dp, eps = 0.0005_dp
@@ -19,7 +20,51 @@ module island_oracle_field
     contains
         procedure :: sample => oracle_sample
     end type oracle_t
+
+    type, extends(line_field_t) :: hinted_oracle_t
+        type(oracle_t) :: field
+    contains
+        procedure :: sample => require_hint
+        procedure :: sample_with_hint => hinted_sample
+    end type hinted_oracle_t
 contains
+    subroutine require_hint(self, x, b, status)
+        class(hinted_oracle_t), intent(in) :: self
+        real(dp), intent(in) :: x(3)
+        real(dp), intent(out) :: b(3)
+        integer, intent(out) :: status
+
+        call self%field%sample(x, b, status)
+        ! Make a tracer that bypasses the hinted entry point observable.
+        status = 1
+    end subroutine require_hint
+
+    subroutine hinted_sample(self, x, b, status, hint)
+        class(hinted_oracle_t), intent(in) :: self
+        real(dp), intent(in) :: x(3)
+        real(dp), intent(out) :: b(3)
+        integer, intent(out) :: status
+        type(field_hint_t), intent(inout) :: hint
+        real(dp) :: dx, dy, conserved
+
+        b = 0
+        status = 1
+        dx = x(1) - r0
+        dy = x(3)
+        conserved = invariant(dx*dx + dy*dy, &
+                              cos(2*atan2(dy, dx) - x(2)))
+        if (hint%volume == 0) then
+            ! Each return starts at an integer turn; later stages need its hint.
+            if (abs(sin(x(2)/2)) > 1.0e-10_dp) return
+            hint%u = [conserved, 0.0_dp, 0.0_dp]
+            hint%volume = 1
+        else
+            ! Different starts have different invariants, even on one thread.
+            if (abs(hint%u(1) - conserved) > 1.0e-5_dp) return
+        end if
+        call self%field%sample(x, b, status)
+    end subroutine hinted_sample
+
     subroutine oracle_sample(self, x, b, status)
         class(oracle_t), intent(in) :: self
         real(dp), intent(in) :: x(3)
@@ -173,6 +218,7 @@ program test_island_measure
                abs(wd%metres - exact) < 1.0e-3_dp*exact)
 
     call wire_check()
+    call hint_check()
 
     print '(a,es12.4,a,es12.4,a,es10.2)', 'width ', wd%metres, ' exact ', exact, &
         ' duration error ', wd%duration_error
@@ -219,4 +265,31 @@ contains
         call wire%sample([-0.1_dp, 0.0_dp, 0.0_dp], b, status)
         call check('negative R rejected', status /= 0)
     end subroutine wire_check
+
+    subroutine hint_check()
+        type(oracle_t) :: cold
+        type(hinted_oracle_t) :: hinted
+        type(trace_options_t) :: opt
+        real(dp) :: starts(2, 3), ordinary(2, 2, 3), cached(2, 2, 3)
+        integer :: ordinary_status(3), cached_status(3), schedule
+
+        starts(:, 1) = [r0 + 0.2_dp, 0.03_dp]
+        starts(:, 2) = [r0 + 0.27_dp, -0.02_dp]
+        starts(:, 3) = [r0 + 0.32_dp, 0.01_dp]
+        opt%rtol = 1.0e-10_dp
+        opt%atol = 1.0e-12_dp
+        do schedule = 1, 2
+            opt%fixed_steps = merge(128, 0, schedule == 1)
+            call poincare_section(cold, starts, 0.0_dp, 1.0_dp, 2, ordinary, &
+                                  ordinary_status, opt)
+            call poincare_section(hinted, starts, 0.0_dp, 1.0_dp, 2, cached, &
+                                  cached_status, opt)
+            call check('default sampling remains compatible', &
+                       all(ordinary_status == 0))
+            call check('tracer preserves separate trajectory hints', &
+                       all(cached_status == 0))
+            call check('hinted fixed/adaptive Poincare sections agree', &
+                       maxval(abs(cached - ordinary)) < 1.0e-10_dp)
+        end do
+    end subroutine hint_check
 end program test_island_measure

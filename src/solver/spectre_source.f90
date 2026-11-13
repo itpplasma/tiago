@@ -2,11 +2,12 @@ module tiago_spectre_source
     !! SPECTRE adapter: libneo owns file reading, geometry, inversion and field
     !! evaluation. Tiago's existing virtual casing owns exterior plasma B/A.
     use, intrinsic :: iso_fortran_env, only: dp => real64, i32 => int32
-    use tiago_plasma_field_source, only: plasma_field_source_t
+    use tiago_plasma_field_source, only: plasma_field_source_t, field_hint_t
     use tiago_plasma_support, only: plasma_support_t
     use field_spectre, only: spectre_field_t, create_spectre_field
     use field_base, only: magnetic_field_t
-    use libneo_coordinates, only: SPECTRE_SUCCESS, SPECTRE_OUTSIDE_DOMAIN
+    use libneo_coordinates, only: SPECTRE_SUCCESS, SPECTRE_OUTSIDE_DOMAIN, &
+        spectre_coordinate_system_t
     implicit none
     private
     public :: spectre_source_t
@@ -24,6 +25,7 @@ module tiago_spectre_source
         procedure :: sample_vector_potential => spectre_source_potential
         procedure :: sample_interior_bfield => spectre_source_interior
         procedure :: sample_interior_bfield_status => spectre_source_interior_status
+        procedure :: sample_interior_bfield_with_hint => spectre_source_with_hint
     end type spectre_source_t
 
 contains
@@ -157,6 +159,69 @@ contains
         end do
         !$omp end parallel do
     end subroutine spectre_source_interior_status
+
+    subroutine spectre_source_with_hint(self, point, value, status, hint)
+        use, intrinsic :: ieee_arithmetic, only: ieee_is_finite
+        class(spectre_source_t), intent(in) :: self
+        real(dp), intent(in) :: point(3)
+        real(dp), intent(out) :: value(3)
+        integer, intent(out) :: status
+        type(field_hint_t), intent(inout) :: hint
+        real(dp) :: u(3), cyl(3)
+
+        value = 0.0_dp
+        status = 1
+        if (.not. self%enabled .or. .not. all(ieee_is_finite(point))) then
+            hint = field_hint_t()
+            return
+        end if
+        if (hint%volume >= 1 .and. hint%volume <= self%field%data%Mvol &
+            .and. all(ieee_is_finite(hint%u))) then
+            cyl = [sqrt(point(1)**2 + point(2)**2), &
+                   atan2(point(2), point(1)), point(3)]
+            u = hint%u
+            select type (cs => self%field%coords)
+            type is (spectre_coordinate_system_t)
+                call cs%from_cyl_warm(cyl, u, hint%volume, status)
+            end select
+            if (status == SPECTRE_SUCCESS) then
+                ! Warm inversion snaps near interfaces; preserve the cold sheet side.
+                if (abs(u(1) - real(nint(u(1)), dp)) <= 0.5e-9_dp) status = 1
+            end if
+            if (status == SPECTRE_SUCCESS) &
+                call interior_at_labels(self, u, value, status)
+        end if
+        ! A previous volume is only a seed, never a domain restriction.
+        if (status /= SPECTRE_SUCCESS) then
+            call locate(self, point, u, status)
+            if (status == SPECTRE_SUCCESS) &
+                call interior_at_labels(self, u, value, status)
+        end if
+        if (status == SPECTRE_SUCCESS) then
+            hint%u = u
+            hint%volume = min(int(u(1)) + 1, self%field%data%Mvol)
+        else
+            hint = field_hint_t()
+        end if
+    end subroutine spectre_source_with_hint
+
+    subroutine interior_at_labels(self, u, value, status)
+        use, intrinsic :: ieee_arithmetic, only: ieee_is_finite
+        class(spectre_source_t), intent(in) :: self
+        real(dp), intent(in) :: u(3)
+        real(dp), intent(out) :: value(3)
+        integer, intent(out) :: status
+
+        value = 0.0_dp
+        status = SPECTRE_OUTSIDE_DOMAIN
+        if (u(1) >= real(self%plasma_volumes, dp)) return
+        call chart_bfield(self%field, u, value)
+        status = SPECTRE_SUCCESS
+        if (.not. all(ieee_is_finite(value))) then
+            value = 0.0_dp
+            status = 1
+        end if
+    end subroutine interior_at_labels
 
     subroutine chart_bfield(field, u, b)
         class(magnetic_field_t), intent(in) :: field

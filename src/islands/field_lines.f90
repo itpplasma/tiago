@@ -10,7 +10,7 @@ module tiago_field_lines
     use, intrinsic :: iso_fortran_env, only: dp => real64
     use, intrinsic :: ieee_arithmetic, only: ieee_is_finite
     use tiago_coil_kernels, only: coil_set_t, build_coil_set
-    use tiago_plasma_field_source, only: plasma_field_source_t
+    use tiago_plasma_field_source, only: plasma_field_source_t, field_hint_t
     use tiago_real_space_state, only: real_space_state_t, located_t, &
         vector_jets_t, locate_ok
     use tiago_cylindrical_components, only: cylindrical_components
@@ -21,6 +21,7 @@ module tiago_field_lines
     type, abstract :: line_field_t
     contains
         procedure(sample_i), deferred :: sample
+        procedure :: sample_with_hint => default_sample_with_hint
     end type line_field_t
 
     abstract interface
@@ -46,24 +47,53 @@ module tiago_field_lines
         real(dp) :: r_min = 0.0_dp
     contains
         procedure :: sample => cartesian_sample
+        procedure :: sample_with_hint => cartesian_sample_with_hint
     end type cartesian_line_field_t
 
 contains
+
+    subroutine default_sample_with_hint(self, x, b, status, hint)
+        class(line_field_t), intent(in) :: self
+        real(dp), intent(in) :: x(3)
+        real(dp), intent(out) :: b(3)
+        integer, intent(out) :: status
+        type(field_hint_t), intent(inout) :: hint
+
+        call self%sample(x, b, status)
+    end subroutine default_sample_with_hint
 
     subroutine cartesian_sample(self, x, b, status)
         class(cartesian_line_field_t), intent(in) :: self
         real(dp), intent(in) :: x(3)
         real(dp), intent(out) :: b(3)
         integer, intent(out) :: status
+        type(field_hint_t) :: hint
+
+        hint = field_hint_t()
+        call self%sample_with_hint(x, b, status, hint)
+    end subroutine cartesian_sample
+
+    subroutine cartesian_sample_with_hint(self, x, b, status, hint)
+        class(cartesian_line_field_t), intent(in) :: self
+        real(dp), intent(in) :: x(3)
+        real(dp), intent(out) :: b(3)
+        integer, intent(out) :: status
+        type(field_hint_t), intent(inout) :: hint
         real(dp) :: point(3, 1), bc(3, 1), total(3), cyl(2), jac(2, 3)
         type(located_t) :: loc
         type(vector_jets_t) :: jet
-        integer :: st, plasma_status(1)
+        integer :: st
 
         b = 0.0_dp
         status = 1
-        if (.not. all(ieee_is_finite(x))) return
-        if (x(1) <= self%r_min) return
+        if (.not. all(ieee_is_finite(x))) then
+            hint = field_hint_t()
+            return
+        end if
+        if (x(1) <= self%r_min) then
+            hint = field_hint_t()
+            return
+        end if
         point(:, 1) = [x(1)*cos(x(2)), x(1)*sin(x(2)), x(3)]
         total = 0.0_dp
         if (self%has_coils) then
@@ -71,21 +101,32 @@ contains
             total = total + bc(:, 1)
         end if
         if (allocated(self%plasma)) then
-            call self%plasma%sample_interior_bfield_status(point, bc, plasma_status)
-            if (plasma_status(1) /= 0) return
+            call self%plasma%sample_interior_bfield_with_hint( &
+                point(:, 1), bc(:, 1), st, hint)
+            if (st /= 0) then
+                hint = field_hint_t()
+                return
+            end if
             total = total + bc(:, 1)
         end if
         if (allocated(self%state)) then
             call self%state%locate(point(:, 1), loc)
-            if (loc%status /= locate_ok .or. loc%u(1) > 1.0_dp) return
+            if (loc%status /= locate_ok .or. loc%u(1) > 1.0_dp) then
+                hint = field_hint_t()
+                return
+            end if
             call self%state%vector_jets(loc%u, jet, st, parameters=.false.)
-            if (st /= locate_ok) return
+            if (st /= locate_ok) then
+                hint = field_hint_t()
+                return
+            end if
             total = total + jet%b
         end if
         call cylindrical_components(x(2), total(1), total(2), cyl, jac)
         b = [cyl(1), cyl(2), total(3)]
         if (all(ieee_is_finite(b))) status = 0
-    end subroutine cartesian_sample
+        if (status /= 0) hint = field_hint_t()
+    end subroutine cartesian_sample_with_hint
 
     subroutine read_scaled_coils(paths, scales, coils, extcur)
         !! STELLOPT/MAKEGRID coil files, each with its file currents multiplied

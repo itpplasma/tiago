@@ -6,7 +6,13 @@ module tiago_plasma_field_source
     use, intrinsic :: iso_fortran_env, only: dp => real64
     implicit none
     private
-    public :: plasma_field_source_t
+    public :: plasma_field_source_t, field_hint_t
+
+    type :: field_hint_t
+        !! Caller-owned inverse seed; volume zero requests a cold inverse.
+        real(dp) :: u(3) = 0.0_dp
+        integer :: volume = 0
+    end type field_hint_t
 
     type, abstract :: plasma_field_source_t
         real(dp) :: diamagnetic_flux = 0.0_dp
@@ -17,6 +23,7 @@ module tiago_plasma_field_source
         procedure(sample_a_interface), deferred :: sample_vector_potential
         procedure :: sample_interior_bfield => unsupported_interior
         procedure :: sample_interior_bfield_status => unsupported_interior_status
+        procedure :: sample_interior_bfield_with_hint => interior_with_hint
         procedure :: has_data
     end type plasma_field_source_t
 
@@ -36,6 +43,22 @@ module tiago_plasma_field_source
     end interface
 
 contains
+
+    subroutine interior_with_hint(self, point, value, status, hint)
+        class(plasma_field_source_t), intent(in) :: self
+        real(dp), intent(in) :: point(3)
+        real(dp), intent(out) :: value(3)
+        integer, intent(out) :: status
+        type(field_hint_t), intent(inout) :: hint
+        real(dp) :: points(3, 1), values(3, 1)
+        integer :: statuses(1)
+
+        points(:, 1) = point
+        call self%sample_interior_bfield_status(points, values, statuses)
+        value = values(:, 1)
+        status = statuses(1)
+        if (status /= 0) hint = field_hint_t()
+    end subroutine interior_with_hint
 
     logical function has_data(self)
         class(plasma_field_source_t), intent(in) :: self
