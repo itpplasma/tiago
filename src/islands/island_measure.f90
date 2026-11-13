@@ -12,10 +12,16 @@ module tiago_island_measure
     !!
     !! The width is the distance between the two libration edges along the
     !! straight chord from the axis through the O point: a line launched
-    !! inside the island librates (its helical phase spans less than 2 pi
-    !! within the trace) and one launched outside circulates. Both edges are
-    !! bisected. The result is a finite-time estimate, not an enclosure; the
-    !! report carries its sensitivity to tolerance and trace duration.
+    !! inside the island librates and one launched outside circulates. The
+    !! helical phase is sampled where the line returns to the section, as m
+    !! times the accumulated poloidal-angle change about the axis per return
+    !! map (wrapped to (-pi, pi]); a line librates if that phase spans less
+    !! than 2 pi within the trace. Sampling on the section keeps the angle
+    !! meaningful for a helical magnetic axis, where an angle about one fixed
+    !! point between sections is not (MILCA accumulates it continuously).
+    !! Both edges are bisected. The result is a finite-time estimate, not an
+    !! enclosure; the report carries its sensitivity to tolerance and trace
+    !! duration.
     use, intrinsic :: iso_fortran_env, only: dp => real64
     use, intrinsic :: ieee_arithmetic, only: ieee_is_finite
     use tiago_field_lines, only: line_field_t
@@ -31,7 +37,7 @@ module tiago_island_measure
     private
     public :: trace_options_t, island_point_t, island_width_t
     public :: field_line_trace, map_stability, periodic_point
-    public :: libration_edge, island_width, poincare_section
+    public :: libration_span, libration_edge, island_width, poincare_section
 
     real(dp), parameter :: pi = acos(-1.0_dp)
 
@@ -66,41 +72,27 @@ module tiago_island_measure
 
 contains
 
-    subroutine field_line_trace(field, start, phi0, turns, opt, finish, status, &
-                                centre, m, n, span)
+    subroutine field_line_trace(field, start, phi0, turns, opt, finish, status)
         !! Follow a line from (R, Z) = start on phi0 over `turns` toroidal
-        !! turns. With centre, m and n, span is the range of the unwrapped
-        !! helical phase m theta - n phi along the line.
+        !! turns.
         class(line_field_t), intent(in) :: field
         real(dp), intent(in) :: start(2), phi0, turns
         type(trace_options_t), intent(in) :: opt
         real(dp), intent(out) :: finish(2)
         integer, intent(out) :: status
-        real(dp), intent(in), optional :: centre(2)
-        integer, intent(in), optional :: m, n
-        real(dp), intent(out), optional :: span
         type(ode_problem_t) :: problem
         type(ode_workspace_t) :: work
         type(ode_solution_t) :: sol
         type(fortnum_status_t) :: stat
         real(dp) :: k1(2), k2(2), k3(2), k4(2), k5(2), k6(2), tmp(2)
-        real(dp) :: next(2), err(2), h, phi, angle, oldtheta, theta, lo, hi
+        real(dp) :: next(2), err(2), h, phi
         integer :: j, count, nfev, fault
 
         finish = start
         status = 1
         fault = 0
-        if (present(span)) span = 0
         if (abs(turns) <= tiny(1.0_dp) .or. opt%max_step <= 0 .or. opt%rtol <= 0 &
             .or. opt%atol <= 0 .or. opt%fixed_steps < 0) return
-        if (present(span)) then
-            if (.not. (present(centre) .and. present(m) .and. present(n))) return
-            if (norm2(start - centre) <= tiny(1.0_dp)) return
-            oldtheta = atan2(start(2) - centre(2), start(1) - centre(1))
-            angle = oldtheta
-            lo = m*angle - n*phi0
-            hi = lo
-        end if
         if (opt%fixed_steps > 0) then
             count = max(1, nint(abs(turns)*opt%fixed_steps))
             h = 2*pi*turns/count
@@ -111,11 +103,6 @@ contains
                                     k3, k4, k5, k6, tmp, next, err, nfev)
                 if (fault /= 0) exit
                 finish = next
-                if (present(span)) then
-                    call accumulate(phi + h, finish)
-                    ! A circulating line is decided; the rest adds nothing.
-                    if (abs(turns) > 1 .and. hi - lo > 2*pi) exit
-                end if
             end do
         else
             problem%rhs => rhs
@@ -128,18 +115,10 @@ contains
             problem%max_steps = opt%max_steps
             call ode_integrate(problem, work, sol, stat)
             if (stat%code /= 0) fault = 2
-            if (fault == 0) then
-                finish = sol%y(:, size(sol%t))
-                if (present(span)) then
-                    do j = 2, size(sol%t)
-                        call accumulate(sol%t(j), sol%y(:, j))
-                    end do
-                end if
-            end if
+            if (fault == 0) finish = sol%y(:, size(sol%t))
         end if
         status = 0
         if (fault /= 0 .or. .not. all(ieee_is_finite(finish))) status = 2
-        if (present(span)) span = hi - lo
     contains
         subroutine rhs(t, y, dy, ctx)
             real(dp), intent(in) :: t, y(:)
@@ -157,16 +136,45 @@ contains
             call fieldline_slope(y(1), b(1), b(2), b(3), slope, jac)
             dy = slope
         end subroutine rhs
-
-        subroutine accumulate(t, y)
-            real(dp), intent(in) :: t, y(2)
-            theta = atan2(y(2) - centre(2), y(1) - centre(1))
-            angle = angle + atan2(sin(theta - oldtheta), cos(theta - oldtheta))
-            oldtheta = theta
-            lo = min(lo, m*angle - n*t)
-            hi = max(hi, m*angle - n*t)
-        end subroutine accumulate
     end subroutine field_line_trace
+
+    subroutine libration_span(field, start, phi0, turns, map_turns, centre, m, &
+                              opt, span, status)
+        !! Range of the helical phase m (theta_k - theta_0) over the returns k
+        !! to the section within `turns` toroidal turns, maps of `map_turns`
+        !! turns each, theta about centre. Stops once the range exceeds 2 pi.
+        class(line_field_t), intent(in) :: field
+        real(dp), intent(in) :: start(2), phi0, turns, map_turns, centre(2)
+        integer, intent(in) :: m
+        type(trace_options_t), intent(in) :: opt
+        real(dp), intent(out) :: span
+        integer, intent(out) :: status
+        real(dp) :: x(2), next(2), theta, old, angle, lo, hi
+        integer :: k, maps
+
+        span = 0
+        status = 1
+        if (map_turns <= 0 .or. norm2(start - centre) <= tiny(1.0_dp)) return
+        maps = max(1, nint(turns/map_turns))
+        x = start
+        old = atan2(x(2) - centre(2), x(1) - centre(1))
+        angle = 0
+        lo = 0
+        hi = 0
+        status = 0
+        do k = 1, maps
+            call field_line_trace(field, x, phi0, map_turns, opt, next, status)
+            if (status /= 0) return
+            x = next
+            theta = atan2(x(2) - centre(2), x(1) - centre(1))
+            angle = angle + atan2(sin(theta - old), cos(theta - old))
+            old = theta
+            lo = min(lo, m*angle)
+            hi = max(hi, m*angle)
+            if (hi - lo > 2*pi) exit
+        end do
+        span = hi - lo
+    end subroutine libration_span
 
     subroutine map_stability(field, root, phi0, turns, opt, jac, closure, status)
         !! Central-difference Jacobian of the return map and its closure
@@ -288,18 +296,18 @@ contains
     end subroutine periodic_point
 
     subroutine libration_edge(field, outside, inside, origin, direction, phi0, &
-                              turns, m, n, opt, edge, status, scans)
+                              turns, map_turns, m, opt, edge, status, scans)
         !! Bisect between a circulating point at distance `outside` and a
         !! librating one at `inside` along origin + s direction (unit vector).
         class(line_field_t), intent(in) :: field
         real(dp), intent(in) :: outside, inside, origin(2), direction(2)
-        real(dp), intent(in) :: phi0, turns
-        integer, intent(in) :: m, n
+        real(dp), intent(in) :: phi0, turns, map_turns
+        integer, intent(in) :: m
         type(trace_options_t), intent(in) :: opt
         real(dp), intent(out) :: edge
         integer, intent(out) :: status
         integer, intent(in), optional :: scans
-        real(dp) :: a, b, finish(2), span
+        real(dp) :: a, b, span
         integer :: j, count
 
         a = outside
@@ -309,20 +317,20 @@ contains
         edge = a
         status = 1
         if (abs(norm2(direction) - 1) > 1.0e-12_dp .or. count < 1) return
-        call field_line_trace(field, origin + a*direction, phi0, turns, opt, &
-                              finish, status, origin, m, n, span)
+        call libration_span(field, origin + a*direction, phi0, turns, map_turns, &
+                            origin, m, opt, span, status)
         if (status /= 0) return
         status = 3
         if (span <= 2*pi) return
-        call field_line_trace(field, origin + b*direction, phi0, turns, opt, &
-                              finish, status, origin, m, n, span)
+        call libration_span(field, origin + b*direction, phi0, turns, map_turns, &
+                            origin, m, opt, span, status)
         if (status /= 0) return
         status = 3
         if (span > 2*pi) return
         do j = 1, count
             edge = (a + b)/2
-            call field_line_trace(field, origin + edge*direction, phi0, turns, opt, &
-                                  finish, status, origin, m, n, span)
+            call libration_span(field, origin + edge*direction, phi0, turns, &
+                                map_turns, origin, m, opt, span, status)
             if (status /= 0) return
             if (span > 2*pi) then
                 a = edge
@@ -334,14 +342,14 @@ contains
     end subroutine libration_edge
 
     subroutine island_width(field, outside, inside, origin, direction, phi0, &
-                            turns, m, n, opt, report, scans)
+                            turns, map_turns, m, opt, report, scans)
         !! Both edges at three levels: opt, tightened tolerances, and
         !! tightened tolerances with twice the duration. The width is that of
         !! the tightened level; the others give trace and duration errors.
         class(line_field_t), intent(in) :: field
         real(dp), intent(in) :: outside(2), inside, origin(2), direction(2)
-        real(dp), intent(in) :: phi0, turns
-        integer, intent(in) :: m, n
+        real(dp), intent(in) :: phi0, turns, map_turns
+        integer, intent(in) :: m
         type(trace_options_t), intent(in) :: opt
         type(island_width_t), intent(out) :: report
         integer, intent(in), optional :: scans
@@ -367,7 +375,7 @@ contains
             lev = 3 - (i - 1)/2
             j = 1 + mod(i - 1, 2)
             call libration_edge(field, outside(j), inside, origin, direction, phi0, &
-                                turns*merge(2, 1, lev == 3), m, n, tights(lev), &
+                                turns*merge(2, 1, lev == 3), map_turns, m, tights(lev), &
                                 edges(j, lev), statuses(j, lev), scans=count)
         end do
         !$omp end parallel do

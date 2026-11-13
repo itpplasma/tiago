@@ -101,7 +101,7 @@ program test_island_measure
     dist = norm2(op%x - ax%x)
     dir = (op%x - ax%x)/dist
     call island_width(field, [dist - 0.08_dp, dist + 0.08_dp], dist, ax%x, dir, &
-                      0.0_dp, 256.0_dp, 2, 1, wopt, wd, scans=16)
+                      0.0_dp, 256.0_dp, 2.0_dp, 2, wopt, wd, scans=16)
     call check('width converges', wd%status == 0)
     call check('width against the exact separatrix', &
                abs(wd%metres - exact) < 1.0e-3_dp*exact)

@@ -27,12 +27,13 @@ program tiago_island
     real(dp) :: width_max_step = 2*pi/256
     integer :: map_turns = 2, m = 2, n = 1, scans = 14, width_fixed_steps = 0
     integer :: poincare_lines = 0, poincare_crossings = 0, max_steps = 2000000
-    logical :: measure_x = .true., measure_width = .true.
+    logical :: measure_x = .true., measure_width = .true., axis_given = .false.
     namelist /island/ coil_files, coil_scales, coil_extcur, spectre_file, vmec_wout, output, phi0, &
         axis_seed, o_seed, x_seed, half_span, width_turns, r_min, point_rtol, &
         point_atol, point_max_step, map_delta, root_tol, width_rtol, width_atol, &
         width_max_step, map_turns, m, n, scans, width_fixed_steps, &
-        poincare_lines, poincare_crossings, max_steps, measure_x, measure_width
+        poincare_lines, poincare_crossings, max_steps, measure_x, measure_width, &
+        axis_given
     type(cartesian_line_field_t) :: field
     type(trace_options_t) :: popt, wopt
     type(island_point_t) :: ax, op, xp
@@ -77,7 +78,12 @@ program tiago_island
     write (f, '(a,i0,a,i0,a,i0,a,es23.15,a)') '"m": ', m, ', "n": ', n, &
         ', "map_turns": ', map_turns, ', "phi0": ', phi0, ','
     tm(1) = wall()
-    call periodic_point(field, axis_seed, phi0, 1, axis_seed, 1, 0, popt, ax)
+    if (axis_given) then
+        ! A nested state's chart is singular on its axis, so its axis is given.
+        ax = island_point_t(x=axis_seed, closure=0, position_error=0, status=0)
+    else
+        call periodic_point(field, axis_seed, phi0, 1, axis_seed, 1, 0, popt, ax)
+    end if
     call put_point('axis', ax)
     tm(2) = wall()
     if (ax%status == 0) then
@@ -92,7 +98,8 @@ program tiago_island
             dist = norm2(op%x - ax%x)
             dir = (op%x - ax%x)/dist
             call island_width(field, [dist - half_span, dist + half_span], dist, &
-                              ax%x, dir, phi0, width_turns, m, n, wopt, wd, scans=scans)
+                              ax%x, dir, phi0, width_turns, real(map_turns, dp), m, wopt, wd, &
+                              scans=scans)
             write (f, '(a,i0,6(a,es23.15),a)') '"width": {"status": ', wd%status, &
                 ', "metres": ', wd%metres, ', "trace_error": ', wd%trace_error, &
                 ', "duration_error": ', wd%duration_error, ', "scan_error": ', &
