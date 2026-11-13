@@ -91,7 +91,9 @@ int tiago_vmecpp_wout(const tiago_vmecpp* handle, const char* name,
  * The linear system (the deflated transposed interior force Jacobian) is
  * block tridiagonal in the radial surfaces; its blocks are extracted with
  * 3 * (unknowns per surface) forward Hessian-vector products and factorized once per
- * solve by block LU. Surface blocks larger than max_block fail. */
+ * solve by block LU. Surface blocks larger than max_block fail. A NULL
+ * boundary_bar skips the boundary cotangent and the Hessian-vector products
+ * that only it needs. */
 int tiago_vmecpp_adjoint(tiago_vmecpp* handle, int ncot,
                          const double* geometry_bar, double* boundary_bar,
                          double* profile_bar, int max_block);

@@ -466,6 +466,8 @@ struct tiago_vmecpp {
   int status = -1;
   // adjoint cache for the current solve
   bool factorized = false;
+  bool boundary_probed = false;  // coupling holds the boundary columns
+  long hessian_products = 0;     // forward Hessian-vector products, all solves
   std::vector<int> interior, prescribed, gauge;  // interior: grouped by surface
   BlockTridiagonal system;                        // transposed interior Hessian
   // (H^T x)[prescribed[k]] = sum over coupling[k] of value * x[interior[position]]
@@ -687,6 +689,8 @@ extern "C" int tiago_vmecpp_get_int(const tiago_vmecpp* handle, const char* name
       *value = Wout(handle).mnmax;
     } else if (key == "mnmax_nyq") {
       *value = Wout(handle).mnmax_nyq;
+    } else if (key == "hessian_products") {
+      *value = static_cast<int>(handle->hessian_products);
     } else if (key == "have_to_flip_theta") {
       if (!handle->model) throw std::runtime_error("no equilibrium solved yet");
       *value = handle->model->vmec().fc_.haveToFlipTheta ? 1 : 0;
@@ -746,6 +750,7 @@ extern "C" int tiago_vmecpp_solve(tiago_vmecpp* handle, int* converged) {
     handle->model.reset();
     handle->workers.clear();
     handle->factorized = false;
+    handle->boundary_probed = false;
     handle->status = 1;
     const int last = static_cast<int>(handle->indata.ns_array.size()) - 1;
     const int ns = handle->indata.ns_array[last];
@@ -906,6 +911,10 @@ extern "C" int tiago_vmecpp_adjoint(tiago_vmecpp* handle, int ncot,
     const Layout layout = MakeLayout(v.s_, ns);
     const Eigen::VectorXd state = model.GetState();
     const int state_size = static_cast<int>(state.size());
+    // The boundary columns are probed one HVP each and serve only the
+    // boundary cotangent, so a caller without boundary parameters skips them.
+    const bool want_boundary = boundary_bar != nullptr;
+    if (want_boundary && !handle->boundary_probed) handle->factorized = false;
 
     if (!handle->factorized) {
       model.SetState(state);
@@ -994,7 +1003,10 @@ extern "C" int tiago_vmecpp_adjoint(tiago_vmecpp* handle, int ncot,
           for (int color = 0; color < 3; ++color) tasks.push_back({start, mode, color});
         }
       }
-      for (int i : boundary) tasks.push_back({-1 - i, 0, -1});
+      if (want_boundary) {
+        for (int i : boundary) tasks.push_back({-1 - i, 0, -1});
+      }
+      handle->hessian_products += 6 + static_cast<long>(tasks.size());
       ParallelOverModels(handle, static_cast<int>(tasks.size()), [&](int t, Model& worker) {
         if (tasks[t].start < 0) {  // one boundary column, all interior rows
           const int i = -1 - tasks[t].start;
@@ -1075,6 +1087,7 @@ extern "C" int tiago_vmecpp_adjoint(tiago_vmecpp* handle, int ncot,
           }
         }
         for (int k = 0; k < static_cast<int>(handle->prescribed.size()); ++k) {
+          if (!want_boundary && is_boundary[handle->prescribed[k]]) continue;
           check(handle->prescribed[k], [&](const Eigen::VectorXd& col) {
             Eigen::VectorXd stored = Eigen::VectorXd::Zero(handle->interior.size());
             for (const auto& [r, value] : handle->coupling[k]) stored[r] = value;
@@ -1088,6 +1101,7 @@ extern "C" int tiago_vmecpp_adjoint(tiago_vmecpp* handle, int ncot,
       }
       handle->system.Factor(std::move(diagonal), std::move(lower), std::move(upper));
       handle->factorized = true;
+      handle->boundary_probed = want_boundary;
     }
 
     const int coefficient_size = 12 * ns * mpol * (ntor + 1);
@@ -1120,7 +1134,7 @@ extern "C" int tiago_vmecpp_adjoint(tiago_vmecpp* handle, int ncot,
       worker.ProfileVjp(-embedded, profile_bar + static_cast<size_t>(c) * 3 * (ns - 1));
       fulls[c] = std::move(full);
     });
-    for (int c = 0; c < ncot; ++c) {
+    for (int c = 0; want_boundary && c < ncot; ++c) {
       Eigen::VectorXd& full = fulls[c];
       // fold the pinned gauge back onto the boundary entries it derives from
       for (int i : handle->gauge) {
