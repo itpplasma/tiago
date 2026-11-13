@@ -98,7 +98,10 @@ a VMEC equilibrium (LI383) and checks that a line stays on its flux surface,
 which holds exactly for B = B^θ e_θ + B^ζ e_ζ on the interpolated surfaces.
 
 The same invariant is checked at half-turn samples of the explicitly
-φ-dependent field. A purely toroidal field from a straight wire checks the
+φ-dependent field. Translating the whole analytic field by the periodic
+axis displacement (A cos φ, A sin φ), where A is its amplitude, preserves
+its exact separatrix width
+and checks the classification around a helical axis. A purely toroidal field from a straight wire checks the
 Poincaré-only CLI, valid given-axis JSON and rejection of a neutral periodic
 point as an island O point. SPECTRE's interior sampler returns domain status
 to the tracer so that a failed line is recorded rather than aborting in the

@@ -15,6 +15,7 @@ module island_oracle_field
     real(dp), parameter :: iota2 = 0.2_dp, a = 0.5_dp, eps = 0.0005_dp
 
     type, extends(line_field_t) :: oracle_t
+        real(dp) :: axis_wobble = 0.0_dp
     contains
         procedure :: sample => oracle_sample
     end type oracle_t
@@ -26,12 +27,13 @@ contains
         integer, intent(out) :: status
         real(dp) :: dx, dy, g1, px, py
 
-        dx = x(1) - r0
-        dy = x(3)
+        dx = x(1) - r0 - self%axis_wobble*cos(x(2))
+        dy = x(3) - self%axis_wobble*sin(x(2))
         g1 = iota0/2 + iota2*(dx*dx + dy*dy)/(2*a*a)
         px = 2*g1*dx + eps*(2*dx*cos(x(2)) + 2*dy*sin(x(2)))
         py = 2*g1*dy + eps*(-2*dy*cos(x(2)) + 2*dx*sin(x(2)))
-        b = [-b0*py/x(1), b0, b0*px/x(1)]
+        b = [b0*(-py - self%axis_wobble*sin(x(2)))/x(1), b0, &
+             b0*(px + self%axis_wobble*cos(x(2)))/x(1)]
         status = 0
     end subroutine oracle_sample
 
@@ -129,6 +131,16 @@ program test_island_measure
     end do
     call check('half-turn section completes', st(1) == 0)
     call check('half-turn points conserve K', kdrift < 1.0e-9_dp)
+
+    ! A periodic translation gives a helical axis with the same separatrix.
+    field%axis_wobble = 0.25_dp
+    call island_width(field, [sqrt(rho_o) - 0.08_dp, sqrt(rho_o) + 0.08_dp], &
+                      sqrt(rho_o), [r0 + field%axis_wobble, 0.0_dp], &
+                      [0.0_dp, 1.0_dp], 0.0_dp, 256.0_dp, 2.0_dp, 2, wopt, wd, &
+                      scans=16)
+    call check('helical-axis width converges', wd%status == 0)
+    call check('helical-axis width against exact separatrix', &
+               abs(wd%metres - exact) < 1.0e-3_dp*exact)
 
     call wire_check()
 
