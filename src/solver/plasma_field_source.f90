@@ -16,6 +16,7 @@ module tiago_plasma_field_source
         procedure(sample_b_interface), deferred :: sample_bfield
         procedure(sample_a_interface), deferred :: sample_vector_potential
         procedure :: sample_interior_bfield => unsupported_interior
+        procedure :: sample_interior_bfield_status => unsupported_interior_status
         procedure :: has_data
     end type plasma_field_source_t
 
@@ -40,6 +41,17 @@ contains
         class(plasma_field_source_t), intent(in) :: self
         has_data = self%enabled
     end function has_data
+
+    subroutine unsupported_interior_status(self, points, values, status)
+        !! Nonfatal sampling lets tracers stop a line at the represented domain.
+        class(plasma_field_source_t), intent(in) :: self
+        real(dp), intent(in) :: points(:, :)
+        real(dp), intent(out) :: values(:, :)
+        integer, intent(out) :: status(:)
+
+        values = 0.0_dp
+        status = 1
+    end subroutine unsupported_interior_status
 
     subroutine unsupported_interior(self, points, values)
         class(plasma_field_source_t), intent(in) :: self
