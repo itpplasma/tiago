@@ -251,6 +251,7 @@ contains
             type(flux_loop_t), allocatable :: loops(:)
             type(segmented_rogowski_t), allocatable :: segs(:)
             type(bprobe_t), allocatable :: probes(:)
+            type(label_t), allocatable :: group_labels(:)
             character(len=:), allocatable :: full, select_list
             logical, allocatable :: keep(:)
             real(dp) :: turns, area
@@ -290,7 +291,11 @@ contains
                     call read_segmented_rogowski_file(full, segs, ierr, message)
                 end if
                 if (ierr /= 0) return
-                call selection(select_list, [(label_t(segs(k)%label), k = 1, size(segs))], keep)
+                allocate(group_labels(size(segs)))
+                do k = 1, size(segs)
+                    group_labels(k)%s = segs(k)%label
+                end do
+                call selection(select_list, group_labels, keep)
                 if (ierr /= 0) return
                 segs = pack(segs, keep)
                 do k = 1, size(segs)
@@ -305,7 +310,11 @@ contains
             case (kind_bprobe)
                 call read_bprobe_file(full, probes, ierr, message, rphiz)
                 if (ierr /= 0) return
-                call selection(select_list, [(label_t(probes(k)%label), k = 1, size(probes))], keep)
+                allocate(group_labels(size(probes)))
+                do k = 1, size(probes)
+                    group_labels(k)%s = probes(k)%label
+                end do
+                call selection(select_list, group_labels, keep)
                 if (ierr /= 0) return
                 probes = pack(probes, keep)
                 probes%turn_scale = turns
@@ -313,7 +322,11 @@ contains
             case default
                 call read_flux_loop_file(full, loops, ierr, message)
                 if (ierr /= 0) return
-                call selection(select_list, [(label_t(loops(k)%label), k = 1, size(loops))], keep)
+                allocate(group_labels(size(loops)))
+                do k = 1, size(loops)
+                    group_labels(k)%s = loops(k)%label
+                end do
+                call selection(select_list, group_labels, keep)
                 if (ierr /= 0) return
                 loops = pack(loops, keep)
                 do k = 1, size(loops)
