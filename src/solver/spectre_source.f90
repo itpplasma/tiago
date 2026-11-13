@@ -65,12 +65,15 @@ contains
             u(1) = real(self%plasma_volumes, dp) &
                    + 64.0_dp*epsilon(1.0_dp)*real(self%plasma_volumes, dp)
         normal_fraction = 0.0_dp
-        p = 0
+        ! Each sample costs a full SPECTRE field evaluation; the points are independent.
+        !$omp parallel do collapse(2) schedule(static) &
+        !$omp private(k, j, p, e, a, h, bmod, sqgb, g, ginv, sqrtg) firstprivate(u) &
+        !$omp reduction(max:normal_fraction)
         do k = 0, ntor - 1
-            u(3) = real(k, dp)*dphi
             do j = 0, ntheta - 1
+                u(3) = real(k, dp)*dphi
                 u(2) = real(j, dp)*dtheta
-                p = p + 1
+                p = k*ntheta + j + 1
                 call self%field%coords%evaluate_cart(u, xs(:, p))
                 call self%field%coords%covariant_basis(u, e)
                 xt(:, p) = e(:, 2)
@@ -85,6 +88,7 @@ contains
                                       max(sqrtg*sqrt(ginv(1, 1))*bmod, tiny(bmod)))
             end do
         end do
+        !$omp end parallel do
         ! Compute B.n directly from the chart metric instead of a physical
         ! extrapolation outside SPECTRE's represented domain.
         if (normal_fraction > 1.0e-6_dp) &
@@ -165,6 +169,7 @@ contains
         integer :: j, ierr
 
         if (.not. self%enabled) error stop 'SPECTRE source not initialized'
+        !$omp parallel do private(j, u, ierr) schedule(dynamic)
         do j = 1, size(points, 2)
             call locate(self, points(:, j), u, ierr)
             if (ierr == SPECTRE_OUTSIDE_DOMAIN) cycle
@@ -173,5 +178,6 @@ contains
             if (u(1) <= real(self%plasma_volumes, dp) + 1.0e-9_dp) &
                 error stop 'virtual casing requires exterior diagnostic points'
         end do
+        !$omp end parallel do
     end subroutine require_exterior
 end module tiago_spectre_source
