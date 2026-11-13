@@ -26,12 +26,17 @@ map over `map_turns` toroidal turns on the plane φ = `phi0`.
 - **Phase** m θ − n φ of a point about the axis, θ = atan2(Z − Z_axis,
   R − R_axis), in (−π, π].
 - **Width** along the straight chord from the axis through the O point. A
-  line launched inside the island librates: m times its accumulated
-  poloidal-angle change on the return section spans less than 2π during the
-  trace; one launched outside circulates. Angles are measured about the axis
+  line is classified as circulating once its accumulated geometric
+  poloidal angle on the return section spans a complete 2π winding around
+  the axis; a line whose angle stays within that range during the trace is
+  classified as librating. Multiplying the angle by m does not reduce the
+  winding threshold: individual islands need not span equal geometric angles.
+  Angles are measured about the axis
   at that section. The return must bring the selected island back to itself;
   angles between sections about one fixed point need not describe a
-  helical axis. Both
+  helical axis. This classifier assumes an angularly bounded island lobe
+  and less than π of poloidal advance between successive returns, so that
+  the sampled angles can be unwrapped. Both
   edges are bisected (`scans` halvings of `half_span`) at three levels: the
   given tolerances, tolerances divided by 8, and the latter with twice the
   duration. The width is the middle level; `trace_error` and
@@ -101,7 +106,12 @@ The same invariant is checked at half-turn samples of the explicitly
 φ-dependent field. Translating the whole analytic field by the periodic
 axis displacement (A cos φ, A sin φ), where A is its amplitude, preserves
 its exact separatrix width
-and checks the classification around a helical axis. A purely toroidal field from a straight wire checks the
+and checks the classification around a helical axis. A monotone angular
+deformation θ = α − 0.5 cos α, smooth in the annulus containing the island,
+where α is the original poloidal angle, preserves the separatrix crossings
+on the chosen axis–O chord and checks that unequal
+geometric island angles do not change its measured width. A purely toroidal
+field from a straight wire checks the
 Poincaré-only CLI, valid given-axis JSON and rejection of a neutral periodic
 point as an island O point. SPECTRE's interior sampler returns domain status
 to the tracer so that a failed line is recorded rather than aborting in the

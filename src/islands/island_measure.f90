@@ -15,8 +15,9 @@ module tiago_island_measure
     !! inside the island librates and one launched outside circulates. The
     !! helical phase is sampled where the line returns to the section, as m
     !! times the accumulated poloidal-angle change about the axis per return
-    !! map (wrapped to (-pi, pi]); a line librates if that phase spans less
-    !! than 2 pi within the trace. Sampling on the section keeps the angle
+    !! map (wrapped to (-pi, pi]); a line is classified as circulating once
+    !! its poloidal angle spans a full turn within the trace. Sampling on the
+    !! section keeps the angle
     !! meaningful for a helical magnetic axis, where an angle about one fixed
     !! point between sections is not (MILCA accumulates it continuously).
     !! Both edges are bisected. The result is a finite-time estimate, not an
@@ -142,7 +143,7 @@ contains
                               opt, span, status)
         !! Range of the helical phase m (theta_k - theta_0) over the returns k
         !! to the section within `turns` toroidal turns, maps of `map_turns`
-        !! turns each, theta about centre. Stops once the range exceeds 2 pi.
+        !! turns each, theta about centre. Stops once theta spans a full turn.
         class(line_field_t), intent(in) :: field
         real(dp), intent(in) :: start(2), phi0, turns, map_turns, centre(2)
         integer, intent(in) :: m
@@ -154,7 +155,8 @@ contains
 
         span = 0
         status = 1
-        if (map_turns <= 0 .or. norm2(start - centre) <= tiny(1.0_dp)) return
+        if (map_turns <= 0 .or. m == 0 .or. &
+            norm2(start - centre) <= tiny(1.0_dp)) return
         maps = max(1, nint(turns/map_turns))
         x = start
         old = atan2(x(2) - centre(2), x(1) - centre(1))
@@ -172,7 +174,7 @@ contains
             old = theta
             lo = min(lo, m*angle)
             hi = max(hi, m*angle)
-            if (hi - lo > 2*pi) exit
+            if (hi - lo > 2*pi*abs(m)) exit
         end do
         span = hi - lo
     end subroutine libration_span
@@ -322,18 +324,18 @@ contains
                             origin, m, opt, span, status)
         if (status /= 0) return
         status = 3
-        if (span <= 2*pi) return
+        if (span <= 2*pi*abs(m)) return
         call libration_span(field, origin + b*direction, phi0, turns, map_turns, &
                             origin, m, opt, span, status)
         if (status /= 0) return
         status = 3
-        if (span > 2*pi) return
+        if (span > 2*pi*abs(m)) return
         do j = 1, count
             edge = (a + b)/2
             call libration_span(field, origin + edge*direction, phi0, turns, &
                                 map_turns, origin, m, opt, span, status)
             if (status /= 0) return
-            if (span > 2*pi) then
+            if (span > 2*pi*abs(m)) then
                 a = edge
             else
                 b = edge

@@ -15,7 +15,7 @@ module island_oracle_field
     real(dp), parameter :: iota2 = 0.2_dp, a = 0.5_dp, eps = 0.0005_dp
 
     type, extends(line_field_t) :: oracle_t
-        real(dp) :: axis_wobble = 0.0_dp
+        real(dp) :: axis_wobble = 0.0_dp, angular_warp = 0.0_dp
     contains
         procedure :: sample => oracle_sample
     end type oracle_t
@@ -25,15 +25,35 @@ contains
         real(dp), intent(in) :: x(3)
         real(dp), intent(out) :: b(3)
         integer, intent(out) :: status
-        real(dp) :: dx, dy, g1, px, py
+        real(dp) :: dx, dy, g1, px, py, radius, theta, alpha, radial, angular, metric
+        integer :: k
 
         dx = x(1) - r0 - self%axis_wobble*cos(x(2))
         dy = x(3) - self%axis_wobble*sin(x(2))
+        radius = norm2([dx, dy])
+        theta = atan2(dy, dx)
+        alpha = theta
+        do k = 1, merge(12, 0, self%angular_warp /= 0)
+            alpha = alpha - (alpha + self%angular_warp*cos(alpha) - theta) &
+                            /(1 - self%angular_warp*sin(alpha))
+        end do
+        dx = radius*cos(alpha)
+        dy = radius*sin(alpha)
         g1 = iota0/2 + iota2*(dx*dx + dy*dy)/(2*a*a)
         px = 2*g1*dx + eps*(2*dx*cos(x(2)) + 2*dy*sin(x(2)))
         py = 2*g1*dy + eps*(-2*dy*cos(x(2)) + 2*dx*sin(x(2)))
-        b = [b0*(-py - self%axis_wobble*sin(x(2)))/x(1), b0, &
-             b0*(px + self%axis_wobble*cos(x(2)))/x(1)]
+        metric = 1 - self%angular_warp*sin(alpha)
+        radial = 0
+        angular = 0
+        if (radius > tiny(1.0_dp)) then
+            radial = (-dx*py + dy*px)/radius
+            angular = (dx*px + dy*py)/(radius*radius)
+        end if
+        b(2) = b0/metric
+        b(1) = b(2)*(radial*cos(theta) - radius*sin(theta)*metric*angular &
+                     - self%axis_wobble*sin(x(2)))/x(1)
+        b(3) = b(2)*(radial*sin(theta) + radius*cos(theta)*metric*angular &
+                     + self%axis_wobble*cos(x(2)))/x(1)
         status = 0
     end subroutine oracle_sample
 
@@ -140,6 +160,16 @@ program test_island_measure
                       scans=16)
     call check('helical-axis width converges', wd%status == 0)
     call check('helical-axis width against exact separatrix', &
+               abs(wd%metres - exact) < 1.0e-3_dp*exact)
+
+    ! An annular angular deformation preserves the chosen chord crossings.
+    field%axis_wobble = 0
+    field%angular_warp = -0.5_dp
+    call island_width(field, [sqrt(rho_o) - 0.08_dp, sqrt(rho_o) + 0.08_dp], &
+                      sqrt(rho_o), [r0, 0.0_dp], [0.0_dp, 1.0_dp], &
+                      0.0_dp, 256.0_dp, 2.0_dp, 2, wopt, wd, scans=16)
+    call check('deformed-angle width converges', wd%status == 0)
+    call check('deformed-angle width against exact separatrix', &
                abs(wd%metres - exact) < 1.0e-3_dp*exact)
 
     call wire_check()
