@@ -50,6 +50,10 @@ Missing groups are skipped; malformed groups, NaN values, non-positive
 profiles and missing variables stop the run with a message naming the file,
 group and variable. Nothing is filled in.
 
+For ideal local profile values at already computed field-line labels, use
+[`tiago_profile_points`](profile-points.md). It uses the same profile evaluator
+and reports derivatives with respect to the supplied label.
+
 ## Equilibria on a grid and islands
 
 `point_table = 'table.nc'` replaces the wout for the profile instruments by an

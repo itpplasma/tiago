@@ -3,14 +3,15 @@ program gen_field_line
     !! as the independent variable (src/generated/field_line_rhs.f90):
     !!   dR/dphi = R B_R / B_phi,   dZ/dphi = R B_Z / B_phi.
     use fortsym_string, only: str, chars
-    use fortsym_expr, only: expr_t, sym, operator(*), operator(/)
+    use fortsym_expr, only: expr_t, sym, operator(+), operator(-), operator(*), &
+        operator(/), sin, cos
     use fortsym_kernel, only: kernel_spec_t, emit_kernel
     use fortsym_engine, only: engine_result_t
     use fortsym_engine_symengine, only: symengine_engine_t, make_symengine_engine
     implicit none
     type(symengine_engine_t) :: engine
     type(engine_result_t) :: simplified
-    type(expr_t) :: r, br, bphi, bz, roots(2)
+    type(expr_t) :: r, br, bphi, bz, phi, roots(2), cartesian(3)
     type(kernel_spec_t) :: spec
     character(len=:), allocatable :: code
     integer :: i, j, unit
@@ -43,6 +44,24 @@ program gen_field_line
         j = j - 1
     end do
     open(newunit=unit, file='src/generated/field_line_rhs.f90', status='replace')
+    write(unit, '(A)') code(:j)
+    close(unit)
+
+    phi = sym('phi')
+    cartesian(1) = br * cos(phi) - bphi * sin(phi)
+    cartesian(2) = br * sin(phi) + bphi * cos(phi)
+    cartesian(3) = bz
+    spec%args = [str('phi'), str('br'), str('bphi'), str('bz')]
+    spec%outputs = [str('bx'), str('by'), str('bz_cart')]
+    spec%name = str('grid_field_cartesian')
+    spec%module_name = str('tiago_grid_field_cartesian')
+    code = chars(emit_kernel(cartesian, spec))
+    j = len(code)
+    do while (j > 0)
+        if (code(j:j) /= new_line('a')) exit
+        j = j - 1
+    end do
+    open(newunit=unit, file='src/generated/grid_field_cartesian.f90', status='replace')
     write(unit, '(A)') code(:j)
     close(unit)
 end program gen_field_line

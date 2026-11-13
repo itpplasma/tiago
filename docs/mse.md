@@ -141,23 +141,50 @@ central differences.
 No MSE measurements are wired into `tiago_reconstruct` yet; its current VMEC
 boundary-field representation does not supply this internal field.
 
-## Interior field CLI
+## Field CLI
 
 ```
 build/tiago_mse_field --mse channels.txt --wout wout.nc --output angles.csv
 build/tiago_mse_field --mse channels.txt --spectre spectre.h5 --output angles.csv
+build/tiago_mse_field --mse channels.txt --wout wout.nc \
+    --coils perturbation.coils --coil-extcur currents.input --output angles.csv
+build/tiago_mse_field --mse channels.txt --mgrid mgrid.nc \
+    --mgrid-currents '1000,-500' --output angles.csv
 ```
 
-evaluates the interior field of one equilibrium at the channel midpoints and
-writes `label,gamma_rad,x_m,y_m,z_m,b_x_T,b_y_T,b_z_T`. A wout goes through
-`mse_state_angles`; a SPECTRE file (build with `TIAGO_ENABLE_SPECTRE=ON`)
-through `spectre_source_t%sample_interior_bfield` and `mse_angles`. A
-midpoint outside the plasma stops the run. Fields from other codes enter as
-one of these two formats. `tiago_mse_field_cli` evaluates six channels in the
+The command samples the selected field at the channel midpoints and writes
+`label,gamma_rad,x_m,y_m,z_m,b_x_T,b_y_T,b_z_T`. With `--wout` or `--spectre`,
+it samples the equilibrium's total interior field and stops if a midpoint lies
+outside the plasma. `--spectre` requires `TIAGO_ENABLE_SPECTRE=ON`.
+Optional `--coils` adds the existing
+filament field; `--coil-extcur` (alias `--extcur`) reads its group currents
+from the same list or VMEC namelist as `tiago_vacuum_cli`. Without that option,
+the currents in the coils file are used. Coils may also be the sole source.
+The equilibrium is held fixed when the specified coil field is added; no
+plasma response is computed.
+
+Alternatively, `--mgrid` reads a cylindrical grid through
+[`grid_field_t`](field-line-labels.md). `--mgrid-currents` supplies the
+comma-separated physical currents in amperes, one per coil group. In raw mode,
+each group's tabulated field is first divided by its stored reference current,
+`raw_coil_cur`, before applying these currents. A midpoint
+outside the grid's valid domain stops the run. At most one equilibrium or grid
+may be selected, with optional coils added to any of them. Fields from other
+codes enter through a supported equilibrium file or a cylindrical grid.
+`--field-jacobian derivatives.csv` also writes the angle derivatives with
+respect to the three Cartesian field components, in radians per tesla. A
+known field response can be contracted with these derivatives to obtain its
+angle response while keeping the diagnostic geometry fixed.
+
+`tiago_mse_field_cli` evaluates six channels in the
 nested QA equilibrium given both as wout and as SPECTRE file and compares
 each angle with the angle computed in the test from an independent VMEC
 Fourier field table at the same points (tolerance 2e-3 rad, the field
 agreement of the two representations).
+It also checks addition of the coil field to both equilibrium formats.
+`tiago_mse_vacuum_cli` checks square-coil fields on their symmetry axis against
+the closed-form expression, group-current overrides, gridded fields at known
+nodes, and the polarization angle computed independently from each field.
 
 ## CLI and verification
 

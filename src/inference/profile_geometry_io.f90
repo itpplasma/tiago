@@ -21,6 +21,7 @@ module tiago_profile_geometry_io
     !! and variables ne [m^-3], te [eV], ti [eV] and optionally zeff, each
     !! positive on s. A missing group or variable is reported, never filled in.
     use, intrinsic :: iso_fortran_env, only: dp => real64
+    use, intrinsic :: ieee_arithmetic, only: ieee_is_finite
     use, intrinsic :: iso_c_binding, only: c_int
     use tiago_netcdf_c, only: NC_NOERR, NC_NOWRITE, nc_open, nc_close, nc_inq_ncid, &
         nc_inq_varid, nc_get_var_double, cstr, nc_shape, nc_read_text
@@ -252,6 +253,11 @@ contains
         if (any([size(table%ne), size(table%te), size(table%ti)] /= size(table%s))) then
             ierr = 1
             message = trim(path)//': profiles differ in length from s'
+        else if (.not. all(ieee_is_finite(table%s)) .or. &
+                .not. all(ieee_is_finite(table%ne)) .or. .not. all(ieee_is_finite(table%te)) .or. &
+                .not. all(ieee_is_finite(table%ti))) then
+            ierr = 1
+            message = trim(path)//': non-finite profile value or s'
         else if (any(table%s < 0.0_dp) .or. any(table%s > 1.0_dp)) then
             ierr = 1
             message = trim(path)//': s outside [0, 1]'
@@ -260,6 +266,9 @@ contains
             if (size(table%zeff) /= size(table%s)) then
                 ierr = 1
                 message = trim(path)//': zeff differs in length from s'
+            else if (.not. all(ieee_is_finite(table%zeff))) then
+                ierr = 1
+                message = trim(path)//': non-finite zeff'
             end if
         end if
     end subroutine read_profile_table

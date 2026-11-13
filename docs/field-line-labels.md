@@ -46,17 +46,21 @@ The memory of a `grid_field_t` is that of the tricubic coefficients,
 
 ## Command line
 
+This illustrative input uses the two-group synthetic grid from the verification
+below. Choose the currents, scan group and diagnostic plane for the selected
+field and geometry.
+
 ```text
 tiago_field_line_labels input.nml
 
 &field_line_labels
   mgrid = 'mgrid.nc'
-  currents = -4.95e6, -4.95e6, 2.589e6, 6.2535e5, -2.695e6, 0.0  ! one per group
-  scan_group = 6                      ! group replaced by each scan value
-  scan_currents = 0.0, 500.0, 1000.0  ! 0 for scan_group: a single case
+  currents = 2.0, -0.5               ! one per group
+  scan_group = 2                      ! group replaced by each scan value
+  scan_currents = 0.0, 0.5, 1.0  ! 0 for scan_group: a single case
   wout = 'wout.nc'                    ! reference chart
   radii = 'radii.txt'                 ! start radii [m] at Z = 0, one per line
-  phi_deg = 18.0
+  phi_deg = 0.0
   turns = 200, steps = 720
   output = 'labels.json'
 /
