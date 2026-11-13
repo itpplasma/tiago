@@ -150,6 +150,10 @@ contains
                 cycle
             end if
             call chart_bfield(self%field, u, values(:, j))
+            if (.not. all(ieee_is_finite(values(:, j)))) then
+                values(:, j) = 0.0_dp
+                status(j) = 1
+            end if
         end do
         !$omp end parallel do
     end subroutine spectre_source_interior_status
