@@ -32,7 +32,13 @@ program plasma_surface_fixture
             if (trim(mode) == 'tilted') b = b + 0.01_dp * [cos(th) * cos(ph), cos(th) * sin(ph), sin(th)]
             if (trim(mode) == 'nonfinite') b(1) = ieee_value(0.0_dp, ieee_quiet_nan)
             if (trim(mode) == 'degenerate') xt = 0.0_dp
-            write(unit, '(12ES25.16E3)') x, xt, xp, b
+            if (j == ntheta/2 .and. k == nphi/2 .and. trim(mode) == 'null') then
+                write(unit, '(A,11ES25.16E3)') ',', x(2:3), xt, xp, b
+            else if (j == ntheta/2 .and. k == nphi/2 .and. trim(mode) == 'extra') then
+                write(unit, '(13ES25.16E3)') x, xt, xp, b, 1.0_dp
+            else
+                write(unit, '(12ES25.16E3)') x, xt, xp, b
+            end if
         end do
     end do
     close(unit)

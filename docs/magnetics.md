@@ -130,10 +130,11 @@ example GVEC or MILCA states that have no reader in Tiago:
     --bprobes probes.diagno --output-dir signals
 ```
 
-The first line holds `ntheta nphi`, followed by `ntheta*nphi` rows with theta
-varying fastest. Each row is the Cartesian position, its derivatives with
+The first line holds exactly two whitespace-separated integers, `ntheta nphi`,
+followed by exactly `ntheta*nphi` records with theta varying fastest. Each row is the Cartesian position, its derivatives with
 respect to theta and phi and the total field on the plasma side, twelve
-numbers in metres and tesla, on the uniform full-torus grid
+whitespace-separated numbers in metres and tesla, on the uniform full-torus
+grid
 `theta_j = 2 pi j/ntheta`, `phi_k = 2 pi k/nphi` (j, k from 0). Any periodic
 parametrisation works: `x_theta x x_phi` supplies its surface element,
 so phi need not be the geometric toroidal angle. The trapezoidal quadrature

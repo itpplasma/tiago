@@ -16,8 +16,8 @@ module tiago_plasma_support
     !! the coil field; a flux loop that links the plasma poloidally therefore
     !! misses the toroidal flux inside the boundary, which DIAGNO (and Tiago) add
     !! as phiedge for loops flagged idia = 1.
-    use, intrinsic :: iso_fortran_env, only: dp => real64, i32 => int32, error_unit
-    use, intrinsic :: ieee_arithmetic, only: ieee_is_finite
+    use, intrinsic :: iso_fortran_env, only: dp => real64, i32 => int32, error_unit, iostat_end, iostat_eor
+    use, intrinsic :: ieee_arithmetic, only: ieee_is_finite, ieee_value, ieee_quiet_nan
     use tiago_plasma_field_source, only: plasma_field_source_t
     use netcdf, only: nf90_open, nf90_close, nf90_inq_varid, nf90_get_var, &
         nf90_inquire_dimension, nf90_inq_dimid, nf90_noerr, nf90_nowrite
@@ -120,24 +120,36 @@ contains
         character(len=*), intent(in) :: path
         real(dp), intent(out), optional :: max_normal_fraction
         real(dp), allocatable :: xs(:, :), xt(:, :), xp(:, :), b(:, :)
-        real(dp) :: row(12), nrm(3), fraction
-        integer :: unit, ios, ntheta, nphi, k
+        real(dp) :: row(13), nrm(3), fraction
+        character(len=:), allocatable :: line
+        integer :: unit, ios, ntheta, nphi, k, dims(3)
 
         open(newunit=unit, file=path, status='old', action='read', iostat=ios)
         if (ios /= 0) then
             write(error_unit, '(A)') 'cannot open plasma surface file '//trim(path)
             error stop 'cannot open plasma surface file'
         end if
-        read(unit, *, iostat=ios) ntheta, nphi
+        call read_surface_record(unit, line, ios)
         if (ios /= 0) error stop 'malformed plasma surface grid size'
+        if (scan(line, ',/!*') /= 0) error stop 'malformed plasma surface grid size'
+        dims = -huge(0)
+        read(line, *, iostat=ios) dims
+        if (ios /= iostat_end) error stop 'malformed plasma surface grid size'
+        ntheta = dims(1)
+        nphi = dims(2)
         if (ntheta < 4 .or. nphi < 4) &
             error stop 'plasma surface file needs "ntheta nphi" with at least 4x4 points'
+        if (ntheta > huge(0)/nphi) error stop 'plasma surface grid size overflows integer range'
         allocate(xs(3, ntheta*nphi), xt(3, ntheta*nphi), xp(3, ntheta*nphi), b(3, ntheta*nphi))
         fraction = 0.0_dp
         do k = 1, ntheta*nphi
-            read(unit, *, iostat=ios) row
+            call read_surface_record(unit, line, ios)
             if (ios /= 0) error stop 'missing or malformed row in plasma surface file'
-            if (.not. all(ieee_is_finite(row))) error stop 'nonfinite plasma surface row'
+            if (scan(line, ',/!*') /= 0) error stop 'missing or malformed row in plasma surface file'
+            row = ieee_value(0.0_dp, ieee_quiet_nan)
+            read(line, *, iostat=ios) row
+            if (ios /= iostat_end) error stop 'missing or malformed row in plasma surface file'
+            if (.not. all(ieee_is_finite(row(:12)))) error stop 'nonfinite plasma surface row'
             xs(:, k) = row(1:3)
             xt(:, k) = row(4:6)
             xp(:, k) = row(7:9)
@@ -147,15 +159,36 @@ contains
             fraction = max(fraction, abs(dot_product(nrm, b(:, k))) &
                 / max(norm2(nrm) * norm2(b(:, k)), tiny(1.0_dp)))
         end do
-        read(unit, *, iostat=ios) row(1)
+        call read_surface_record(unit, line, ios)
         close(unit)
-        if (ios == 0) error stop 'plasma surface file has more rows than ntheta*nphi'
+        if (ios /= iostat_end) error stop 'plasma surface file has more rows than ntheta*nphi'
         ! The current-only sheet omits magnetic charge, so B must be tangential.
         if (fraction > 1.0e-6_dp) error stop 'plasma surface is not a flux surface (B.n /= 0)'
         if (present(max_normal_fraction)) max_normal_fraction = fraction
         call self%init_from_surface(xs, xt, xp, b, 2.0_dp * pi / real(ntheta, dp), &
             2.0_dp * pi / real(nphi, dp))
     end subroutine plasma_init_from_surface_file
+
+    subroutine read_surface_record(unit, line, ios)
+        integer, intent(in) :: unit
+        character(len=:), allocatable, intent(out) :: line
+        integer, intent(out) :: ios
+        character(len=512) :: chunk
+        integer :: nread
+
+        ! A short row must not consume the next point's record.
+        line = ''
+        do
+            nread = 0
+            read(unit, '(A)', advance='no', size=nread, iostat=ios) chunk
+            if (nread > 0) line = line // chunk(:nread)
+            if (ios == iostat_eor) then
+                ios = 0
+                return
+            end if
+            if (ios /= 0) return
+        end do
+    end subroutine read_surface_record
 
     subroutine plasma_init_from_vmec(self, wout_file, nphi, ntheta, &
             covariant, conservative)

@@ -56,3 +56,28 @@ if "$cli" --plasma-surface "$out/surface.txt" --bprobes "$out/poloidal.diagno" \
     exit 1
 fi
 grep -q 'nonfinite linked flux' "$out/bad-flux/error.log"
+
+for mode in null extra; do
+    mkdir -p "$out/$mode"
+    "$fixture" "$out/$mode" "$mode"
+    if "$cli" --plasma-surface "$out/$mode/surface.txt" --bprobes "$out/poloidal.diagno" \
+        --output-dir "$out/$mode" > "$out/$mode/error.log" 2>&1; then
+        echo "malformed $mode surface row accepted" >&2
+        exit 1
+    fi
+    grep -q 'missing or malformed row' "$out/$mode/error.log"
+done
+for mode in extra-header trailing-text; do
+    mkdir -p "$out/$mode"
+    if [ "$mode" = extra-header ]; then
+        awk 'NR == 1 {$0 = $0 " 1"} {print}' "$out/surface.txt" > "$out/$mode/surface.txt"
+    else
+        cat "$out/surface.txt" > "$out/$mode/surface.txt"
+        printf 'not a surface row\n' >> "$out/$mode/surface.txt"
+    fi
+    if "$cli" --plasma-surface "$out/$mode/surface.txt" --bprobes "$out/poloidal.diagno" \
+        --output-dir "$out/$mode" > "$out/$mode/error.log" 2>&1; then
+        echo "malformed $mode surface record accepted" >&2
+        exit 1
+    fi
+done
