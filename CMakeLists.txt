@@ -308,6 +308,8 @@ add_executable(tiago_synth src/cli/tiago_synth.f90)
 target_link_libraries(tiago_synth PRIVATE tiago_synthetic)
 add_executable(tiago_field_line_labels src/cli/tiago_field_line_labels.f90)
 target_link_libraries(tiago_field_line_labels PRIVATE tiago_synthetic)
+add_executable(tiago_profile_points src/cli/tiago_profile_points.f90)
+target_link_libraries(tiago_profile_points PRIVATE tiago_synthetic)
 
 add_executable(tiago_vacuum_cli src/cli/tiago_vacuum_cli.f90)
 set_source_files_properties(src/cli/tiago_vacuum_cli.f90 PROPERTIES Fortran_PREPROCESS ON)
@@ -623,6 +625,11 @@ add_test(NAME tiago_synthetic_forward
 add_test(NAME tiago_synthetic_forward_vmec
     COMMAND $<TARGET_FILE:test_synthetic_forward> ${TIAGO_SYNTH_TEST_DIR} ${TIAGO_WOUT_SIMSOPT_SMALL})
 set_tests_properties(tiago_synthetic_forward_vmec PROPERTIES FIXTURES_REQUIRED wout_li383)
+add_executable(test_profile_points tests/test_profile_points.f90)
+target_link_libraries(test_profile_points PRIVATE tiago_synthetic)
+add_dependencies(test_profile_points tiago_profile_points)
+add_test(NAME tiago_profile_points
+    COMMAND $<TARGET_FILE:test_profile_points> $<TARGET_FILE:tiago_profile_points> ${TIAGO_SYNTH_TEST_DIR})
 add_executable(test_field_line_label tests/test_field_line_label.f90)
 target_link_libraries(test_field_line_label PRIVATE tiago_inference)
 add_test(NAME tiago_field_line_label
