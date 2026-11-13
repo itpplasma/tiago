@@ -4,6 +4,7 @@ program tiago_island
     !! VMEC state (inside its plasma).
     !! Usage: tiago_island input.nml   (namelist &island, see docs/islands.md)
     use, intrinsic :: iso_fortran_env, only: dp => real64, error_unit
+    use, intrinsic :: ieee_arithmetic, only: ieee_is_finite
     use tiago_field_lines, only: cartesian_line_field_t, read_scaled_coils
     use tiago_vmec_state, only: vmec_state_t
     use tiago_island_measure, only: trace_options_t, island_point_t, &
@@ -38,8 +39,8 @@ program tiago_island
     type(trace_options_t) :: popt, wopt
     type(island_point_t) :: ax, op, xp
     type(island_width_t) :: wd
-    real(dp) :: dist, dir(2), tm(5)
-    integer :: unit, ios, nfiles, f
+    real(dp) :: dist, dir(2), tm(5), type_margin
+    integer :: unit, ios, nfiles, f, poincare_status = 0
 
     if (command_argument_count() /= 1) call die('usage: tiago_island input.nml')
     call get_command_argument(1, input)
@@ -75,7 +76,7 @@ program tiago_island
 
     open (newunit=f, file=trim(output)//'.json', status='replace')
     write (f, '(a)') '{'
-    write (f, '(a,i0,a,i0,a,i0,a,es23.15,a)') '"m": ', m, ', "n": ', n, &
+    write (f, '(a,i0,a,i0,a,i0,a,es24.15e3,a)') '"m": ', m, ', "n": ', n, &
         ', "map_turns": ', map_turns, ', "phi0": ', phi0, ','
     tm(1) = wall()
     if (axis_given) then
@@ -88,19 +89,37 @@ program tiago_island
     tm(2) = wall()
     if (ax%status == 0) then
         call periodic_point(field, o_seed, phi0, map_turns, ax%x, m, n, popt, op)
-        call put_point('O', op)
+        if (op%status == 0) then
+            dist = norm2(op%x - ax%x)
+            if (dist <= tiny(1.0_dp)) then
+                op%status = 4
+            else
+                dir = (op%x - ax%x)/dist
+            end if
+            if (measure_width .or. measure_x) then
+                type_margin = residue_margin(op)
+                if (op%residue <= type_margin .or. &
+                    op%residue >= 1 - type_margin) op%status = 4
+            end if
+        end if
+        if (measure_width .or. measure_x) then
+            call put_point('O', op)
+        else
+            call put_point('periodic_point', op)
+        end if
         if (measure_x) then
             call periodic_point(field, x_seed, phi0, map_turns, ax%x, m, n, popt, xp)
+            if (xp%status == 0) then
+                if (xp%residue >= -residue_margin(xp)) xp%status = 4
+            end if
             call put_point('X', xp)
         end if
         tm(3) = wall()
         if (op%status == 0 .and. measure_width) then
-            dist = norm2(op%x - ax%x)
-            dir = (op%x - ax%x)/dist
             call island_width(field, [dist - half_span, dist + half_span], dist, &
                               ax%x, dir, phi0, width_turns, real(map_turns, dp), m, wopt, wd, &
                               scans=scans)
-            write (f, '(a,i0,6(a,es23.15),a)') '"width": {"status": ', wd%status, &
+            write (f, '(a,i0,6(a,es24.15e3),a)') '"width": {"status": ', wd%status, &
                 ', "metres": ', wd%metres, ', "trace_error": ', wd%trace_error, &
                 ', "duration_error": ', wd%duration_error, ', "scan_error": ', &
                 wd%scan_error, ', "edge": [', wd%edge(1), ',', wd%edge(2), ']},'
@@ -116,6 +135,14 @@ program tiago_island
     write (f, '(a)') '"end": true}'
     close (f)
     if (ax%status /= 0) call die('magnetic axis not found')
+    if (op%status /= 0) call die('periodic point not found or wrong type')
+    if (measure_x) then
+        if (xp%status /= 0) call die('X point not found or wrong type')
+    end if
+    if (measure_width) then
+        if (wd%status /= 0) call die('island width not resolved')
+    end if
+    if (poincare_status /= 0) call die('Poincare trace left field domain')
 contains
     subroutine attach_spectre()
 #ifdef TIAGO_ENABLE_SPECTRE
@@ -160,17 +187,39 @@ contains
             end do
         end do
         close (u)
+        poincare_status = maxval(st)
     end subroutine write_poincare
 
     subroutine put_point(name, p)
         character(*), intent(in) :: name
         type(island_point_t), intent(in) :: p
-        write (f, '(5a,i0,8(a,es23.15),a)') '"', name, '": {', '"status": ', '', &
-            p%status, ', "R": ', p%x(1), ', "Z": ', p%x(2), ', "closure": ', &
-            p%closure, ', "residue": ', p%residue, ', "residue_error": ', &
-            p%residue_error, ', "phase": ', p%phase, ', "phase_error": ', &
-            p%phase_error, ', "position_error": ', p%position_error, '},'
+        write (f, '(3a,i0,a)') '"', name, '": {"status": ', p%status, &
+            ', "R": '//trim(number(p%x(1)))//', "Z": '//trim(number(p%x(2)))// &
+            ', "closure": '//trim(number(p%closure))// &
+            ', "residue": '//trim(number(p%residue))// &
+            ', "residue_error": '//trim(number(p%residue_error))// &
+            ', "phase": '//trim(number(p%phase))// &
+            ', "phase_error": '//trim(number(p%phase_error))// &
+            ', "position_error": '//trim(number(p%position_error))//'},'
     end subroutine put_point
+
+    real(dp) function residue_margin(point)
+        type(island_point_t), intent(in) :: point
+
+        ! Central differences lose coordinate roundoff divided by map_delta.
+        residue_margin = max(2*point%residue_error, &
+                             16*epsilon(1.0_dp)*max(1.0_dp, norm2(point%x))/map_delta)
+    end function residue_margin
+
+    function number(value) result(text)
+        real(dp), intent(in) :: value
+        character(len=32) :: text
+
+        text = 'null'
+        if (.not. ieee_is_finite(value)) return
+        if (abs(value) >= huge(value)/2) return
+        write (text, '(es24.15e3)') value
+    end function number
 
     real(dp) function wall()
         integer(8) :: c, r

@@ -58,7 +58,7 @@ contains
         real(dp) :: point(3, 1), bc(3, 1), total(3), cyl(2), jac(2, 3)
         type(located_t) :: loc
         type(vector_jets_t) :: jet
-        integer :: st
+        integer :: st, plasma_status(1)
 
         b = 0.0_dp
         status = 1
@@ -71,7 +71,8 @@ contains
             total = total + bc(:, 1)
         end if
         if (allocated(self%plasma)) then
-            call self%plasma%sample_interior_bfield(point, bc)
+            call self%plasma%sample_interior_bfield_status(point, bc, plasma_status)
+            if (plasma_status(1) /= 0) return
             total = total + bc(:, 1)
         end if
         if (allocated(self%state)) then

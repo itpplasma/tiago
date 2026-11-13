@@ -19,18 +19,26 @@ map over `map_turns` toroidal turns on the plane φ = `phi0`.
   difference step; the differences are reported as position, residue and
   phase errors.
 - **Residue** (2 − tr DP)/4 (Greene): between 0 and 1 at an O point,
-  negative at an X point. det DP = 1 checks area preservation.
+  negative at an X point. The CLI requires these signs to exceed
+  twice the change under refinement and a coordinate-roundoff floor for the
+  numerical map derivative; a different or unresolved type has status 4.
+  det DP = 1 at a periodic point checks area preservation.
 - **Phase** m θ − n φ of a point about the axis, θ = atan2(Z − Z_axis,
   R − R_axis), in (−π, π].
 - **Width** along the straight chord from the axis through the O point. A
-  line launched inside the island librates: its unwrapped helical phase
-  spans less than 2π during the trace; one launched outside circulates. Both
+  line launched inside the island librates: m times its accumulated
+  poloidal-angle change on the return section spans less than 2π during the
+  trace; one launched outside circulates. Angles are measured about the axis
+  at that section. The return must bring the selected island back to itself;
+  angles between sections about one fixed point need not describe a
+  helical axis. Both
   edges are bisected (`scans` halvings of `half_span`) at three levels: the
   given tolerances, tolerances divided by 8, and the latter with twice the
   duration. The width is the middle level; `trace_error` and
   `duration_error` are its changes against the other two and `scan_error`
   the bisection interval. The result is a finite-time estimate, not an
-  enclosure; near a stochastic layer it depends on the duration.
+  enclosure; near a stochastic layer it depends on the duration. The
+  reported changes are sensitivity estimates, not statistical uncertainties.
 
 The algorithm is that of MILCA's island diagnostics
 ([itpplasma/milca](https://github.com/itpplasma/milca),
@@ -63,16 +71,35 @@ axis.
 
 The run writes `island.json` (axis, O, X, width, timings) and, with
 `poincare_lines > 0`, `island-poincare.csv` for lines started on the chord.
+Unknown errors, such as the phase error of a supplied axis, are JSON `null`.
+Requested unresolved points, widths or traces give a nonzero exit status.
+
+With both `measure_x = .false.` and `measure_width = .false.`, the CLI writes
+an unclassified `periodic_point` and the Poincaré section without claiming an
+island. The chord still runs from the axis through that periodic point.
+The library advances the toroidal start angle between successive segments,
+including fractional-turn sampling; libration measurements require a return
+to the same island and axis section.
 
 ## Verification
 
 `test_island_measure` traces an exactly integrable 2/1 island in toroidal
 geometry, B = B₀ e_φ + ∇ψ × ∇φ with
 ψ/B₀ = ι₀r²/2 + ι₂r⁴/(4a²) + ε r² cos(2θ − φ), for which
-K = ψ/B₀ − r²/4 is conserved along every line. The axis, the O and X points
+K = ψ/B₀ − r²/4 is conserved along every line. Here r is distance from a
+circular axis of major radius R₀, θ is its geometric poloidal angle, a sets the
+minor-radius scale, ι₀ and ι₂ set the transform and shear, and ε sets the
+perturbation amplitude. The axis, the O and X points
 (ι = ½ ± 2ε), their residue signs and phases, and the width from the
 closed-form separatrix K = K_X are recovered; the width agrees to 2×10⁻⁵
 relative (7.0710 against 7.0711 cm). A straight wire checks the sign and
 rotation of the Biot–Savart adapter. `test_island_vmec` traces the field of
 a VMEC equilibrium (LI383) and checks that a line stays on its flux surface,
 which holds exactly for B = B^θ e_θ + B^ζ e_ζ on the interpolated surfaces.
+
+The same invariant is checked at half-turn samples of the explicitly
+φ-dependent field. A purely toroidal field from a straight wire checks the
+Poincaré-only CLI, valid given-axis JSON and rejection of a neutral periodic
+point as an island O point. SPECTRE's interior sampler returns domain status
+to the tracer so that a failed line is recorded rather than aborting in the
+field adapter.

@@ -119,6 +119,17 @@ program test_island_measure
     call check('Poincare section completes', st(1) == 0)
     call check('Poincare points conserve K', kdrift < 1.0e-9_dp)
 
+    ! Half-turn sampling must advance phi in this phi-dependent field.
+    call poincare_section(field, reshape([r0 + 0.3_dp, 0.0_dp], [2, 1]), 0.0_dp, &
+                          0.5_dp, 20, pts, st, popt)
+    kdrift = 0
+    do k = 1, 20
+        kdrift = max(kdrift, abs(k_at(pts(:, k, 1), k*pi) &
+                                - k_at([r0 + 0.3_dp, 0.0_dp])))
+    end do
+    call check('half-turn section completes', st(1) == 0)
+    call check('half-turn points conserve K', kdrift < 1.0e-9_dp)
+
     call wire_check()
 
     print '(a,es12.4,a,es12.4,a,es10.2)', 'width ', wd%metres, ' exact ', exact, &
@@ -137,13 +148,15 @@ contains
         print '(2a)', 'FAIL: ', name
     end subroutine check
 
-    real(dp) function k_at(x)
+    real(dp) function k_at(x, phi)
         real(dp), intent(in) :: x(2)
-        real(dp) :: dx, dy
+        real(dp), intent(in), optional :: phi
+        real(dp) :: dx, dy, angle
         dx = x(1) - r0
         dy = x(2)
-        ! On phi = 0 (whole turns), cos(2 theta) = (dx^2 - dy^2)/r^2.
-        k_at = invariant(dx*dx + dy*dy, (dx*dx - dy*dy)/(dx*dx + dy*dy))
+        angle = 0
+        if (present(phi)) angle = phi
+        k_at = invariant(dx*dx + dy*dy, cos(2*atan2(dy, dx) - angle))
     end function k_at
 
     subroutine wire_check()

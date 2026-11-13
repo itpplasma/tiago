@@ -163,7 +163,8 @@ contains
         hi = 0
         status = 0
         do k = 1, maps
-            call field_line_trace(field, x, phi0, map_turns, opt, next, status)
+            call field_line_trace(field, x, phi0 + 2*pi*(k - 1)*map_turns, &
+                                  map_turns, opt, next, status)
             if (status /= 0) return
             x = next
             theta = atan2(x(2) - centre(2), x(1) - centre(1))
@@ -416,7 +417,8 @@ contains
             x = starts(:, j)
             statuses(j) = 0
             do k = 1, crossings
-                call field_line_trace(field, x, phi0, turns, opt, next, statuses(j))
+                call field_line_trace(field, x, phi0 + 2*pi*(k - 1)*turns, &
+                                      turns, opt, next, statuses(j))
                 if (statuses(j) /= 0) exit
                 x = next
                 points(:, k, j) = x

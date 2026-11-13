@@ -1179,6 +1179,10 @@ add_test(NAME tiago_island_rejects_empty_field
     COMMAND $<TARGET_FILE:tiago_island> ${TIAGO_BINARY_DIR}/tests/island-empty.nml)
 set_tests_properties(tiago_island_rejects_empty_field PROPERTIES
     PASS_REGULAR_EXPRESSION "no field given")
+add_test(NAME tiago_island_poincare_only COMMAND ${CMAKE_COMMAND}
+    -DTIAGO_ISLAND=$<TARGET_FILE:tiago_island>
+    -DOUTPUT=${TIAGO_BINARY_DIR}/tests/island-poincare-only
+    -P ${TIAGO_SOURCE_DIR}/tests/check_island_poincare.cmake)
 add_executable(test_island_measure tests/test_island_measure.f90)
 target_link_libraries(test_island_measure PRIVATE tiago_islands)
 add_test(NAME tiago_island_measure COMMAND test_island_measure)
