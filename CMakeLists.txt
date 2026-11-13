@@ -262,6 +262,7 @@ add_library(tiago_inference STATIC
     src/signals/iq_phase_reduction.f90
     src/inference/local_mixture.f90
     src/generated/field_line_rhs.f90
+    src/generated/grid_field_cartesian.f90
     src/inference/field_line_label.f90)
 set_target_properties(tiago_inference PROPERTIES
     Fortran_STANDARD 2018
@@ -613,6 +614,13 @@ add_executable(test_field_line_label tests/test_field_line_label.f90)
 target_link_libraries(test_field_line_label PRIVATE tiago_inference)
 add_test(NAME tiago_field_line_label
     COMMAND $<TARGET_FILE:test_field_line_label> ${TIAGO_SYNTH_TEST_DIR})
+set_tests_properties(tiago_field_line_label PROPERTIES FIXTURES_SETUP mgrid_two_groups)
+find_package(Python3 COMPONENTS Interpreter REQUIRED)
+add_test(NAME tiago_mse_vacuum_cli COMMAND ${Python3_EXECUTABLE}
+    ${TIAGO_SOURCE_DIR}/tests/check_mse_field.py $<TARGET_FILE:tiago_mse_field>
+    --vacuum ${TIAGO_SYNTH_TEST_DIR}/mgrid_two_groups.nc)
+set_tests_properties(tiago_mse_vacuum_cli PROPERTIES
+    FIXTURES_REQUIRED mgrid_two_groups TIMEOUT 120)
 add_executable(test_point_table tests/test_point_table.f90)
 target_link_libraries(test_point_table PRIVATE tiago_synthetic)
 add_test(NAME tiago_point_table
@@ -908,6 +916,10 @@ if(TIAGO_FORTSYM_BUILD)
 endif()
 if(FORTSYM_BUILD)
     add_subdirectory(gen codegen)
+    add_test(NAME tiago_field_line_codegen COMMAND ${CMAKE_COMMAND}
+        -DGENERATOR=$<TARGET_FILE:gen_field_line> -DSOURCE=${TIAGO_SOURCE_DIR}
+        -DOUTPUT=${TIAGO_BINARY_DIR}/tests/field-line-codegen
+        -P ${TIAGO_SOURCE_DIR}/tests/check_field_line_codegen.cmake)
     add_test(NAME tiago_ece_transfer_codegen COMMAND ${CMAKE_COMMAND}
         -DGENERATOR=$<TARGET_FILE:gen_ece_transfer> -DSOURCE=${TIAGO_SOURCE_DIR}
         -DOUTPUT=${TIAGO_BINARY_DIR}/tests/ece-transfer-codegen

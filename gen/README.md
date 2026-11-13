@@ -282,17 +282,20 @@ git diff --exit-code -- src/generated/nonthermal_pressure.f90
 `tiago_kinetic_profiles` checks the independent pressure formula and reverse
 chain, including the central thermal-pressure dependence and prior tails.
 
-# Regenerate the field-line direction
+# Regenerate the field-line direction and grid field components
 
 `gen_field_line` (FortSym `dbaa8e319ac5343e8c12a7938ca6a233d672a682`) emits
 `src/generated/field_line_rhs.f90`, the derivatives dR/dphi and dZ/dphi of a
 field line with the toroidal angle as independent variable.
+It also emits `src/generated/grid_field_cartesian.f90`, the Cartesian
+components of a cylindrical grid field at its toroidal angle.
 
 ```sh
 cmake --build build-codegen --target gen_field_line
 build-codegen/gen_field_line
 git diff --exit-code -- src/generated/field_line_rhs.f90
+git diff --exit-code -- src/generated/grid_field_cartesian.f90
 ```
 
 `tiago_field_line_label` checks the traced labels against an analytic island
-field.
+field. `tiago_mse_vacuum_cli` checks the field conversion at known grid nodes.
