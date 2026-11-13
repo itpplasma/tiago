@@ -260,11 +260,14 @@ add_library(tiago_inference STATIC
     src/generated/dispersion_atan.f90
     src/inference/dispersion_interferometer.f90
     src/signals/iq_phase_reduction.f90
-    src/inference/local_mixture.f90)
+    src/inference/local_mixture.f90
+    src/generated/field_line_rhs.f90
+    src/inference/field_line_label.f90)
 set_target_properties(tiago_inference PROPERTIES
     Fortran_STANDARD 2018
     Fortran_STANDARD_REQUIRED YES)
-target_link_libraries(tiago_inference PUBLIC tiago_inference_core tiago_diagnostics tiago_signals tiago_solver)
+target_link_libraries(tiago_inference PUBLIC tiago_inference_core tiago_diagnostics tiago_signals tiago_solver
+    LIBNEO::interpolate)
 if(TIAGO_ENABLE_OPENMP AND OpenMP_Fortran_FOUND)
     target_link_libraries(tiago_inference PUBLIC OpenMP::OpenMP_Fortran)
 endif()
@@ -289,6 +292,8 @@ target_link_libraries(tiago_synthetic PUBLIC tiago_inference tiago_solver
     ${TIAGO_NETCDF_C_LIBRARY})
 add_executable(tiago_synth src/cli/tiago_synth.f90)
 target_link_libraries(tiago_synth PRIVATE tiago_synthetic)
+add_executable(tiago_field_line_labels src/cli/tiago_field_line_labels.f90)
+target_link_libraries(tiago_field_line_labels PRIVATE tiago_synthetic)
 
 add_executable(tiago_vacuum_cli src/cli/tiago_vacuum_cli.f90)
 set_source_files_properties(src/cli/tiago_vacuum_cli.f90 PROPERTIES Fortran_PREPROCESS ON)
@@ -604,6 +609,10 @@ add_test(NAME tiago_synthetic_forward
 add_test(NAME tiago_synthetic_forward_vmec
     COMMAND $<TARGET_FILE:test_synthetic_forward> ${TIAGO_SYNTH_TEST_DIR} ${TIAGO_WOUT_SIMSOPT_SMALL})
 set_tests_properties(tiago_synthetic_forward_vmec PROPERTIES FIXTURES_REQUIRED wout_li383)
+add_executable(test_field_line_label tests/test_field_line_label.f90)
+target_link_libraries(test_field_line_label PRIVATE tiago_inference)
+add_test(NAME tiago_field_line_label
+    COMMAND $<TARGET_FILE:test_field_line_label> ${TIAGO_SYNTH_TEST_DIR})
 add_executable(test_point_table tests/test_point_table.f90)
 target_link_libraries(test_point_table PRIVATE tiago_synthetic)
 add_test(NAME tiago_point_table
