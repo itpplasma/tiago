@@ -77,7 +77,7 @@ program tiago_reconstruct
     close(unit)
     if (len_trim(vmec_input) == 0) call die('vmec_input is required')
     call execute_command_line('mkdir -p "'//trim(output_dir)//'"')
-    call cpu_time(t_start)
+    t_start = wall_seconds()
 
     call setup()
     n = rec%n
@@ -145,13 +145,20 @@ program tiago_reconstruct
     call model_signals(x, f1, s1, p1)
     call rec%eq%write_wout(trim(output_dir)//'/wout_fit.nc')
     call covariance(x, cov, jac, info)
-    call cpu_time(t_end)
+    t_end = wall_seconds()
 
     call write_results()
     call make_plots()
     print '(A)', 'reconstruction written to '//trim(output_dir)
 
 contains
+
+    real(dp) function wall_seconds()
+        ! cpu_time sums all threads, so it overstates the run time with OpenMP
+        integer(8) :: count, rate
+        call system_clock(count, rate)
+        wall_seconds = real(count, dp) / real(rate, dp)
+    end function wall_seconds
 
     subroutine setup()
         use tiago_vacuum_forward, only: vacuum_solver_t

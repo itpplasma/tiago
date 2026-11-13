@@ -83,6 +83,8 @@ Recorded signals and inference:
   [transfer and radiometer](docs/ece-transfer.md)
 - [Synthetic forward driver](docs/synthetic-forward.md) (`tiago_synth`: every
   channel from one wout, geometry and profile tables)
+- [Field-line labels](docs/field-line-labels.md) (`tiago_field_line_labels`:
+  profile labels in fields with islands, from an mgrid and a reference chart)
 - [Profile diagnostics](docs/profile-diagnostics.md),
   [joint inference](docs/inference.md),
   [joint inference from recorded signals](docs/recorded-joint-inference.md)

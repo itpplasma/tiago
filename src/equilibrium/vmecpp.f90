@@ -116,7 +116,8 @@ module tiago_vmecpp
             type(c_ptr), value :: handle
             integer(c_int), value :: ncot, max_block
             real(c_double), intent(in) :: geometry_bar(*)
-            real(c_double), intent(out) :: boundary_bar(*), profile_bar(*)
+            real(c_double), intent(out), optional :: boundary_bar(*)
+            real(c_double), intent(out) :: profile_bar(*)
             integer(c_int) :: status
         end function c_adjoint
     end interface
@@ -289,18 +290,25 @@ contains
     subroutine vmecpp_adjoint(self, geometry_bar, boundary_bar, profile_bar, max_block)
         !! geometry_bar(size of the 12 geometry blocks, ncot) ->
         !! boundary_bar(2 * mpol * (2 ntor + 1), ncot), profile_bar(3 * (ns - 1), ncot).
+        !! Without boundary_bar the adjoint skips the boundary Hessian columns.
         class(vmecpp_t), intent(inout) :: self
         real(dp), intent(in) :: geometry_bar(:, :)
-        real(dp), allocatable, intent(out) :: boundary_bar(:, :), profile_bar(:, :)
+        real(dp), allocatable, intent(out), optional :: boundary_bar(:, :)
+        real(dp), allocatable, intent(out) :: profile_bar(:, :)
         integer, intent(in) :: max_block
         integer :: ns, mpol, ntor
         ns = self%get_int('ns')
         mpol = self%get_int('mpol')
         ntor = self%get_int('ntor')
-        allocate(boundary_bar(2 * mpol * (2 * ntor + 1), size(geometry_bar, 2)))
         allocate(profile_bar(3 * (ns - 1), size(geometry_bar, 2)))
-        call check(c_adjoint(self%handle, int(size(geometry_bar, 2), c_int), geometry_bar, &
-            boundary_bar, profile_bar, int(max_block, c_int)), 'adjoint')
+        if (present(boundary_bar)) then
+            allocate(boundary_bar(2 * mpol * (2 * ntor + 1), size(geometry_bar, 2)))
+            call check(c_adjoint(self%handle, int(size(geometry_bar, 2), c_int), geometry_bar, &
+                boundary_bar, profile_bar, int(max_block, c_int)), 'adjoint')
+        else
+            call check(c_adjoint(self%handle, int(size(geometry_bar, 2), c_int), geometry_bar, &
+                profile_bar=profile_bar, max_block=int(max_block, c_int)), 'adjoint')
+        end if
     end subroutine vmecpp_adjoint
 
     integer(c_int) function opt(i)

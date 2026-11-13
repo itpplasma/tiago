@@ -14,6 +14,8 @@ program test_vmecpp_equilibrium
     !!     equilibria for every parameter kind.
     !!  The same three checks for |B| on all half surfaces (vmec_edge%modb vs
     !!  wout bmnc, its VJP, and the Jacobian with a bmnc cotangent).
+    !!  5. An adjoint without the boundary cotangent gives the same profile
+    !!     cotangents with one Hessian-vector product fewer per boundary entry.
     use, intrinsic :: iso_fortran_env, only: dp => real64, error_unit
     use, intrinsic :: ieee_arithmetic, only: ieee_is_finite
     use tiago_equilibrium, only: equilibrium_t
@@ -255,6 +257,7 @@ program test_vmecpp_equilibrium
         call eq%jacobian(x0, cot, jac)
         t1 = wall()
         print '(A,F7.2,A)', 'Jacobian (4 cotangents, factorization cached): ', t1 - t0, ' s'
+        call check_profile_only_adjoint()
         call eq%vmec%destroy()
         if (failures > 0) error stop 1
         stop
@@ -311,11 +314,43 @@ program test_vmecpp_equilibrium
                 ': max |adjoint - FD| / max |FD| = ', err
         end if
     end do
+    call check_profile_only_adjoint()
     call eq%vmec%destroy()
     if (failures > 0) error stop 1
     print '(A)', 'test_vmecpp_equilibrium passed'
 
 contains
+
+    subroutine check_profile_only_adjoint()
+        !! 5. Fresh solve, then the adjoint without and with the boundary
+        !! cotangent on the same random geometry cotangents.
+        real(dp), allocatable :: gbar(:, :), p_without(:, :), p_with(:, :), bound(:, :)
+        integer :: before, without, with, entries, mpol, ntor
+
+        call eq%solve(x0, ok)
+        if (.not. ok) error stop 'equilibrium for the profile-only adjoint failed'
+        allocate(gbar(size(eq%coef), 3))
+        call random_number(gbar)
+        gbar = gbar - 0.5_dp
+        before = eq%vmec%get_int('hessian_products')
+        call eq%vmec%adjoint(gbar, profile_bar=p_without, max_block=eq%max_block)
+        without = eq%vmec%get_int('hessian_products') - before
+        before = eq%vmec%get_int('hessian_products')
+        call eq%vmec%adjoint(gbar, bound, p_with, eq%max_block)
+        with = eq%vmec%get_int('hessian_products') - before
+        call check_vector('profile cotangent without vs with boundary', &
+            reshape(p_without, [size(p_without)]), reshape(p_with, [size(p_with)]), 1.0e-12_dp)
+        mpol = eq%vmec%get_int('mpol')
+        ntor = eq%vmec%get_int('ntor')
+        entries = 2 * mpol * (ntor + 1)
+        if (ntor > 0) entries = 2 * entries
+        print '(A,I0,A,I0,A,I0)', 'Hessian-vector products without boundary ', without, &
+            ', with ', with, ', boundary entries ', entries
+        if (with - without /= entries) then
+            write(error_unit, '(A)') 'FAIL profile-only adjoint still probes the boundary'
+            failures = failures + 1
+        end if
+    end subroutine check_profile_only_adjoint
 
     real(dp) function wall()
         integer(8) :: count, rate

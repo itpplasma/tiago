@@ -388,7 +388,11 @@ contains
                 bmnc_dot(r) = sum(bmnc*mb) + sum(bu*ub) + sum(bv*vb)
             end do
         end if
-        call self%vmec%adjoint(gbar, bbar, pbar, self%max_block)
+        if (any(self%key == 'rbc' .or. self%key == 'zbs')) then
+            call self%vmec%adjoint(gbar, bbar, pbar, self%max_block)
+        else
+            call self%vmec%adjoint(gbar, profile_bar=pbar, max_block=self%max_block)
+        end if
         call system_clock(finish)
         self%t_adjoint = self%t_adjoint + real(finish - start, dp) / rate
         self%adjoint_solves = self%adjoint_solves + nrow
