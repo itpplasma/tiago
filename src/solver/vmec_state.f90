@@ -404,6 +404,9 @@ contains
                              wf(:, 1), wf(:, 2), wf(:, 3), wf(:, 4))
         call hermite_weights(self%rho_half, u(1), .true., fh, nh, &
                              wh(:, 1), wh(:, 2), wh(:, 3), wh(:, 4))
+        if (.not. columns) then
+            call spatial_modes(self, u, ff, nf, fh, nh, wf, wh, jet, x3, v, vu, vuu)
+        else
         do mn = 1, self%mnmax
             do k = 1, nf
                 col = mn + (ff + k - 2)*self%mnmax
@@ -496,6 +499,7 @@ contains
                 end do
             end do
         end do
+        end if
         do i = 1, 3
             call vmec_vector_component(jet%xu(i, :), jet%xuu(i, :, :), x3(i, :, :, :), &
                                        v, vu, vuu, jet%b(i), jet%bu(i, :), jet%buu(i, &
@@ -521,5 +525,81 @@ contains
         end do
         status = locate_ok
     end subroutine vmec_vector_jets
+
+    subroutine spatial_modes(self, u, ff, nf, fh, nh, wf, wh, jet, x3, v, vu, vuu)
+        class(vmec_state_t), intent(in) :: self
+        real(dp), intent(in) :: u(3), wf(max_weights, 4), wh(max_weights, 4)
+        integer, intent(in) :: ff, nf, fh, nh
+        type(vector_jets_t), intent(inout) :: jet
+        real(dp), intent(inout) :: x3(3, 3, 3, 3), v(2), vu(3, 2), vuu(3, 3, 2)
+        real(dp) :: radial(4), val, d(3), d2(3, 3), d3(3, 3, 3)
+        integer :: mn, i
+
+        ! Without parameter columns, contract the linear radial basis first.
+        do mn = 1, self%mnmax
+            do i = 1, 3
+                if (i == 3) then
+                    radial = matmul(self%zmns(mn, ff:ff + nf - 1), wf(:nf, :))
+                else
+                    radial = matmul(self%rmnc(mn, ff:ff + nf - 1), wf(:nf, :))
+                end if
+                select case (i)
+                case (1)
+                    call vmec_r_x(radial, self%xm(mn), self%xn(mn), u(2), u(3), val, d, d2, d3)
+                case (2)
+                    call vmec_r_y(radial, self%xm(mn), self%xn(mn), u(2), u(3), val, d, d2, d3)
+                case (3)
+                    call vmec_z(radial, self%xm(mn), self%xn(mn), u(2), u(3), val, d, d2, d3)
+                end select
+                jet%x(i) = jet%x(i) + val
+                jet%xu(i, :) = jet%xu(i, :) + d
+                jet%xuu(i, :, :) = jet%xuu(i, :, :) + d2
+                x3(i, :, :, :) = x3(i, :, :, :) + d3
+            end do
+            if (.not. allocated(self%rmns)) cycle
+            do i = 1, 3
+                if (i == 3) then
+                    radial = matmul(self%zmnc(mn, ff:ff + nf - 1), wf(:nf, :))
+                else
+                    radial = matmul(self%rmns(mn, ff:ff + nf - 1), wf(:nf, :))
+                end if
+                select case (i)
+                case (1)
+                    call vmec_rs_x(radial, self%xm(mn), self%xn(mn), u(2), u(3), val, d, d2, d3)
+                case (2)
+                    call vmec_rs_y(radial, self%xm(mn), self%xn(mn), u(2), u(3), val, d, d2, d3)
+                case (3)
+                    call vmec_cos(radial, self%xm(mn), self%xn(mn), u(2), u(3), val, d, d2, d3)
+                end select
+                jet%x(i) = jet%x(i) + val
+                jet%xu(i, :) = jet%xu(i, :) + d
+                jet%xuu(i, :, :) = jet%xuu(i, :, :) + d2
+                x3(i, :, :, :) = x3(i, :, :, :) + d3
+            end do
+        end do
+        do mn = 1, self%mnmax_nyq
+            do i = 1, 2
+                if (i == 1) then
+                    radial = matmul(self%bsupumnc(mn, fh:fh + nh - 1), wh(:nh, :))
+                else
+                    radial = matmul(self%bsupvmnc(mn, fh:fh + nh - 1), wh(:nh, :))
+                end if
+                call vmec_cos(radial, self%xm_nyq(mn), self%xn_nyq(mn), u(2), u(3), val, d, d2, d3)
+                v(i) = v(i) + val
+                vu(:, i) = vu(:, i) + d
+                vuu(:, :, i) = vuu(:, :, i) + d2
+                if (.not. allocated(self%bsupumns)) cycle
+                if (i == 1) then
+                    radial = matmul(self%bsupumns(mn, fh:fh + nh - 1), wh(:nh, :))
+                else
+                    radial = matmul(self%bsupvmns(mn, fh:fh + nh - 1), wh(:nh, :))
+                end if
+                call vmec_z(radial, self%xm_nyq(mn), self%xn_nyq(mn), u(2), u(3), val, d, d2, d3)
+                v(i) = v(i) + val
+                vu(:, i) = vu(:, i) + d
+                vuu(:, :, i) = vuu(:, :, i) + d2
+            end do
+        end do
+    end subroutine spatial_modes
 
 end module tiago_vmec_state
