@@ -16,7 +16,7 @@ endif()
 include(FetchContent)
 
 set(TIAGO_LIBNEO_GIT "https://github.com/itpplasma/libneo.git" CACHE STRING "libneo upstream to fetch")
-set(TIAGO_LIBNEO_TAG "42b04688a2fa2805bb84273c68dc35e78b50f72e" CACHE STRING "libneo commit/branch/tag used by Tiago")
+set(TIAGO_LIBNEO_TAG "94f59c176714c8598ca1b43607a353b29a2ca2a7" CACHE STRING "libneo commit/branch/tag used by Tiago")
 option(TIAGO_ENABLE_SPECTRE "Build the libneo SPECTRE plasma source (HDF5, fortnum)" OFF)
 option(TIAGO_MATCH_LIBNEO_BRANCH "Use the matching libneo branch when available" OFF)
 # Use a local effective ref so removing an override restores the pinned default.
@@ -49,7 +49,7 @@ option(TIAGO_ENABLE_OPENMP "Enable OpenMP parallelism inside Tiago loops" ON)
 
 # fortnum: B-spline profile bases, NUTS and PSIS for the inference core. Declared
 # before libneo, whose numerics reuse an existing fortnum target.
-set(TIAGO_FORTNUM_TAG "aa46765ec60220f2107a3a2b8ce940f89f026a56" CACHE STRING "fortnum commit used by Tiago")
+set(TIAGO_FORTNUM_TAG "e2b01a04c823cf8fc644d9da8b1f16f69e2b08a0" CACHE STRING "fortnum commit used by Tiago")
 if(NOT TARGET fortnum)
     FetchContent_Declare(fortnum
         GIT_REPOSITORY https://github.com/lazy-fortran/fortnum.git
@@ -336,7 +336,7 @@ if(TIAGO_ENABLE_RECONSTRUCTION)
     set(FORTPLOT_BUILD_FORTARRAY_ADAPTER OFF CACHE BOOL "" FORCE)
     FetchContent_Declare(fortplot
         GIT_REPOSITORY https://github.com/lazy-fortran/fortplot.git
-        GIT_TAG 35a9cd26ab20cf50ba6f7347d7daf13566e0dc91)
+        GIT_TAG 1645fa41c11b5786c71bc27e5b41dae7c7bbba23)
     FetchContent_MakeAvailable(fortplot)
     find_package(LAPACK REQUIRED)
 
