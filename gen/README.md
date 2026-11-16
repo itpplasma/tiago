@@ -313,3 +313,21 @@ git diff --exit-code -- src/generated/grid_field_cartesian.f90
 
 `tiago_field_line_label` checks the traced labels against an analytic island
 field. `tiago_mse_vacuum_cli` checks the field conversion at known grid nodes.
+
+# Regenerate the soft X-ray kernels
+
+`gen_soft_xray` (FortSym `f579ad118f552b09d4dd6385ebd753ec1500922a`) emits the
+bremsstrahlung emissivity with its partial derivatives and the filter-response
+leaves: one piecewise-linear transmission interval in closed form, the same
+as a series for intervals narrower than 0.01 Te, and the constant tail. The
+closed-form interval is emitted without SymEngine simplification, which would
+combine exp(-h/Te) with exp(h/Te) and overflow for h >> Te.
+
+```sh
+cmake --build build-codegen --target gen_soft_xray
+build-codegen/gen_soft_xray
+git diff --exit-code -- src/generated/sxr_*.f90
+```
+
+`tiago_soft_xray` checks the kernels against Simpson sums over photon energy,
+a step filter in closed form and central differences.

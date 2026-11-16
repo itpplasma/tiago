@@ -92,14 +92,16 @@ this does not certify branch completeness in a physical case.
 TIAGO provides the forward model of every diagnostic its consumers need, with
 instrument, atomic and radiative-transfer uncertainties owned explicitly.
 Magnetic diagnostics remain the baseline. Present: magnetics, MSE, Thomson,
-interferometer, ECE, XICS, CXRS and wall-loss infrared signals.
+interferometer, ECE, XICS, CXRS, soft X-ray cameras and wall-loss infrared
+signals.
 
 Planned, in this order (plan of 2026-11-16, not started unless noted):
 
 1. Check that the XICS and CXRS instruments sample the field-line labels of
    island-resolving providers, not only nested flux labels.
 2. Soft X-ray pinhole cameras with a flux-label or field-line-label
-   emissivity, benchmarked against STELLOPT's soft X-ray target (in progress).
+   emissivity, benchmarked against STELLOPT's soft X-ray target (done:
+   [soft X-ray](docs/soft-xray.md)).
 3. Plasma rotation in XICS and CXRS (Doppler shift).
 4. Doppler reflectometry.
 5. Fast-ion diagnostics: loss-detector (FILD) response from orbit-code loss

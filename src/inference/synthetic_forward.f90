@@ -19,11 +19,12 @@ module tiago_synthetic_forward
     use tiago_kinetic_profiles, only: kinetic_profiles_t, N_PROFILES, P_NE, P_TE, P_TI, P_ZEFF
     use tiago_sight_geometry, only: chord_t, to_rpz
     use tiago_line_integrals, only: interferometer_t, xics_t
+    use tiago_soft_xray, only: soft_xray_t, SXR_BREMSSTRAHLUNG_MODEL
     use tiago_thomson_scattering, only: thomson_t, thomson_volume_t
     use tiago_cold_resonance, only: cold_resonance
     use tiago_profile_geometry_io, only: has_group, read_chords, read_thomson_volumes, &
         read_ece_lines, ece_line_t, read_mse_lines, mse_line_t, profile_table_t, &
-        read_profile_table
+        read_profile_table, read_sxr_geometry, sxr_geometry_t
     use tiago_diagnostic_types, only: mse_channel_t
     use tiago_mse_state, only: mse_state_angles
     use tiago_sensor_set, only: sensor_set_t, read_sensor_set, sensor_kind_name
@@ -57,6 +58,8 @@ module tiago_synthetic_forward
         real(dp) :: aminor = 0.0_dp !! VMEC Aminor_p [m]
         type(point_table_t) :: table
         logical :: use_table = .false.
+        real(dp), allocatable :: sxr_s(:), sxr(:) !! soft X-ray emissivity table
+        real(dp), allocatable :: breakpoints(:) !! of the profile splines in s
     end type synth_state_t
 
     type :: named_t
@@ -106,6 +109,8 @@ contains
                 call run_ece(ncid, cfg, st, ierr, message)
             if (ierr == 0 .and. has_group(cfg%geometry, 'mse')) &
                 call run_mse(ncid, cfg, st, ierr, message)
+            if (ierr == 0 .and. has_group(cfg%geometry, 'sxr')) &
+                call run_sxr(ncid, cfg, st, ierr, message)
         end if
         if (ierr == 0 .and. len(cfg%sensors) > 0) call run_magnetics(ncid, cfg, ierr, message)
         if (nc_close(ncid) /= NC_NOERR .and. ierr == 0) then
@@ -143,11 +148,16 @@ contains
             message = 'neither a wout nor a point table'
             return
         end if
-        call st%profiles%init([(real(k, dp) / cfg%profile_knots, k = 0, cfg%profile_knots)])
+        st%breakpoints = [(real(k, dp) / cfg%profile_knots, k = 0, cfg%profile_knots)]
+        call st%profiles%init(st%breakpoints)
         allocate(st%z(0))
         if (len(cfg%profiles) == 0) return
         call read_profile_table(cfg%profiles, table, ierr, message)
         if (ierr /= 0) return
+        if (allocated(table%sxr)) then
+            st%sxr_s = table%s
+            st%sxr = table%sxr
+        end if
         call set_profile_table(st, table, ierr, message)
         if (ierr /= 0) message = cfg%profiles//': '//message
     end subroutine synth_load
@@ -269,6 +279,53 @@ contains
             [named('brightness', '1', 'relative brightness, unit scale per chord', y(:n)), &
             named('ti', 'eV', 'emissivity-weighted Ti along the chord', y(n + 1:))])
     end subroutine run_xics
+
+    subroutine run_sxr(ncid, cfg, st, ierr, message)
+        !! Emissivity from the profile table's sxr_emissivity if present,
+        !! else bremsstrahlung from ne, Te and Zeff through the camera filters.
+        integer(c_int), intent(in) :: ncid
+        type(synth_config_t), intent(in) :: cfg
+        type(synth_state_t), intent(in) :: st
+        integer, intent(out) :: ierr
+        character(len=:), allocatable, intent(out) :: message
+        type(sxr_geometry_t) :: geo
+        type(soft_xray_t) :: diag
+        real(dp), allocatable :: y(:), g(:)
+        real(dp), parameter :: four_pi = 16.0_dp * atan(1.0_dp)
+        integer :: c
+
+        call read_sxr_geometry(cfg%geometry, cfg%npanel, geo, ierr, message)
+        if (ierr /= 0) return
+        g = [(four_pi, c = 1, size(geo%chords))]
+        if (allocated(geo%filters)) then
+            call diag%setup(geo%chords, geo%camera, g, geo%filters)
+        else
+            call diag%setup(geo%chords, geo%camera, g)
+        end if
+        if (allocated(st%sxr)) then
+            call diag%set_emissivity_basis(st%breakpoints)
+            call diag%set_emissivity_table(st%sxr_s, st%sxr, ierr)
+            if (ierr /= 0) then
+                ierr = 1
+                message = cfg%profiles//': sxr_emissivity must be positive with at least '// &
+                    'profile_knots + 3 points'
+                return
+            end if
+        else
+            diag%model = SXR_BREMSSTRAHLUNG_MODEL
+        end if
+        call predict(diag, st, y)
+        if (.not. allocated(geo%etendue)) then
+            call write_group(ncid, 'sxr', 'channel', chord_labels(geo%chords), ierr, message, &
+                [named('line_integral', 'W m-2', 'int eps dl along the chord', y), &
+                named('camera', '1', 'camera index', real(geo%camera, dp))])
+            return
+        end if
+        call write_group(ncid, 'sxr', 'channel', chord_labels(geo%chords), ierr, message, &
+            [named('line_integral', 'W m-2', 'int eps dl along the chord', y), &
+            named('power', 'W', 'etendue / (4 pi) int eps dl', geo%etendue / four_pi * y), &
+            named('camera', '1', 'camera index', real(geo%camera, dp))])
+    end subroutine run_sxr
 
     subroutine run_thomson(ncid, cfg, st, ierr, message)
         integer(c_int), intent(in) :: ncid

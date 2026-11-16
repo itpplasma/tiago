@@ -140,6 +140,18 @@ contains
         call close('XICS weighted Ti, vertical', v(1), y(3), 1.0e-11_dp)
         call close('XICS weighted Ti, horizontal', v(2), y(4), 1.0e-11_dp)
 
+        ! Soft X-ray cameras on the same chords: bremsstrahlung, camera 2
+        ! behind a step filter at 1 keV.
+        call read_var(cfg%output, 'sxr', 'line_integral', v)
+        call close('SXR unfiltered bremsstrahlung, vertical', v(1), simpson(chord(:, :, 1), 4), &
+            1.0e-10_dp)
+        call close('SXR filtered bremsstrahlung, horizontal', v(2), &
+            simpson(chord(:, :, 2), 5), 1.0e-10_dp)
+        y(1:2) = v(1:2)
+        call read_var(cfg%output, 'sxr', 'power', v)
+        call close('SXR power, vertical', v(1), 1.0e-7_dp / (4.0_dp * pi) * y(1), 1.0e-14_dp)
+        call close('SXR power, horizontal', v(2), 2.0e-7_dp / (4.0_dp * pi) * y(2), 1.0e-14_dp)
+
         call read_var(cfg%output, 'thomson', 'ne', v)
         do k = 1, 5
             call close('Thomson point ne', v(k), ne_of(r2(ts(:, k))), 1.0e-12_dp)
@@ -182,13 +194,17 @@ contains
     end function r2
 
     pure real(dp) function integrand(s, which)
-        !! 1: ne; 2: XICS emissivity (Z = 18, E = 3.1 keV); 3: emissivity Ti.
+        !! 1: ne; 2: XICS emissivity (Z = 18, E = 3.1 keV); 3: emissivity Ti;
+        !! 4: bremsstrahlung (NRL Plasma Formulary); 5: the same above 1 keV.
         real(dp), intent(in) :: s
         integer, intent(in) :: which
         real(dp) :: eps
         select case (which)
         case (1)
             integrand = ne_of(s)
+        case (4, 5)
+            integrand = 1.69e-38_dp * ne_of(s)**2 * zeff0 * sqrt(te_of(s))
+            if (which == 5) integrand = integrand * exp(-1.0e3_dp / te_of(s))
         case default
             eps = ne_of(s)**2 * (zeff0 - 1.0_dp) * exp(-3.1e3_dp / te_of(s)) &
                 / (18.0_dp * 17.0_dp * sqrt(te_of(s)))
@@ -319,6 +335,7 @@ contains
         call put_group(ncid, 'xics', 'chord', &
             [character(len=4) :: ('X'//achar(48 + k), k = 1, size(chords, 3))], &
             ['start', 'end  '], [chords(:, 1, :), chords(:, 2, :)], size(chords, 3))
+        call put_sxr(ncid, chords)
         allocate(dir(3, size(centres, 2)), len_(size(centres, 2)))
         dir = 0.0_dp
         dir(3, :) = 1.0_dp
@@ -358,6 +375,40 @@ contains
         s = nc_def_var(gid, cstr('label'), NC_CHAR, 2_c_int, [dn, dl], var)
         s = nc_put_var_text(gid, var, labels)
     end subroutine put_group
+
+    subroutine put_sxr(ncid, chords)
+        !! One channel per chord, camera k; pinhole at the chord start, the
+        !! detector 1 cm behind it; camera 2 behind a step filter at 1 keV.
+        integer(c_int), intent(in) :: ncid
+        real(dp), intent(in) :: chords(:, :, :)
+        integer(c_int) :: gid, dn, dc, dk, var, s
+        real(dp) :: u(3), det(3, size(chords, 3)), len_(size(chords, 3))
+        integer :: k, n
+        n = size(chords, 3)
+        do k = 1, n
+            u = chords(:, 2, k) - chords(:, 1, k)
+            len_(k) = norm2(u)
+            det(:, k) = chords(:, 1, k) - 0.01_dp * u / len_(k)
+        end do
+        call put_group(ncid, 'sxr', 'channel', &
+            [character(len=4) :: ('S'//achar(48 + k), k = 1, n)], &
+            ['detector', 'aperture'], [det, chords(:, 1, :)], n)
+        s = nc_inq_ncid(ncid, cstr('sxr'), gid)
+        s = nc_inq_dimid(gid, cstr('channel'), dn)
+        s = nc_def_var(gid, cstr('length'), NC_DOUBLE, 1_c_int, [dn], var)
+        s = nc_put_var_double(gid, var, len_)
+        s = nc_def_var(gid, cstr('camera'), NC_DOUBLE, 1_c_int, [dn], var)
+        s = nc_put_var_double(gid, var, [(real(k, dp), k = 1, n)])
+        s = nc_def_var(gid, cstr('etendue'), NC_DOUBLE, 1_c_int, [dn], var)
+        s = nc_put_var_double(gid, var, [(1.0e-7_dp * k, k = 1, n)])
+        s = nc_def_dim(gid, cstr('filter'), int(n, c_size_t), dc)
+        s = nc_def_dim(gid, cstr('node'), 1_c_size_t, dk)
+        s = nc_def_var(gid, cstr('filter_energy'), NC_DOUBLE, 2_c_int, [dc, dk], var)
+        s = nc_put_var_double(gid, var, [0.0_dp, (1.0e3_dp, k = 2, n)])
+        s = nc_def_var(gid, cstr('filter_transmission'), NC_DOUBLE, 2_c_int, [dc, dk], var)
+        s = nc_put_var_double(gid, var, [(1.0_dp, k = 1, n)])
+        call check(s == NC_NOERR, 'write sxr')
+    end subroutine put_sxr
 
     subroutine put_thomson(ncid, centres, dir, len_)
         integer(c_int), intent(in) :: ncid

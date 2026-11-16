@@ -3,7 +3,8 @@
 `tiago_synth <input.nml>` evaluates every configured diagnostic once, from a
 VMEC wout, tabulated kinetic profiles and real diagnostic geometry, and writes
 one netCDF-4 file with one group per diagnostic. It adds no physics: profile
-instruments are the existing `interferometer_t`, `thomson_t` and `xics_t` on
+instruments are the existing `interferometer_t`, `thomson_t`, `xics_t` and
+`soft_xray_t` on
 the VMEC state (`vmec_state_t`), and magnetics are the sensor-set evaluators
 with the virtual-casing plasma model.
 
@@ -35,10 +36,12 @@ character variable in every group.
 | `thomson` | `center(volume, xyz)`, `direction(volume, xyz)` (laser), `length(volume)` |
 | `ece` | `frequency(channel)` [Hz], `harmonic(channel)`, `origin(channel, xyz)`, `direction(channel, xyz)`, `length(channel)` |
 | `mse` | sight line `origin(channel, xyz)` (observer) and `direction(channel, xyz)` (into the plasma), heating beam `beam_origin(channel, xyz)` and `beam_direction(channel, xyz)`, `max_gap(channel)` [m] |
+| `sxr` | `detector(channel, xyz)`, `aperture(channel, xyz)`, `length(channel)` [m] from the aperture; optional `etendue(channel)` [m^2 sr], `camera(channel)` (1, 2, ...), `filter_energy(filter, node)` [eV] and `filter_transmission(filter, node)` with one row per camera ([soft X-ray](soft-xray.md)) |
 
 The profile table has one dimension `s` (normalized toroidal flux in [0, 1])
 and the variables `ne` [m^-3], `te` [eV], `ti` [eV] and optionally `zeff`,
-all positive (1 < zeff < 6). Each profile is fixed to the least-squares fit of
+all positive (1 < zeff < 6), and optionally `sxr_emissivity` [W m^-3], which
+selects the soft X-ray emissivity-profile model instead of bremsstrahlung. Each profile is fixed to the least-squares fit of
 the cubic B-spline of `tiago_kinetic_profiles` (`profile_knots` intervals) to
 the logarithm of the table (logit for Zeff), so a table needs at least
 `profile_knots + 3` points. A profile whose logarithm is a cubic in s is
@@ -95,6 +98,7 @@ Global attributes: `tiago_revision` (`git describe` of the build),
 | `thomson` | `ne` [m^-3] (volume average), `te` [eV] (density weighted), `s`, `r_eff` [m], `inside` at the volume centre |
 | `xics` | `brightness` (relative, unit scale), `ti` [eV] (emissivity-weighted along the chord) |
 | `ece` | `te` [eV] at the first cold resonance n f_ce(abs(B)) = f inside the plasma along the line of sight, with its `s`, `r_eff`, `R`, `phi`, `Z`; NaN if there is none |
+| `sxr` | `line_integral` [W m^-2] = int eps dl along the chord, `power` [W] = etendue / (4 pi) int eps dl (with an etendue), `camera` |
 | `mse` | `gamma` [rad], pi-polarization angle at the sight-beam midpoint from the interior VMEC field (`docs/mse.md`, reference +Z), with `s` and Cartesian `b_x`, `b_y`, `b_z` [T] there |
 | `magnetics` | `signal` (flux loops [Wb], Rogowski coils and B-probes [T m^2]), `kind` (sensor kind code) |
 
@@ -123,8 +127,8 @@ cp <build>/tests/cases/wout_li383_low_res_reference.nc .
 `tiago_synthetic_forward` checks the driver end to end, through the geometry
 and profile files and the output groups: on concentric circles
 (s = r^2, abs(B) = B0 R0 / R) the chord integrals of ne and of the XICS
-emissivity and its Ti moment agree with independent Simpson quadratures to
-1e-11, Thomson points and a finite volume reproduce the tabulated profiles to
+emissivity and its Ti moment and the filtered and unfiltered soft X-ray
+bremsstrahlung agree with independent Simpson quadratures to 1e-10, Thomson points and a finite volume reproduce the tabulated profiles to
 1e-11, and the ECE cold resonance lies at R = B0 R0 / B_res; on the LI383 wout,
 Thomson points placed at X(u) for known labels u give s = u_1^2 and the
 tabulated ne and Te to 1e-9, and an MSE channel there gives s and the angle of

@@ -5,7 +5,8 @@ program test_point_table
     !!    island disk of radius 0.1 at (R, Z) = (3.5, 0) whose interior carries
     !!    the plateau label rho = 0.5. A Thomson point inside the island gives
     !!    the plateau ne exactly; the vertical chord through the island equals
-    !!    the hand integral with the plateau (Simpson quadrature here).
+    !!    the hand integral with the plateau (Simpson quadrature here), for the
+    !!    interferometer and for a soft X-ray emissivity profile.
     !! 2. The LI383 VMEC state sampled on a grid: Thomson points on grid nodes
     !!    give the s, ne and Te of the native VMEC path to round-off; a chord
     !!    inside the boundary agrees within the trilinear interpolation error of
@@ -44,6 +45,11 @@ contains
         ne_of = n0 * exp(-0.4_dp * s - 1.1_dp * s**2 + 0.3_dp * s**3)
     end function ne_of
 
+    pure real(dp) function eps_of(s)
+        real(dp), intent(in) :: s
+        eps_of = 1.0e4_dp * exp(-1.0_dp * s - 6.0_dp * s**2 + 1.0_dp * s**3)
+    end function eps_of
+
     pure real(dp) function te_of(s)
         real(dp), intent(in) :: s
         te_of = t0 * exp(-1.0_dp * s - 0.9_dp * s**2 + 0.2_dp * s**3)
@@ -52,7 +58,7 @@ contains
     subroutine island_case()
         integer, parameter :: nr = 401, nz = 401
         real(dp) :: r(nr), z(nz), rho(nr, nz, 1), b(nr, nz, 1), st(nr, nz, 1), isl(nr, nz, 1)
-        real(dp) :: chord(3, 2), ts(3, 2), u0, hand, h, zz
+        real(dp) :: chord(3, 2), ts(3, 2), u0, hand, h, zz, nested
         real(dp), allocatable :: v(:)
         integer :: i, k, m
 
@@ -94,6 +100,26 @@ contains
         call close('chord through the island vs hand integral', v(1), hand, 2.0e-4_dp)
         call check(abs(v(1) - nested_integral(u0)) > 10.0_dp * abs(v(1) - hand), &
             'the plateau changes the chord integral by more than the interpolation error')
+
+        ! Soft X-ray emissivity profile eps(s), flat across the island.
+        hand = 0.0_dp
+        do i = 0, m
+            zz = -u0 + h * i
+            hand = hand + merge(1.0_dp, merge(4.0_dp, 2.0_dp, mod(i, 2) == 1), i == 0 .or. i == m) &
+                * merge(eps_of(0.25_dp), eps_of(0.25_dp + zz**2), abs(zz) < 0.1_dp)
+        end do
+        hand = hand * h / 3.0_dp
+        call read_var(trim(workdir)//'/island_synthetic.nc', 'sxr', 'line_integral', v)
+        call close('SXR chord through the island vs hand integral', v(1), hand, 2.0e-4_dp)
+        nested = 0.0_dp
+        do i = 0, m
+            zz = -u0 + h * i
+            nested = nested + merge(1.0_dp, merge(4.0_dp, 2.0_dp, mod(i, 2) == 1), &
+                i == 0 .or. i == m) * eps_of(0.25_dp + zz**2)
+        end do
+        nested = nested * h / 3.0_dp
+        call check(abs(v(1) - nested) > 10.0_dp * abs(v(1) - hand), &
+            'the plateau changes the SXR integral by more than the interpolation error')
     end subroutine island_case
 
     real(dp) function nested_integral(u0)
@@ -273,6 +299,18 @@ contains
         s = nc_put_var_double(gid, var, dir)
         s = nc_def_var(gid, cstr('length'), NC_DOUBLE, 1_c_int, [dn], var)
         s = nc_put_var_double(gid, var, spread(0.0_dp, 1, size(centres, 2)))
+        ! Soft X-ray channel along the chord: pinhole at its start, detector
+        ! 1 cm behind.
+        s = nc_def_grp(ncid, cstr('sxr'), gid)
+        s = nc_def_dim(gid, cstr('channel'), 1_c_size_t, dn)
+        s = nc_def_dim(gid, cstr('xyz'), 3_c_size_t, dx)
+        s = nc_def_var(gid, cstr('aperture'), NC_DOUBLE, 2_c_int, [dn, dx], var)
+        s = nc_put_var_double(gid, var, chord(:, 1))
+        s = nc_def_var(gid, cstr('detector'), NC_DOUBLE, 2_c_int, [dn, dx], var)
+        s = nc_put_var_double(gid, var, chord(:, 1) - 0.01_dp * (chord(:, 2) - chord(:, 1)) &
+            / norm2(chord(:, 2) - chord(:, 1)))
+        s = nc_def_var(gid, cstr('length'), NC_DOUBLE, 1_c_int, [dn], var)
+        s = nc_put_var_double(gid, var, [norm2(chord(:, 2) - chord(:, 1))])
         call check(s == NC_NOERR, 'write '//path)
         s = nc_close(ncid)
     end subroutine write_geometry
@@ -293,6 +331,8 @@ contains
         s = nc_put_var_double(ncid, var, [(te_of(sv(k)), k = 1, 31)])
         s = nc_def_var(ncid, cstr('ti'), NC_DOUBLE, 1_c_int, [dn], var)
         s = nc_put_var_double(ncid, var, [(te_of(sv(k)), k = 1, 31)])
+        s = nc_def_var(ncid, cstr('sxr_emissivity'), NC_DOUBLE, 1_c_int, [dn], var)
+        s = nc_put_var_double(ncid, var, [(eps_of(sv(k)), k = 1, 31)])
         call check(s == NC_NOERR, 'write '//path)
         s = nc_close(ncid)
     end subroutine write_profiles

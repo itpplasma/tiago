@@ -82,3 +82,7 @@ target_link_libraries(gen_islands PRIVATE "${FORTSYM_LIBRARY}")
 add_executable(gen_field_line gen_field_line.f90)
 target_include_directories(gen_field_line PRIVATE "${FORTSYM_BUILD}/include")
 target_link_libraries(gen_field_line PRIVATE "${FORTSYM_LIBRARY}")
+
+add_executable(gen_soft_xray gen_soft_xray.f90)
+target_include_directories(gen_soft_xray PRIVATE "${FORTSYM_BUILD}/include")
+target_link_libraries(gen_soft_xray PRIVATE "${FORTSYM_LIBRARY}")

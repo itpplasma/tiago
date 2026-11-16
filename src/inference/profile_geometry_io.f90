@@ -16,10 +16,16 @@ module tiago_profile_geometry_io
     !!                         beam_direction(channel, xyz), max_gap(channel) [m],
     !!                         label(channel, strlen); direction points from the
     !!                         observer into the plasma
+    !!   sxr:                  detector(channel, xyz), aperture(channel, xyz),
+    !!                         length(channel) [m] from the aperture, optional
+    !!                         etendue(channel) [m^2 sr], camera(channel) (1, 2,
+    !!                         ...), filter_energy(camera, node) [eV] and
+    !!                         filter_transmission(camera, node), label
     !!
     !! The profile table has a dimension s (normalized toroidal flux, 0 ... 1)
-    !! and variables ne [m^-3], te [eV], ti [eV] and optionally zeff, each
-    !! positive on s. A missing group or variable is reported, never filled in.
+    !! and variables ne [m^-3], te [eV], ti [eV] and optionally zeff and
+    !! sxr_emissivity [W m^-3], each positive on s. A missing group or variable
+    !! is reported, never filled in.
     use, intrinsic :: iso_fortran_env, only: dp => real64
     use, intrinsic :: ieee_arithmetic, only: ieee_is_finite
     use, intrinsic :: iso_c_binding, only: c_int
@@ -27,6 +33,7 @@ module tiago_profile_geometry_io
         nc_inq_varid, nc_get_var_double, cstr, nc_shape, nc_read_text
     use tiago_sight_geometry, only: chord_t
     use tiago_thomson_scattering, only: thomson_volume_t
+    use tiago_soft_xray, only: sxr_filter_t
     implicit none
     private
 
@@ -50,10 +57,19 @@ module tiago_profile_geometry_io
 
     type, public :: profile_table_t
         real(dp), allocatable :: s(:), ne(:), te(:), ti(:), zeff(:)
+        real(dp), allocatable :: sxr(:) !! soft X-ray emissivity [W m^-3]
     end type profile_table_t
 
+    type, public :: sxr_geometry_t
+        !! Pinhole-camera chords of the sxr group.
+        type(chord_t), allocatable :: chords(:)
+        integer, allocatable :: camera(:)
+        real(dp), allocatable :: etendue(:) !! unallocated when not given
+        type(sxr_filter_t), allocatable :: filters(:) !! unallocated when not given
+    end type sxr_geometry_t
+
     public :: has_group, read_chords, read_thomson_volumes, read_ece_lines, &
-        read_mse_lines, read_profile_table
+        read_mse_lines, read_profile_table, read_sxr_geometry
 
 contains
 
@@ -245,6 +261,8 @@ contains
         if (ierr == 0) call get_vector(ncid, 'ti', table%ti, ierr, message)
         if (ierr == 0 .and. nc_inq_varid(ncid, cstr('zeff'), varid) == NC_NOERR) &
             call get_vector(ncid, 'zeff', table%zeff, ierr, message)
+        if (ierr == 0 .and. nc_inq_varid(ncid, cstr('sxr_emissivity'), varid) == NC_NOERR) &
+            call get_vector(ncid, 'sxr_emissivity', table%sxr, ierr, message)
         c = nc_close(ncid)
         if (ierr /= 0) then
             message = trim(path)//': '//message
@@ -271,7 +289,136 @@ contains
                 message = trim(path)//': non-finite zeff'
             end if
         end if
+        if (ierr == 0 .and. allocated(table%sxr)) then
+            if (size(table%sxr) /= size(table%s)) then
+                ierr = 1
+                message = trim(path)//': sxr_emissivity differs in length from s'
+            else if (.not. all(ieee_is_finite(table%sxr))) then
+                ierr = 1
+                message = trim(path)//': non-finite sxr_emissivity'
+            end if
+        end if
     end subroutine read_profile_table
+
+    subroutine read_sxr_geometry(path, npanel, geo, ierr, message)
+        !! Chords from each aperture along detector -> aperture.
+        character(len=*), intent(in) :: path
+        integer, intent(in) :: npanel
+        type(sxr_geometry_t), intent(out) :: geo
+        integer, intent(out) :: ierr
+        character(len=:), allocatable, intent(out) :: message
+        real(dp), allocatable :: det(:, :), ap(:, :), length(:), cam(:), energy(:, :), &
+            trans(:, :)
+        character(len=:), allocatable :: labels(:)
+        integer(c_int) :: ncid, gid, varid
+        integer :: c, n, ncam
+        real(dp) :: u(3)
+
+        call open_group(path, 'sxr', ncid, gid, ierr, message)
+        if (ierr /= 0) return
+        call get_matrix(gid, 'detector', det, ierr, message)
+        if (ierr == 0) call get_matrix(gid, 'aperture', ap, ierr, message)
+        if (ierr == 0) call get_vector(gid, 'length', length, ierr, message)
+        if (ierr == 0) call get_labels(gid, size(det, 2), labels, ierr, message)
+        if (ierr == 0 .and. nc_inq_varid(gid, cstr('etendue'), varid) == NC_NOERR) &
+            call get_vector(gid, 'etendue', geo%etendue, ierr, message)
+        if (ierr == 0) then
+            n = size(det, 2)
+            if (nc_inq_varid(gid, cstr('camera'), varid) == NC_NOERR) then
+                call get_vector(gid, 'camera', cam, ierr, message)
+            else
+                cam = [(1.0_dp, c = 1, n)]
+            end if
+        end if
+        if (ierr == 0) then
+            if (any([size(ap, 2), size(length), size(cam)] /= n)) call fail('variables differ in length')
+        end if
+        if (ierr == 0 .and. allocated(geo%etendue)) then
+            if (size(geo%etendue) /= n) call fail('etendue differs in length')
+            if (ierr == 0 .and. any(geo%etendue <= 0.0_dp)) call fail('etendue must be positive')
+        end if
+        if (ierr == 0) then
+            geo%camera = nint(cam)
+            if (any(abs(cam - geo%camera) > 0.0_dp) .or. any(geo%camera < 1)) &
+                call fail('camera must hold integers 1, 2, ...')
+        end if
+        if (ierr == 0 .and. nc_inq_varid(gid, cstr('filter_energy'), varid) == NC_NOERR) then
+            call get_table(gid, 'filter_energy', energy, ierr, message)
+            if (ierr == 0) call get_table(gid, 'filter_transmission', trans, ierr, message)
+            if (ierr == 0) then
+                ncam = size(energy, 2)
+                if (any(shape(trans) /= shape(energy))) then
+                    call fail('filter_energy and filter_transmission differ in shape')
+                else if (ncam < maxval(geo%camera)) then
+                    call fail('fewer filters than cameras')
+                end if
+            end if
+            if (ierr == 0) then
+                allocate(geo%filters(ncam))
+                do c = 1, ncam
+                    geo%filters(c)%energy = energy(:, c)
+                    geo%filters(c)%transmission = trans(:, c)
+                    if (size(energy, 1) > 1) then
+                        if (any(energy(2:, c) <= energy(:size(energy, 1) - 1, c))) &
+                            call fail('filter energies must increase')
+                    end if
+                    if (any(energy(:, c) < 0.0_dp) .or. any(trans(:, c) < 0.0_dp) .or. &
+                        any(trans(:, c) > 1.0_dp)) call fail('invalid filter table')
+                end do
+            end if
+        end if
+        if (ierr == 0) then
+            allocate(geo%chords(n))
+            do c = 1, n
+                u = ap(:, c) - det(:, c)
+                if (norm2(u) <= 0.0_dp .or. length(c) <= 0.0_dp) then
+                    call fail('channel '//trim(labels(c))//' has no direction or length')
+                    exit
+                end if
+                geo%chords(c)%label = trim(labels(c))
+                geo%chords(c)%origin = ap(:, c)
+                geo%chords(c)%direction = u / norm2(u)
+                geo%chords(c)%length = length(c)
+                geo%chords(c)%npanel = npanel
+                geo%chords(c)%ngauss = 4
+            end do
+        end if
+        c = nc_close(ncid)
+    contains
+        subroutine fail(text)
+            character(len=*), intent(in) :: text
+            ierr = 1
+            message = trim(path)//':sxr: '//text
+        end subroutine fail
+    end subroutine read_sxr_geometry
+
+    subroutine get_table(ncid, name, m, ierr, message)
+        !! A (n, k) variable of the file as m(k, n).
+        integer(c_int), intent(in) :: ncid
+        character(len=*), intent(in) :: name
+        real(dp), allocatable, intent(out) :: m(:, :)
+        integer, intent(out) :: ierr
+        character(len=:), allocatable, intent(out) :: message
+        integer, allocatable :: shape_(:)
+        integer(c_int) :: varid
+        call var_shape(ncid, name, varid, shape_, ierr, message)
+        if (ierr /= 0) return
+        ierr = 1
+        if (size(shape_) /= 2) then
+            message = name//' is not two-dimensional'
+            return
+        end if
+        allocate(m(shape_(2), shape_(1)))
+        if (nc_get_var_double(ncid, varid, m) /= NC_NOERR) then
+            message = 'cannot read '//name
+            return
+        end if
+        if (any(m /= m)) then
+            message = name//' contains NaN'
+            return
+        end if
+        ierr = 0
+    end subroutine get_table
 
     subroutine open_group(path, group, ncid, gid, ierr, message)
         character(len=*), intent(in) :: path, group

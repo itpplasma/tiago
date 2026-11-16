@@ -9,6 +9,7 @@ program test_joint_recorded
     use tiago_recorded_diagnostic, only: calibrated_diagnostic_t
     use tiago_calibration, only: calibration_prior_t
     use tiago_point_probe, only: point_probe_t
+    use tiago_soft_xray, only: soft_xray_t, pinhole_camera_t, SXR_BREMSSTRAHLUNG_MODEL
     use tiago_profile_tape, only: profile_tape_t
     use tiago_ece_recorded, only: recorded_ece_t
     use tiago_profile_diagnostic, only: plasma_sample_t, Q_TE
@@ -47,6 +48,10 @@ program test_joint_recorded
     end if
     if (replica == -4) then
         call check_grouped(model, truth)
+        stop
+    end if
+    if (replica == -6) then
+        call check_soft_xray(model, truth)
         stop
     end if
     if (replica == -2) then
@@ -452,6 +457,148 @@ contains
         print '(A,2ES14.6)', 'wrapped AR1 parity error/low-high separation=', &
             error, separation
     end subroutine
+
+    subroutine check_soft_xray(base, injected)
+        !! Two pinhole cameras with one log gain each replace the ECE slot
+        !! (emissivity-profile model, latent emissivity) and form a fourth slot
+        !! (bremsstrahlung from the shared ne, Te). Oracles: the complete joint
+        !! directional derivative against central differences of re-solved
+        !! equilibria, the adjoint identity, and a local MAP fit from unit
+        !! bremsstrahlung camera gains that recovers their ratio. Their common
+        !! factor trades against the density and temperature scale
+        !! (eps ~ ne^2 Te^(1/2)) and is set by the other diagnostics and priors.
+        type(joint_model_t), intent(in) :: base
+        real(dp), intent(in) :: injected(:)
+        type(joint_model_t) :: fitted
+        type(soft_xray_t) :: profile_sxr, brems_sxr
+        type(pinhole_camera_t) :: cams(2)
+        type(calibrated_diagnostic_t) :: wrapped(2)
+        type(calibration_prior_t) :: prior
+        type(plasma_sample_t) :: sample
+        type(located_t), allocatable :: locations(:)
+        type(diagnostic_slot_t), allocatable :: slots(:)
+        real(dp), allocatable :: z(:), start(:), eta(:), dx(:, :, :), y(:), r(:), rp(:), rm(:)
+        real(dp), allocatable :: tangent(:), weights(:), direction(:), bar(:), mean(:)
+        real(dp) :: xa(3), xb(3), xu(3, 3), b, db(3), size0, h, fd_error, adjoint_error
+        character(:), allocatable :: message
+        integer :: code, i, j, k, old_eta, steps, first(2)
+        logical :: ok
+
+        fitted = base
+        call fitted%state%eval([0._dp, 0._dp, 0._dp], xa, xu, b, db)
+        call fitted%state%eval([1._dp, 0._dp, 0._dp], xb, xu, b, db)
+        size0 = norm2(xb - xa)
+        cams(1)%name = 'top'
+        cams(1)%aperture = xa + [0._dp, 0._dp, 2*size0]
+        allocate (cams(1)%detector(3, 5))
+        do i = 1, 5
+            cams(1)%detector(:, i) = cams(1)%aperture + &
+                .05_dp*size0*[.15_dp*(i - 3), 0._dp, 1._dp]
+        end do
+        cams(1)%length = 4*size0
+        cams(2)%name = 'outboard'
+        cams(2)%aperture = xb + (xb - xa)
+        allocate (cams(2)%detector(3, 4))
+        do i = 1, 4
+            cams(2)%detector(:, i) = cams(2)%aperture + .05_dp*size0* &
+                ((xb - xa)/size0 + [0._dp, 0._dp, .2_dp*(i - 2.5_dp)])
+        end do
+        cams(2)%length = 3*size0
+        cams(2)%filter%energy = [300._dp, 1500._dp]
+        cams(2)%filter%transmission = [0._dp, .8_dp]
+        call profile_sxr%set_cameras(cams, 40)
+        call profile_sxr%set_emissivity_basis([0._dp, .5_dp, 1._dp])
+        mean = 1.e4_dp*(1 - .9_dp*profile_sxr%emissivity%greville)
+        call profile_sxr%set_emissivity_prior(mean, .5_dp, .5_dp, .3_dp, .6_dp, .2_dp)
+        call brems_sxr%set_cameras(cams, 40)
+        brems_sxr%model = SXR_BREMSSTRAHLUNG_MODEL
+        call make_log_gains(prior)
+        call wrapped(1)%init(profile_sxr, prior, code, groups=profile_sxr%camera, &
+            log_gains=.true.)
+        call require(code == 0, 'joint SXR profile wrapper')
+        call wrapped(2)%init(brems_sxr, prior, code, groups=brems_sxr%camera, &
+            log_gains=.true.)
+        call require(code == 0, 'joint SXR bremsstrahlung wrapper')
+
+        call move_alloc(fitted%diags, slots)
+        allocate (fitted%diags(4))
+        fitted%diags(1:2) = slots(1:2)
+        do i = 3, 4
+            allocate (fitted%diags(i)%d, source=wrapped(i - 2))
+            j = wrapped(i - 2)%n_signals()
+            allocate (fitted%diags(i)%data(j), fitted%diags(i)%covariance(j, j))
+            fitted%diags(i)%data = 0
+            fitted%diags(i)%covariance = 0
+            do k = 1, j
+                fitted%diags(i)%covariance(k, k) = 1
+            end do
+        end do
+        old_eta = base%diags(3)%eta_offset - base%n_rec - base%n_prof
+        call fitted%setup()
+        fitted%eta_factor(:old_eta, :old_eta) = base%eta_factor(:old_eta, :old_eta)
+        allocate (z(fitted%n)); z = 0
+        k = fitted%diags(3)%eta_offset
+        z(:k) = injected(:k)
+        z(fitted%mag_calibration_index + 1:) = injected(base%mag_calibration_index + 1:)
+        z(k + 1:k + profile_sxr%n_nuisance()) = [(.3_dp*sin(1.1_dp*i), &
+            i=1, profile_sxr%n_nuisance())]
+        first = [fitted%diags(3)%eta_offset + profile_sxr%n_nuisance(), &
+            fitted%diags(4)%eta_offset]
+        z(first(1) + 1:first(1) + 2) = [.5_dp, -.4_dp]
+        z(first(2) + 1:first(2) + 2) = [.6_dp, -.7_dp]
+        do i = 3, 4
+            allocate (y(fitted%diags(i)%d%n_signals()))
+            call fitted%predict_diagnostic(z, i, y, sample, locations, eta, dx)
+            call require(all(y > 0), 'positive synthetic SXR signals')
+            fitted%diags(i)%data = y
+            do k = 1, size(y)
+                fitted%diags(i)%covariance(k, k) = (.005_dp*y(k))**2
+            end do
+            deallocate (y)
+        end do
+        call fitted%update_covariances()
+
+        allocate (r(fitted%n_residuals()), rp(fitted%n_residuals()), &
+            rm(fitted%n_residuals()), tangent(fitted%n_residuals()), &
+            weights(fitted%n_residuals()), direction(fitted%n), bar(fitted%n))
+        direction = [(sin(real(i, dp)), i=1, fitted%n)]
+        direction(1) = .01_dp*direction(1)
+        weights = [(cos(real(i, dp)), i=1, size(weights))]
+        call fitted%jvp(z, direction, tangent)
+        call fitted%vjp(z, weights, bar)
+        adjoint_error = abs(dot_product(weights, tangent) - &
+            dot_product(direction, bar))/max(1._dp, norm2(tangent))
+        h = 1.e-3_dp
+        call fitted%residual(z + h*direction, rp, ok)
+        call require(ok, 'joint SXR positive perturbation')
+        call fitted%residual(z - h*direction, rm, ok)
+        call require(ok, 'joint SXR negative perturbation')
+        fd_error = norm2((rp - rm)/(2*h) - tangent)/norm2(tangent)
+        print '(A,2ES14.6)', 'joint SXR FD/adjoint relative errors=', fd_error, adjoint_error
+        call require(fd_error < 5.e-4_dp, 'joint SXR full directional oracle')
+        call require(adjoint_error < 1.e-9_dp, 'joint SXR adjoint oracle')
+
+        start = z
+        start(first(2) + 1:first(2) + 2) = 0
+        call map_fit(fitted, start, 20, steps, message)
+        call fitted%residual(start, r, ok)
+        call require(ok .and. index(message, 'converged') == 1, 'joint SXR MAP convergence')
+        print '(A,2F12.5)', 'SXR bremsstrahlung camera log-gain latents injected=', &
+            z(first(2) + 1:first(2) + 2)
+        print '(A,2F12.5)', 'SXR bremsstrahlung camera log-gain latents recovered=', &
+            start(first(2) + 1:first(2) + 2)
+        call require(abs((start(first(2) + 1) - start(first(2) + 2)) - &
+            (z(first(2) + 1) - z(first(2) + 2))) < .01_dp, 'SXR camera gain ratio recovered')
+    end subroutine check_soft_xray
+
+    subroutine make_log_gains(prior)
+        !! Camera log gains log(1e5) and log(2e5), standard deviation 0.3.
+        type(calibration_prior_t), intent(out) :: prior
+        integer :: code
+        call prior%init(log([1.e5_dp, 2.e5_dp]), reshape([.09_dp, 0._dp, 0._dp, .09_dp], &
+            [2, 2]), code)
+        call require(code == 0, 'SXR log-gain prior')
+    end subroutine make_log_gains
 
     subroutine check_grouped(base, injected)
         type(joint_model_t), intent(in) :: base
