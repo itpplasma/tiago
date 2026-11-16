@@ -25,6 +25,9 @@ Status: research code under active development; interfaces may change.
 - Profile diagnostics with derivatives: XICS brightness and
   emission-weighted temperature, and charge-exchange recombination
   spectroscopy with beam attenuation ([profile diagnostics](docs/profile-diagnostics.md)).
+- Soft X-ray pinhole cameras: line-integrated emissivity as a profile in the
+  flux label or as filtered bremsstrahlung, with per-camera gain calibration
+  ([soft X-ray](docs/soft-xray.md)).
 - Synthetic infrared signals of fast-ion wall losses, from loss events to
   surface temperature and raw camera signal ([wall synthetic](docs/wall-synthetic.md)).
 - Joint inference of equilibrium and kinetic profiles from several
@@ -82,7 +85,8 @@ Recorded signals and inference:
 - [Recorded magnetics](docs/recorded-magnetics.md),
   [digitiser stage](docs/digitizer.md),
   [Thomson scattering](docs/thomson.md),
-  [dispersion interferometer](docs/dispersion-interferometer.md)
+  [dispersion interferometer](docs/dispersion-interferometer.md),
+  [soft X-ray cameras](docs/soft-xray.md)
 - ECE: [recorded ECE](docs/ece-recorded.md), [rays](docs/ece-rays.md),
   [equilibrium medium](docs/ece-geometry.md), [opacity](docs/ece-opacity.md),
   [transfer and radiometer](docs/ece-transfer.md)
@@ -95,6 +99,7 @@ Recorded signals and inference:
   [joint inference from recorded signals](docs/recorded-joint-inference.md)
 
 Benchmarks: [STELLOPT xdiagno](benchmarks/xdiagno/README.md),
+[STELLOPT soft X-ray](benchmarks/sxr/README.md),
 [reconstruction](benchmarks/reconstruction/README.md).
 
 Design and plans: [DESIGN.md](DESIGN.md), [ROADMAP.md](ROADMAP.md). Tiago owns

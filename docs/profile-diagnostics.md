@@ -1,6 +1,6 @@
 # Profile diagnostics
 
-Thomson scattering, ECE, interferometry, XICS and CXRS observe kinetic profiles at
+Thomson scattering, ECE, interferometry, XICS, CXRS and soft X-ray cameras observe kinetic profiles at
 points or along chords in real space. They implement the profile-diagnostic
 contract of [docs/inference.md](inference.md) (`profile_diagnostic_t`): each
 instrument declares its sample points (R, phi, Z), predicts its signals from
@@ -74,6 +74,11 @@ returns the brightness `s_i int eps dl` and `int eps T dl / int eps dl` with
 (FortSym kernel `xics_emissivity`). The kinetic quantities vanish outside the
 plasma, so the rules need no boundary crossings; the kink of the integrand at
 the boundary limits their accuracy to O(h^2) there.
+
+**Soft X-ray cameras** (`tiago_soft_xray`). Pinhole cameras record
+`G / (4 pi) int eps dl` with an emissivity profile in s (latent, with the
+kinetic-profile prior) or filtered bremsstrahlung from ne, Te and Zeff; see
+[soft X-ray](soft-xray.md).
 
 **Charge-exchange recombination spectroscopy** (`tiago_cxrs`). Each channel
 pairs a sight chord with the neutral beam it views (`cxrs_beam_t`: origin,

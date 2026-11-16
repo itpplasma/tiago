@@ -267,6 +267,11 @@ add_library(tiago_inference STATIC
     src/inference/ece_radiometer.f90
     src/inference/ece_recorded.f90
     src/inference/line_integrals.f90
+    src/generated/sxr_bremsstrahlung.f90
+    src/generated/sxr_filter_segment.f90
+    src/generated/sxr_filter_segment_small.f90
+    src/generated/sxr_filter_tail.f90
+    src/inference/soft_xray.f90
     src/inference/cxrs.f90
     src/generated/dispersion_phase.f90
     src/generated/dispersion_column.f90
@@ -617,6 +622,13 @@ add_test(NAME tiago_profile_instruments_vmec
     COMMAND $<TARGET_FILE:test_profile_instruments> ${TIAGO_WOUT_SIMSOPT_SMALL})
 set_tests_properties(tiago_profile_instruments_vmec PROPERTIES FIXTURES_REQUIRED wout_li383)
 
+add_executable(test_soft_xray tests/test_soft_xray.f90)
+target_link_libraries(test_soft_xray PRIVATE tiago_inference tiago_solver)
+add_test(NAME tiago_soft_xray COMMAND $<TARGET_FILE:test_soft_xray>)
+add_test(NAME tiago_soft_xray_vmec
+    COMMAND $<TARGET_FILE:test_soft_xray> ${TIAGO_WOUT_SIMSOPT_SMALL})
+set_tests_properties(tiago_soft_xray_vmec PROPERTIES FIXTURES_REQUIRED wout_li383)
+
 add_executable(test_synthetic_forward tests/test_synthetic_forward.f90)
 target_link_libraries(test_synthetic_forward PRIVATE tiago_synthetic)
 set(TIAGO_SYNTH_TEST_DIR ${TIAGO_BINARY_DIR}/tests/synthetic)
@@ -739,6 +751,8 @@ add_test(NAME tiago_recorded_diagnostic COMMAND $<TARGET_FILE:test_recorded_diag
 add_executable(test_profile_diagnostic tests/test_profile_diagnostic.f90)
 target_link_libraries(test_profile_diagnostic PRIVATE tiago_inference)
 add_test(NAME tiago_profile_diagnostic COMMAND $<TARGET_FILE:test_profile_diagnostic>)
+add_executable(benchmark_sxr EXCLUDE_FROM_ALL benchmarks/sxr/benchmark_sxr.f90)
+target_link_libraries(benchmark_sxr PRIVATE tiago_inference)
 add_executable(benchmark_pressure_reference EXCLUDE_FROM_ALL
     benchmarks/reconstruction/pressure_reference.f90)
 target_link_libraries(benchmark_pressure_reference PRIVATE tiago_inference)
@@ -1145,6 +1159,12 @@ if(TIAGO_ENABLE_RECONSTRUCTION)
         ${TIAGO_BINARY_DIR}/tests/joint-calibrated-ece -5)
     set_tests_properties(tiago_joint_calibrated_ece PROPERTIES
         FIXTURES_REQUIRED input_li383 TIMEOUT 600)
+    add_test(NAME tiago_joint_soft_xray COMMAND ${TIAGO_SOURCE_DIR}/tests/joint_recorded.sh
+        $<TARGET_FILE:test_joint_recorded> ${TIAGO_INPUT_LI383}
+        ${TIAGO_SOURCE_DIR}/benchmarks/reconstruction/sensors.awk
+        ${TIAGO_BINARY_DIR}/tests/joint-soft-xray -6)
+    set_tests_properties(tiago_joint_soft_xray PROPERTIES
+        FIXTURES_REQUIRED input_li383 TIMEOUT 900)
 endif()
 
 if(TIAGO_IS_TOP_LEVEL)
