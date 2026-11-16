@@ -22,6 +22,11 @@ Status: research code under active development; interfaces may change.
 - Recorded-signal models with calibration and derivatives: magnetics, Thomson
   scattering, dispersion interferometry and electron cyclotron emission (cold
   rays, thermal opacity and transfer, receiver).
+- Profile diagnostics with derivatives: XICS brightness and
+  emission-weighted temperature, and charge-exchange recombination
+  spectroscopy with beam attenuation ([profile diagnostics](docs/profile-diagnostics.md)).
+- Synthetic infrared signals of fast-ion wall losses, from loss events to
+  surface temperature and raw camera signal ([wall synthetic](docs/wall-synthetic.md)).
 - Joint inference of equilibrium and kinetic profiles from several
   diagnostics, with archive access over HTTP/REST or from netCDF files.
 - Validation against STELLOPT `xdiagno` and finite differences.
@@ -93,8 +98,10 @@ Benchmarks: [STELLOPT xdiagno](benchmarks/xdiagno/README.md),
 [reconstruction](benchmarks/reconstruction/README.md).
 
 Design and plans: [DESIGN.md](DESIGN.md), [ROADMAP.md](ROADMAP.md). Tiago owns
-the inverse-problem layer (diagnostic models, calibration, priors, posterior
-uncertainty); forward equilibrium and kinetic physics stay in their own codes.
+the inverse-problem layer and the forward models of the diagnostics
+(instrument, calibration, priors, posterior uncertainty); the plasma state
+comes from equilibrium, transport and orbit codes, and device geometry and
+calibrations stay in device-specific companion repositories.
 
 ## Related projects
 

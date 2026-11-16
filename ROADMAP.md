@@ -89,11 +89,27 @@ this does not certify branch completeness in a physical case.
 
 ## T5 — diagnostic breadth
 
-Add diagnostics only with concrete experimental consumers. Magnetic diagnostics
-remain the baseline. Future examples may include interferometry/polarimetry,
-profile diagnostics, radiation/spectroscopy, ECE/CXRS, neutron/fusion-product
-and fast-particle diagnostics, with their instrument/atomic/radiative-transfer
-uncertainties owned explicitly.
+TIAGO provides the forward model of every diagnostic its consumers need, with
+instrument, atomic and radiative-transfer uncertainties owned explicitly.
+Magnetic diagnostics remain the baseline. Present: magnetics, MSE, Thomson,
+interferometer, ECE, XICS, CXRS and wall-loss infrared signals.
+
+Planned, in this order (plan of 2026-11-16, not started unless noted):
+
+1. Check that the XICS and CXRS instruments sample the field-line labels of
+   island-resolving providers, not only nested flux labels.
+2. Soft X-ray pinhole cameras with a flux-label or field-line-label
+   emissivity, benchmarked against STELLOPT's soft X-ray target (in progress).
+3. Plasma rotation in XICS and CXRS (Doppler shift).
+4. Doppler reflectometry.
+5. Fast-ion diagnostics: loss-detector (FILD) response from orbit-code loss
+   events, then fast-ion D-alpha and neutron or collective Thomson
+   scattering signals.
+6. Later, on demand: bolometry, correlation ECE, polarimetry and Faraday
+   rotation, visible bremsstrahlung, edge beams and probes.
+
+Device geometry and calibrations of these instruments belong in the private
+device companions, not here.
 
 Reuse KIN6D physical forward primitives when appropriate while keeping
 instrument/calibration semantics in TIAGO.
