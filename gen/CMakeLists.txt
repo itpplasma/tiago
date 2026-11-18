@@ -86,3 +86,7 @@ target_link_libraries(gen_field_line PRIVATE "${FORTSYM_LIBRARY}")
 add_executable(gen_soft_xray gen_soft_xray.f90)
 target_include_directories(gen_soft_xray PRIVATE "${FORTSYM_BUILD}/include")
 target_link_libraries(gen_soft_xray PRIVATE "${FORTSYM_LIBRARY}")
+
+add_executable(gen_doppler_reflectometry gen_doppler_reflectometry.f90)
+target_include_directories(gen_doppler_reflectometry PRIVATE "${FORTSYM_BUILD}/include")
+target_link_libraries(gen_doppler_reflectometry PRIVATE "${FORTSYM_LIBRARY}")
