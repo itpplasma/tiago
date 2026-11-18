@@ -212,6 +212,7 @@ add_library(tiago_inference STATIC
     src/inference/energy_consistency.f90
     src/generated/xics_emissivity.f90
     src/generated/cxrs_emission.f90
+    src/generated/doppler_reflectometry.f90
     src/generated/student_t_prior.f90
     src/inference/sight_geometry.f90
     src/generated/medium_pullback.f90
@@ -943,6 +944,9 @@ add_test(NAME tiago_integrated_drift COMMAND $<TARGET_FILE:test_integrated_drift
 add_executable(test_digitizer tests/test_digitizer.f90)
 target_link_libraries(test_digitizer PRIVATE tiago_inference)
 add_test(NAME tiago_digitizer COMMAND $<TARGET_FILE:test_digitizer>)
+add_executable(test_doppler_reflectometry tests/test_doppler_reflectometry.f90)
+target_link_libraries(test_doppler_reflectometry PRIVATE tiago_inference)
+add_test(NAME tiago_doppler_reflectometry COMMAND $<TARGET_FILE:test_doppler_reflectometry>)
 
 set(TIAGO_FORTSYM_BUILD "" CACHE PATH "FortSym build for kernel regeneration checks")
 set(FORTSYM_BUILD "" CACHE PATH "FortSym build for optional kernel regeneration tests")
@@ -975,6 +979,10 @@ if(FORTSYM_BUILD)
         -DGENERATOR=$<TARGET_FILE:gen_cxrs> -DSOURCE=${TIAGO_SOURCE_DIR}
         -DOUTPUT=${TIAGO_BINARY_DIR}/tests/cxrs-codegen
         -P ${TIAGO_SOURCE_DIR}/tests/check_cxrs_codegen.cmake)
+    add_test(NAME tiago_doppler_codegen COMMAND ${CMAKE_COMMAND}
+        -DGENERATOR=$<TARGET_FILE:gen_doppler_reflectometry> -DSOURCE=${TIAGO_SOURCE_DIR}
+        -DOUTPUT=${TIAGO_BINARY_DIR}/tests/doppler-codegen
+        -P ${TIAGO_SOURCE_DIR}/tests/check_doppler_codegen.cmake)
     add_test(NAME tiago_interferometer_generated COMMAND ${CMAKE_COMMAND}
         -DGENERATOR=$<TARGET_FILE:gen_interferometer>
         -DSOURCE=${TIAGO_SOURCE_DIR}

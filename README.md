@@ -86,6 +86,7 @@ Recorded signals and inference:
   [digitiser stage](docs/digitizer.md),
   [Thomson scattering](docs/thomson.md),
   [dispersion interferometer](docs/dispersion-interferometer.md),
+  [Doppler reflectometry](docs/doppler-reflectometry.md),
   [soft X-ray cameras](docs/soft-xray.md)
 - ECE: [recorded ECE](docs/ece-recorded.md), [rays](docs/ece-rays.md),
   [equilibrium medium](docs/ece-geometry.md), [opacity](docs/ece-opacity.md),
