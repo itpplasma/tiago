@@ -29,7 +29,8 @@ Status: research code under active development; interfaces may change.
   thermal halo ([beam neutrals](docs/beam-neutrals.md)), and CXRS spectra with
   cross-section effect, fine structure and Zeeman effect ([CXRS spectra](docs/cxrs-spectrum.md)).
 - Doppler reflectometry along cold O- and X-mode rays to the turning point,
-  with derivatives that follow the moving turning point.
+  with derivatives that follow the moving turning point, and O-mode profile
+  reflectometry: phase, group delay and group-delay inversion.
 - Soft X-ray pinhole cameras: line-integrated emissivity as a profile in the
   flux label or as filtered bremsstrahlung, with per-camera gain calibration
   ([soft X-ray](docs/soft-xray.md)).
@@ -92,6 +93,7 @@ Recorded signals and inference:
   [Thomson scattering](docs/thomson.md),
   [dispersion interferometer](docs/dispersion-interferometer.md),
   [Doppler reflectometry](docs/doppler-reflectometry.md),
+  [profile reflectometry](docs/profile-reflectometry.md),
   [soft X-ray cameras](docs/soft-xray.md)
 - ECE: [recorded ECE](docs/ece-recorded.md), [rays](docs/ece-rays.md),
   [equilibrium medium](docs/ece-geometry.md), [opacity](docs/ece-opacity.md),
