@@ -382,3 +382,17 @@ git diff --exit-code -- src/generated/doppler_turning_shift.f90 src/generated/om
 `tiago_doppler_ray` checks the Doppler kernel against slab solutions and
 central differences, `tiago_profile_reflectometry` the ordinary-mode index
 against a linear layer.
+
+# Regenerate the axisymmetric Green's function
+
+`gen_axisym_green` (FortSym `257ea66f6071f516a02f5400eeb32e6abac6e9d4`) emits
+the elliptic parameter of a toroidal filament and its flux per radian and
+poloidal field divided by `mu0`, with `K` and `E` as inputs.
+
+```sh
+cmake --build build-codegen --target gen_axisym_green
+build-codegen/gen_axisym_green
+git diff --exit-code -- src/generated/axisym_green.f90 src/generated/axisym_green_modulus.f90
+```
+
+`tiago_axisym_magnetics` checks the kernel against straight-segment Biot–Savart.

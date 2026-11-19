@@ -83,6 +83,9 @@ target_link_libraries(tiago_diagnostics PUBLIC tiago_point_diagnostics LIBNEO::f
 
 add_library(tiago_solver STATIC
     src/solver/coil_kernels.f90
+    src/solver/axisym_magnetics.f90
+    src/generated/axisym_green_modulus.f90
+    src/generated/axisym_green.f90
     src/solver/vacuum_forward.f90
     src/solver/coil_loader.f90
     src/solver/plasma_field_source.f90
@@ -106,7 +109,7 @@ endif()
 set_target_properties(tiago_solver PROPERTIES
     Fortran_STANDARD 2018
     Fortran_STANDARD_REQUIRED YES)
-target_link_libraries(tiago_solver PUBLIC tiago_diagnostics)
+target_link_libraries(tiago_solver PUBLIC tiago_diagnostics fortnum)
 
 # Field-line tracing, Poincare sections and island width and phase on any
 # total field: coils, a plasma source, or both.
@@ -624,6 +627,10 @@ target_link_libraries(test_vmec_lasym PRIVATE tiago_inference)
 add_test(NAME tiago_vmec_lasym COMMAND $<TARGET_FILE:test_vmec_lasym> ${TIAGO_WOUT_SIMSOPT_SMALL}
     ${TIAGO_BINARY_DIR}/tests/wout_li383_rotated.nc)
 set_tests_properties(tiago_vmec_lasym PROPERTIES FIXTURES_REQUIRED wout_li383)
+
+add_executable(test_axisym_magnetics tests/test_axisym_magnetics.f90)
+target_link_libraries(test_axisym_magnetics PRIVATE tiago_solver)
+add_test(NAME tiago_axisym_magnetics COMMAND $<TARGET_FILE:test_axisym_magnetics>)
 
 add_executable(test_sensor_set tests/test_sensor_set.f90)
 target_link_libraries(test_sensor_set PRIVATE tiago_solver)
