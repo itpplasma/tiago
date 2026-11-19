@@ -277,6 +277,7 @@ add_library(tiago_inference STATIC
     src/generated/beam_stopping_suzuki.f90
     src/generated/hydrogen_1s_cross_sections.f90
     src/inference/beam_neutrals.f90
+    src/inference/cxrs_spectrum.f90
     src/generated/dispersion_phase.f90
     src/generated/dispersion_column.f90
     src/generated/dispersion_iq.f90
@@ -622,6 +623,9 @@ set_tests_properties(tiago_sensor_set_plasma PROPERTIES FIXTURES_REQUIRED wout_l
 add_executable(test_beam_neutrals tests/test_beam_neutrals.f90)
 target_link_libraries(test_beam_neutrals PRIVATE tiago_inference)
 add_test(NAME tiago_beam_neutrals COMMAND $<TARGET_FILE:test_beam_neutrals>)
+add_executable(test_cxrs_spectrum tests/test_cxrs_spectrum.f90)
+target_link_libraries(test_cxrs_spectrum PRIVATE tiago_inference)
+add_test(NAME tiago_cxrs_spectrum COMMAND $<TARGET_FILE:test_cxrs_spectrum>)
 
 add_executable(test_profile_instruments tests/test_profile_instruments.f90)
 target_link_libraries(test_profile_instruments PRIVATE tiago_inference tiago_solver)

@@ -26,7 +26,8 @@ Status: research code under active development; interfaces may change.
   emission-weighted temperature, and charge-exchange recombination
   spectroscopy with beam attenuation ([profile diagnostics](docs/profile-diagnostics.md)).
 - Neutral heating-beam densities with energy components, Suzuki stopping and
-  thermal halo ([beam neutrals](docs/beam-neutrals.md)).
+  thermal halo ([beam neutrals](docs/beam-neutrals.md)), and CXRS spectra with
+  cross-section effect, fine structure and Zeeman effect ([CXRS spectra](docs/cxrs-spectrum.md)).
 - Soft X-ray pinhole cameras: line-integrated emissivity as a profile in the
   flux label or as filtered bremsstrahlung, with per-camera gain calibration
   ([soft X-ray](docs/soft-xray.md)).
@@ -99,6 +100,7 @@ Recorded signals and inference:
   profile labels in fields with islands, from an mgrid and a reference chart)
 - [Profile diagnostics](docs/profile-diagnostics.md),
   [neutral beam densities](docs/beam-neutrals.md),
+  [CXRS spectra](docs/cxrs-spectrum.md),
   [joint inference](docs/inference.md),
   [joint inference from recorded signals](docs/recorded-joint-inference.md)
 
