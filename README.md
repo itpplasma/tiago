@@ -31,6 +31,9 @@ Status: research code under active development; interfaces may change.
 - Soft X-ray pinhole cameras: line-integrated emissivity as a profile in the
   flux label or as filtered bremsstrahlung, with per-camera gain calibration
   ([soft X-ray](docs/soft-xray.md)).
+- D-D neutron rates (thermonuclear, beam-target, beam-beam) and FIDA spectra
+  with weight functions from a fast-ion distribution
+  ([fast-ion diagnostics](docs/fast-ion-diagnostics.md)).
 - Synthetic infrared signals of fast-ion wall losses, from loss events to
   surface temperature and raw camera signal ([wall synthetic](docs/wall-synthetic.md)).
 - Joint inference of equilibrium and kinetic profiles from several
@@ -90,7 +93,8 @@ Recorded signals and inference:
   [Thomson scattering](docs/thomson.md),
   [dispersion interferometer](docs/dispersion-interferometer.md),
   [Doppler reflectometry](docs/doppler-reflectometry.md),
-  [soft X-ray cameras](docs/soft-xray.md)
+  [soft X-ray cameras](docs/soft-xray.md),
+  [neutrons and FIDA](docs/fast-ion-diagnostics.md)
 - ECE: [recorded ECE](docs/ece-recorded.md), [rays](docs/ece-rays.md),
   [equilibrium medium](docs/ece-geometry.md), [opacity](docs/ece-opacity.md),
   [transfer and radiometer](docs/ece-transfer.md)

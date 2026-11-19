@@ -151,6 +151,7 @@ endif()
 
 # Recorded windows use the standard netCDF C hyperslab API through ISO C.
 find_library(TIAGO_NETCDF_C_LIBRARY NAMES netcdf REQUIRED)
+find_path(TIAGO_NETCDF_C_INCLUDE_DIR NAMES netcdf.h REQUIRED)
 find_package(CURL 7.66 REQUIRED)
 find_package(Threads REQUIRED)
 set(JSONFORTRAN_ENABLE_TESTS OFF CACHE BOOL "" FORCE)
@@ -278,6 +279,13 @@ add_library(tiago_inference STATIC
     src/generated/hydrogen_1s_cross_sections.f90
     src/inference/beam_neutrals.f90
     src/inference/cxrs_spectrum.f90
+    src/generated/dd_cross_section.f90
+    src/generated/dd_reactivity.f90
+    src/generated/cx_hydrogen.f90
+    src/inference/fusion_rates.f90
+    src/inference/fast_ion_distribution.f90
+    src/inference/neutron_rate.f90
+    src/inference/fida.f90
     src/generated/dispersion_phase.f90
     src/generated/dispersion_column.f90
     src/generated/dispersion_iq.f90
@@ -757,6 +765,10 @@ target_link_libraries(benchmark_recorded PRIVATE tiago_inference)
 add_executable(test_signal_sources tests/test_signal_sources.f90
     tests/grouped_signal_fixture.c)
 target_link_libraries(test_signal_sources PRIVATE tiago_signals)
+# Compilers outside the system prefix, such as Homebrew GCC, do not search netCDF's.
+# C only: the Fortran netcdf module must stay the fortio one.
+target_include_directories(test_signal_sources PRIVATE
+    $<$<COMPILE_LANGUAGE:C>:${TIAGO_NETCDF_C_INCLUDE_DIR}>)
 add_test(NAME tiago_signal_sources COMMAND $<TARGET_FILE:test_signal_sources>)
 add_executable(test_recorded_diagnostic tests/test_recorded_diagnostic.f90)
 target_link_libraries(test_recorded_diagnostic PRIVATE tiago_inference)
@@ -966,6 +978,16 @@ add_test(NAME tiago_digitizer COMMAND $<TARGET_FILE:test_digitizer>)
 add_executable(test_doppler_reflectometry tests/test_doppler_reflectometry.f90)
 target_link_libraries(test_doppler_reflectometry PRIVATE tiago_inference)
 add_test(NAME tiago_doppler_reflectometry COMMAND $<TARGET_FILE:test_doppler_reflectometry>)
+add_executable(test_fast_ion_neutrons tests/test_fast_ion_neutrons.f90)
+target_link_libraries(test_fast_ion_neutrons PRIVATE tiago_inference)
+add_test(NAME tiago_fast_ion_neutrons COMMAND $<TARGET_FILE:test_fast_ion_neutrons>)
+add_executable(test_fida tests/test_fida.f90)
+target_link_libraries(test_fida PRIVATE tiago_inference)
+add_test(NAME tiago_fida COMMAND $<TARGET_FILE:test_fida>)
+add_executable(tiago_neutrons src/cli/tiago_neutrons.f90)
+target_link_libraries(tiago_neutrons PRIVATE tiago_inference)
+add_test(NAME tiago_neutrons_cli COMMAND ${CMAKE_COMMAND} -DCLI=$<TARGET_FILE:tiago_neutrons>
+    -DOUTPUT=${TIAGO_BINARY_DIR}/tests/neutrons-cli -P ${TIAGO_SOURCE_DIR}/tests/neutrons_cli.cmake)
 
 set(TIAGO_FORTSYM_BUILD "" CACHE PATH "FortSym build for kernel regeneration checks")
 set(FORTSYM_BUILD "" CACHE PATH "FortSym build for optional kernel regeneration tests")
@@ -994,6 +1016,10 @@ if(FORTSYM_BUILD)
         -DGENERATOR=$<TARGET_FILE:gen_digitizer> -DSOURCE=${TIAGO_SOURCE_DIR}
         -DOUTPUT=${TIAGO_BINARY_DIR}/tests/digitizer-codegen
         -P ${TIAGO_SOURCE_DIR}/tests/check_digitizer_codegen.cmake)
+    add_test(NAME tiago_fast_ion_codegen COMMAND ${CMAKE_COMMAND}
+        -DGENERATOR=$<TARGET_FILE:gen_fast_ion> -DSOURCE=${TIAGO_SOURCE_DIR}
+        -DOUTPUT=${TIAGO_BINARY_DIR}/tests/fast-ion-codegen
+        -P ${TIAGO_SOURCE_DIR}/tests/check_fast_ion_codegen.cmake)
     add_test(NAME tiago_cxrs_codegen COMMAND ${CMAKE_COMMAND}
         -DGENERATOR=$<TARGET_FILE:gen_cxrs> -DSOURCE=${TIAGO_SOURCE_DIR}
         -DOUTPUT=${TIAGO_BINARY_DIR}/tests/cxrs-codegen
