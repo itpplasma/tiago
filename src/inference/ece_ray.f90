@@ -42,7 +42,7 @@ module tiago_ece_ray
         real(dp) :: max_index = 0.0_dp
     end type
     public :: cold_hamiltonian, trace_cold_ray, trace_cold_rays, cold_ray_jvp, &
-        cold_ray_jvp_multi, cold_ray_vjp
+        cold_ray_jvp_multi, cold_ray_vjp, ray_rhs
 contains
     subroutine cold_hamiltonian(n, b, ne, frequency, mode, h, dh, d2h)
         real(dp), intent(in) :: n(3), b(3), ne, frequency

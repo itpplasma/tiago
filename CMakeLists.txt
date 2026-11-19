@@ -216,6 +216,8 @@ add_library(tiago_inference STATIC
     src/generated/xics_emissivity.f90
     src/generated/cxrs_emission.f90
     src/generated/doppler_reflectometry.f90
+    src/generated/doppler_turning_shift.f90
+    src/generated/omode_index.f90
     src/generated/student_t_prior.f90
     src/inference/sight_geometry.f90
     src/generated/medium_pullback.f90
@@ -241,6 +243,7 @@ add_library(tiago_inference STATIC
     src/generated/ece_hamiltonian_x.f90
     src/generated/ece_hamiltonian_unmagnetized.f90
     src/inference/ece_ray.f90
+    src/inference/doppler_ray.f90
     src/inference/ece_state_medium.f90
     src/generated/ece_loss.f90
     src/generated/ece_loss_small.f90
@@ -990,6 +993,10 @@ add_executable(tiago_neutrons src/cli/tiago_neutrons.f90)
 target_link_libraries(tiago_neutrons PRIVATE tiago_inference)
 add_test(NAME tiago_neutrons_cli COMMAND ${CMAKE_COMMAND} -DCLI=$<TARGET_FILE:tiago_neutrons>
     -DOUTPUT=${TIAGO_BINARY_DIR}/tests/neutrons-cli -P ${TIAGO_SOURCE_DIR}/tests/neutrons_cli.cmake)
+add_executable(test_doppler_ray tests/test_doppler_ray.f90 tests/ece_ray_fixture.f90
+    src/generated/ece_test_medium.f90)
+target_link_libraries(test_doppler_ray PRIVATE tiago_inference)
+add_test(NAME tiago_doppler_ray COMMAND $<TARGET_FILE:test_doppler_ray>)
 
 set(TIAGO_FORTSYM_BUILD "" CACHE PATH "FortSym build for kernel regeneration checks")
 set(FORTSYM_BUILD "" CACHE PATH "FortSym build for optional kernel regeneration tests")
@@ -1030,6 +1037,10 @@ if(FORTSYM_BUILD)
         -DGENERATOR=$<TARGET_FILE:gen_doppler_reflectometry> -DSOURCE=${TIAGO_SOURCE_DIR}
         -DOUTPUT=${TIAGO_BINARY_DIR}/tests/doppler-codegen
         -P ${TIAGO_SOURCE_DIR}/tests/check_doppler_codegen.cmake)
+    add_test(NAME tiago_reflectometry_codegen COMMAND ${CMAKE_COMMAND}
+        -DGENERATOR=$<TARGET_FILE:gen_reflectometry> -DSOURCE=${TIAGO_SOURCE_DIR}
+        -DOUTPUT=${TIAGO_BINARY_DIR}/tests/reflectometry-codegen
+        -P ${TIAGO_SOURCE_DIR}/tests/check_reflectometry_codegen.cmake)
     add_test(NAME tiago_interferometer_generated COMMAND ${CMAKE_COMMAND}
         -DGENERATOR=$<TARGET_FILE:gen_interferometer>
         -DSOURCE=${TIAGO_SOURCE_DIR}

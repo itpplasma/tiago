@@ -98,3 +98,7 @@ target_link_libraries(gen_beam_atomic PRIVATE "${FORTSYM_LIBRARY}")
 add_executable(gen_fast_ion gen_fast_ion.f90)
 target_include_directories(gen_fast_ion PRIVATE "${FORTSYM_BUILD}/include")
 target_link_libraries(gen_fast_ion PRIVATE "${FORTSYM_LIBRARY}")
+
+add_executable(gen_reflectometry gen_reflectometry.f90)
+target_include_directories(gen_reflectometry PRIVATE "${FORTSYM_BUILD}/include")
+target_link_libraries(gen_reflectometry PRIVATE "${FORTSYM_LIBRARY}")
