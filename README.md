@@ -102,7 +102,8 @@ Recorded signals and inference:
   [neutral beam densities](docs/beam-neutrals.md),
   [CXRS spectra](docs/cxrs-spectrum.md),
   [joint inference](docs/inference.md),
-  [joint inference from recorded signals](docs/recorded-joint-inference.md)
+  [joint inference from recorded signals](docs/recorded-joint-inference.md),
+  [joint fit of measured profiles](docs/joint-fit.md) (`tiago_joint_fit`)
 
 Benchmarks: [STELLOPT xdiagno](benchmarks/xdiagno/README.md),
 [STELLOPT soft X-ray](benchmarks/sxr/README.md),

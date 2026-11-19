@@ -493,6 +493,8 @@ end module tiago_vmecpp_paths
     target_link_libraries(test_reconstruction_shape_cache PRIVATE tiago_reconstruction)
     add_executable(tiago_infer src/cli/tiago_infer.f90)
     target_link_libraries(tiago_infer PRIVATE tiago_reconstruction)
+    add_executable(tiago_joint_fit src/cli/tiago_joint_fit.f90)
+    target_link_libraries(tiago_joint_fit PRIVATE tiago_reconstruction)
     add_executable(tiago_reconstruct src/cli/tiago_reconstruct.f90)
     target_link_libraries(tiago_reconstruct PRIVATE tiago_reconstruction tiago_build_config)
     add_executable(tiago_plot_pulls benchmarks/reconstruction/plot_pulls.f90)
@@ -915,6 +917,12 @@ if(TIAGO_ENABLE_RECONSTRUCTION)
                 ${TIAGO_BINARY_DIR}/tests/joint_model)
     set_tests_properties(tiago_joint_model PROPERTIES
         FIXTURES_REQUIRED input_li383 TIMEOUT 900 ENVIRONMENT "OMP_NUM_THREADS=4;OPENBLAS_NUM_THREADS=1")
+    add_test(NAME tiago_joint_fit
+        COMMAND ${Python3_EXECUTABLE} ${TIAGO_SOURCE_DIR}/tests/joint_fit.py $<TARGET_FILE:tiago_joint_fit>
+                ${vmecpp_SOURCE_DIR}/src/vmecpp/cpp/vmecpp/test_data/solovev.json
+                ${TIAGO_BINARY_DIR}/tests/joint_fit)
+    set_tests_properties(tiago_joint_fit PROPERTIES
+        TIMEOUT 600 ENVIRONMENT "OMP_NUM_THREADS=4;OPENBLAS_NUM_THREADS=1")
     add_test(NAME tiago_calibration
         COMMAND $<TARGET_FILE:test_calibration> ${TIAGO_INPUT_LI383}
                 ${CMAKE_SOURCE_DIR}/benchmarks/reconstruction/sensors.awk
