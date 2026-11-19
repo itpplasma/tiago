@@ -349,3 +349,19 @@ git diff --exit-code -- src/generated
 
 `tiago_beam_neutrals` checks the stopping kernel against ASCOT5's
 implementation and central differences.
+
+# Regenerate the fast-ion kernels
+
+`gen_fast_ion` (FortSym `257ea66f6071f516a02f5400eeb32e6abac6e9d4`) emits the
+Bosch-Hale D(d,n)3He cross-section and Maxwellian reactivity and the Janev
+H+ + H(1s) charge-exchange cross-section, each with its derivative. The
+expressions are emitted without simplification.
+
+```sh
+cmake --build build-codegen --target gen_fast_ion
+build-codegen/gen_fast_ion
+git diff --exit-code -- src/generated/dd_*.f90 src/generated/cx_hydrogen.f90
+```
+
+`tiago_fast_ion_neutrons` checks them against the Bosch-Hale tables, and
+`tiago_fast_ion_codegen` against regeneration.

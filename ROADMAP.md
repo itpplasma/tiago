@@ -104,9 +104,10 @@ Planned, in this order (plan of 2026-11-16, not started unless noted):
    [soft X-ray](docs/soft-xray.md)).
 3. Plasma rotation in XICS and CXRS (Doppler shift).
 4. Doppler reflectometry.
-5. Fast-ion diagnostics: loss-detector (FILD) response from orbit-code loss
-   events, then fast-ion D-alpha and neutron or collective Thomson
-   scattering signals.
+5. Fast-ion diagnostics: D-D neutrons and FIDA from a fast-ion distribution
+   (done: [fast-ion diagnostics](docs/fast-ion-diagnostics.md)), then
+   loss-detector (FILD) response from orbit-code loss events and collective
+   Thomson scattering.
 6. Later, on demand: bolometry, correlation ECE, polarimetry and Faraday
    rotation, visible bremsstrahlung, edge beams and probes.
 
