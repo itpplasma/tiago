@@ -245,6 +245,7 @@ add_library(tiago_inference STATIC
     src/inference/ece_ray.f90
     src/inference/doppler_ray.f90
     src/inference/profile_reflectometry.f90
+    src/inference/lithium_beam.f90
     src/inference/ece_state_medium.f90
     src/generated/ece_loss.f90
     src/generated/ece_loss_small.f90
@@ -982,6 +983,9 @@ add_test(NAME tiago_doppler_ray COMMAND $<TARGET_FILE:test_doppler_ray>)
 add_executable(test_profile_reflectometry tests/test_profile_reflectometry.f90)
 target_link_libraries(test_profile_reflectometry PRIVATE tiago_inference)
 add_test(NAME tiago_profile_reflectometry COMMAND $<TARGET_FILE:test_profile_reflectometry>)
+add_executable(test_lithium_beam tests/test_lithium_beam.f90)
+target_link_libraries(test_lithium_beam PRIVATE tiago_inference)
+add_test(NAME tiago_lithium_beam COMMAND $<TARGET_FILE:test_lithium_beam>)
 
 set(TIAGO_FORTSYM_BUILD "" CACHE PATH "FortSym build for kernel regeneration checks")
 set(FORTSYM_BUILD "" CACHE PATH "FortSym build for optional kernel regeneration tests")

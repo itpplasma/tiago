@@ -108,7 +108,8 @@ Planned, in this order (plan of 2026-11-16, not started unless noted):
    events, then fast-ion D-alpha and neutron or collective Thomson
    scattering signals.
 6. Later, on demand: bolometry, correlation ECE, polarimetry and Faraday
-   rotation, visible bremsstrahlung, edge beams and probes.
+   rotation, visible bremsstrahlung, edge beams and probes (lithium beam
+   done: [lithium-beam emission](docs/lithium-beam.md)).
 
 Device geometry and calibrations of these instruments belong in the private
 device companions, not here.
