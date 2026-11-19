@@ -151,7 +151,9 @@ endif()
 
 # Recorded windows use the standard netCDF C hyperslab API through ISO C.
 find_library(TIAGO_NETCDF_C_LIBRARY NAMES netcdf REQUIRED)
-find_path(TIAGO_NETCDF_C_INCLUDE_DIR NAMES netcdf.h REQUIRED)
+get_filename_component(_tiago_netcdf_prefix "${TIAGO_NETCDF_C_LIBRARY}" DIRECTORY)
+find_path(TIAGO_NETCDF_C_INCLUDE_DIR NAMES netcdf.h
+    HINTS "${_tiago_netcdf_prefix}/../include" REQUIRED)
 find_package(CURL 7.66 REQUIRED)
 find_package(Threads REQUIRED)
 set(JSONFORTRAN_ENABLE_TESTS OFF CACHE BOOL "" FORCE)
