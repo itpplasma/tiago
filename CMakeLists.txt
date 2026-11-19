@@ -657,6 +657,19 @@ if(TIAGO_FREEGSNKE_PYTHON)
         LABELS "free-boundary;slow" TIMEOUT 1500 ENVIRONMENT MPLBACKEND=Agg)
 endif()
 
+# Fixed-boundary interior from CHEASE (EPFL, Apache 2.0) on the FreeGS boundary.
+set(TIAGO_CHEASE "" CACHE FILEPATH "CHEASE executable for the interior cross-check")
+add_executable(test_chease_interior tests/test_chease_interior.f90)
+target_link_libraries(test_chease_interior PRIVATE tiago_solver)
+if(TIAGO_CHEASE)
+    add_test(NAME tiago_chease_interior COMMAND $<TARGET_FILE:test_chease_interior>
+        ${TIAGO_CHEASE} ${TIAGO_SOURCE_DIR}/tests/chease/chease_namelist
+        ${TIAGO_SOURCE_DIR}/tests/data/freegs/test_tokamak.geqdsk
+        ${TIAGO_SOURCE_DIR}/tests/data/freegs/test_tokamak.machine
+        ${TIAGO_BINARY_DIR}/tests/chease_interior)
+    set_tests_properties(tiago_chease_interior PROPERTIES LABELS free-boundary)
+endif()
+
 add_executable(test_sensor_set tests/test_sensor_set.f90)
 target_link_libraries(test_sensor_set PRIVATE tiago_solver)
 set(TIAGO_TEST_SENSOR_GEOMETRY ${TIAGO_BINARY_DIR}/tests/sensors)
