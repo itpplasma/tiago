@@ -87,6 +87,7 @@ Magnetics and reconstruction:
 - [Building](docs/building.md)
 - [Magnetic diagnostics and plasma response](docs/magnetics.md)
 - [Equilibrium reconstruction](docs/reconstruction.md)
+- [Axisymmetric free-boundary equilibria](docs/axisymmetric-free-boundary.md) (design)
 - [MSE](docs/mse.md), [sensor sets](docs/sensor-sets.md)
 - [Field lines and islands](docs/islands.md): axis, O and X points, island width and phase
 
