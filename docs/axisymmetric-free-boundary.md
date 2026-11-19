@@ -119,14 +119,39 @@ realised as a process with a file contract:
   convergence status, the solver residual and the provider name, version and
   command line.
 
-TIAGO reads the G-EQDSK with libneo's reader, converts it from its COCOS to the
-convention of (1), takes `p'`, `F F'`, the last closed surface and the axis
-from it, and evaluates (3) and (4) itself. The integral in (3) runs over the
-G-EQDSK grid cells inside the last closed surface, with the cells cut by it
-split along the bicubic contour `psi_N = 1`. The provider's own `psi` is
+TIAGO reads the G-EQDSK with libneo's reader and evaluates (3) and (4)
+itself. It takes the file's current as flowing along `+phi` and converts its
+flux as `psi = sigma psi_file / (2 pi)^e`, with `e = 0` or `1` chosen so that
+the integral of `j_phi` matches that current and `sigma` from their signs.
+This covers every COCOS of a file whose current sign follows `+phi`. The
+integral in (3) runs over the grid nodes inside the last closed surface with
+weight `dR dZ`, the quadrature FreeGS uses. The provider's own `psi` is
 compared with (3) at the grid points outside `P`. The difference is recorded
 with each solve and is not used to correct the signals. Different coils, a
 COCOS or `2 pi` mismatch and provider resolution each produce such a difference.
+
+`tiago_geqdsk_plasma` (`src/solver/geqdsk_plasma.f90`) implements the reading,
+the conversion, `j_phi` and the labels (5) and (6). `tiago_axisym_machine`
+reads a machine file of coils, flux loops, pickups and Rogowski coils. The
+test `tiago_geqdsk_plasma` compares them with FreeGS on its
+`TestTokamakSensor` machine (`tests/freegs/generate_test_tokamak.py`, 65 x 65
+grid, up-down asymmetric diverted plasma of 200 kA). The references take the
+plasma field from FreeGS's Green's functions of its own current:
+
+| quantity | largest difference | scale |
+|---|---|---|
+| plasma current | 0.37 A | 200 kA |
+| flux loops | 1.1e-6 Wb | 0.29 Wb |
+| pickup field | 1.5e-6 T | 0.16 T |
+| `psi_N` at 24 points | 2.9e-7 | 1 |
+| `rho_tor` at 5 labels | 7.7e-5 | 1 |
+
+FreeGS writes its G-EQDSK profiles on `psi_N = i / n` instead of
+`i / (n - 1)` ([freegs#163](https://github.com/freegs-plasma/freegs/issues/163)),
+so the generator rewrites them on the standard grid. FreeGS's grid flux of the
+plasma differs from the Green's-function sum of its own current by a nearly
+constant 2.6e-4 Wb/rad at 65 and at 129 grid points. This shifts its flux-loop
+values by about 1 % and leaves its fields unchanged.
 
 ### Derivatives
 
@@ -150,13 +175,13 @@ are
 
 ```text
 psi_N(R, Z) = (psi(R, Z) - psi_axis) / (psi_b - psi_axis),               (5)
-Phi(psi_N) = int_{P(psi_N)} F(psi) / R dR dZ,   rho_tor = sqrt(Phi(psi_N) / Phi(1)),  (6)
+Phi(psi_N) = 2 pi |psi_b - psi_axis| int_0^psi_N |q| dpsi_N',   rho_tor = sqrt(Phi(psi_N) / Phi(1)),  (6)
 ```
 
-with bicubic interpolation of `psi`, `psi_b` the flux of the last closed
-surface and `P(psi_N)` the region inside the closed surface with that label.
-`Phi` [Wb] is the toroidal flux. It stays finite at the separatrix of a diverted
-plasma, where `q` diverges. Profile diagnostics take `psi_N` or `rho_tor` at
+with bicubic interpolation of `psi` and `psi_b` the flux of the last closed
+surface. `Phi` [Wb] is the toroidal flux, integrated from the tabulated `q`.
+At the separatrix of a diverted plasma `q` diverges logarithmically, so
+`Phi(1)` depends on how the provider tabulates its last point. Profile diagnostics take `psi_N` or `rho_tor` at
 their sample points instead of the VMEC label `s`. The derivative of a label at
 a fixed point with respect to a parameter includes the shifts of `psi_axis`
 and `psi_b`.

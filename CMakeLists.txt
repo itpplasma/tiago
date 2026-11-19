@@ -84,6 +84,8 @@ target_link_libraries(tiago_diagnostics PUBLIC tiago_point_diagnostics LIBNEO::f
 add_library(tiago_solver STATIC
     src/solver/coil_kernels.f90
     src/solver/axisym_magnetics.f90
+    src/solver/axisym_machine.f90
+    src/solver/geqdsk_plasma.f90
     src/generated/axisym_green_modulus.f90
     src/generated/axisym_green.f90
     src/solver/vacuum_forward.f90
@@ -109,7 +111,8 @@ endif()
 set_target_properties(tiago_solver PROPERTIES
     Fortran_STANDARD 2018
     Fortran_STANDARD_REQUIRED YES)
-target_link_libraries(tiago_solver PUBLIC tiago_diagnostics fortnum)
+target_link_libraries(tiago_solver PUBLIC tiago_diagnostics fortnum LIBNEO::interpolate
+    LIBNEO::geqdsk)
 
 # Field-line tracing, Poincare sections and island width and phase on any
 # total field: coils, a plasma source, or both.
@@ -631,6 +634,13 @@ set_tests_properties(tiago_vmec_lasym PROPERTIES FIXTURES_REQUIRED wout_li383)
 add_executable(test_axisym_magnetics tests/test_axisym_magnetics.f90)
 target_link_libraries(test_axisym_magnetics PRIVATE tiago_solver)
 add_test(NAME tiago_axisym_magnetics COMMAND $<TARGET_FILE:test_axisym_magnetics>)
+
+add_executable(test_geqdsk_plasma tests/test_geqdsk_plasma.f90)
+target_link_libraries(test_geqdsk_plasma PRIVATE tiago_solver)
+add_test(NAME tiago_geqdsk_plasma COMMAND $<TARGET_FILE:test_geqdsk_plasma>
+    ${TIAGO_SOURCE_DIR}/tests/data/freegs/test_tokamak.geqdsk
+    ${TIAGO_SOURCE_DIR}/tests/data/freegs/test_tokamak.machine
+    ${TIAGO_SOURCE_DIR}/tests/data/freegs/test_tokamak_freegs.csv)
 
 add_executable(test_sensor_set tests/test_sensor_set.f90)
 target_link_libraries(test_sensor_set PRIVATE tiago_solver)
