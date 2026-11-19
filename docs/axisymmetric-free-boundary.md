@@ -201,6 +201,29 @@ The re-solved derivatives with relative steps `3e-3` and `1e-3` agree to
 `3e-3` in five columns and to `1.2e-2` in the `P2U` column. The test
 tolerates `2e-2`. The cause of the `P2U` difference is open.
 
+### CHEASE interior
+
+CHEASE re-solves the fixed-boundary equilibrium inside the last closed surface
+of a G-EQDSK with its `p'` and `F F'` (`NEQDSK = 1`, `NSURF = 6`,
+`NPPFUN = NFUNC = 4`, `NSTTP = 1`, no rescaling, `NCSCAL = 4`, input
+`tests/chease/chease_namelist`). Its output G-EQDSK goes through the same
+`tiago_geqdsk_plasma`. The test `tiago_chease_interior` (label
+`free-boundary`, enabled with `TIAGO_CHEASE` set to a CHEASE executable) runs
+it on the FreeGS `TestTokamakSensor` file:
+
+| quantity | FreeGS | CHEASE | difference |
+|---|---|---|---|
+| plasma current | 200000 A | 200025 A | 1.2e-4 relative |
+| magnetic axis `R`, `Z` | 1.280336 m, 0.040704 m | 1.280319 m, 0.040696 m | 1.7e-5 m |
+| `psi_N` at 53 points | | | 2.4e-4 |
+| `rho_tor` at the same points | | | 8.1e-4 |
+| plasma part of the flux loops | | | 7.3e-5 of the largest |
+| plasma part of the pickups | | | 8.1e-5 of the largest |
+
+The test requires 5e-4 in the current, 1e-3 m at the axis, 2e-3 in `psi_N`,
+5e-3 in `rho_tor` and 2e-3 in the signals. CHEASE builds with
+`make chease CHEASE_F90=gfortran` in its `src-f90` directory.
+
 ### Derivatives
 
 The coil part is exact and linear. Derivatives with respect to the
@@ -287,6 +310,6 @@ Device coils, probes and discharges stay in the private device repositories.
 | 2 | axisymmetric sensors (2)–(3) with coil response matrices, checks 1 and 2 | 2 |
 | 3 | G-EQDSK plasma source (4), labels (5)–(6), FreeGS fixture check | 1.5 |
 | 4 | process provider with the FreeGSNKE backend, recovery of coil currents, `I_P` and axis pressure on `TestTokamakSensor` | 3 |
-| 5 | MILCA backend (after a `psi` export in MILCA), CHEASE interior, cross-code comparison | 3 |
+| 5 | CHEASE interior on the FreeGS boundary, then the MILCA backend after a G-EQDSK export in MILCA | 3 |
 | 6 | joint fit of magnetics and profile diagnostics on `psi_N` labels with the edge-current prior | 2–3 |
 | 7 | ASDEX Upgrade discharge 37513 in its private repository | 2 |
