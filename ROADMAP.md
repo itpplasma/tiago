@@ -103,7 +103,7 @@ Planned, in this order (plan of 2026-11-16, not started unless noted):
    emissivity, benchmarked against STELLOPT's soft X-ray target (done:
    [soft X-ray](docs/soft-xray.md)).
 3. Plasma rotation in XICS and CXRS (Doppler shift).
-4. Doppler reflectometry.
+4. Doppler reflectometry (done: [Doppler reflectometry](docs/doppler-reflectometry.md)).
 5. Fast-ion diagnostics: D-D neutrons and FIDA from a fast-ion distribution
    (done: [fast-ion diagnostics](docs/fast-ion-diagnostics.md)), then
    loss-detector (FILD) response from orbit-code loss events and collective

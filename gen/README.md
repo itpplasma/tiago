@@ -365,3 +365,19 @@ git diff --exit-code -- src/generated/dd_*.f90 src/generated/cx_hydrogen.f90
 
 `tiago_fast_ion_neutrons` checks them against the Bosch-Hale tables, and
 `tiago_fast_ion_codegen` against regeneration.
+
+# Regenerate the reflectometry kernels
+
+`gen_reflectometry` (FortSym `257ea66f6071f516a02f5400eeb32e6abac6e9d4`) emits
+the Doppler shift at a ray turning point with its gradient in the index,
+field, density gradient, frequency, radial field and phase velocity, and the
+ordinary-mode index with its density and frequency derivatives.
+
+```sh
+cmake --build build-codegen --target gen_reflectometry
+build-codegen/gen_reflectometry
+git diff --exit-code -- src/generated/doppler_turning_shift.f90 src/generated/omode_index.f90
+```
+
+`tiago_doppler_ray` checks the Doppler kernel against slab solutions and
+central differences.

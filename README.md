@@ -28,6 +28,8 @@ Status: research code under active development; interfaces may change.
 - Neutral heating-beam densities with energy components, Suzuki stopping and
   thermal halo ([beam neutrals](docs/beam-neutrals.md)), and CXRS spectra with
   cross-section effect, fine structure and Zeeman effect ([CXRS spectra](docs/cxrs-spectrum.md)).
+- Doppler reflectometry along cold O- and X-mode rays to the turning point,
+  with derivatives that follow the moving turning point.
 - Soft X-ray pinhole cameras: line-integrated emissivity as a profile in the
   flux label or as filtered bremsstrahlung, with per-camera gain calibration
   ([soft X-ray](docs/soft-xray.md)).
