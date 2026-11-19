@@ -151,6 +151,9 @@ endif()
 
 # Recorded windows use the standard netCDF C hyperslab API through ISO C.
 find_library(TIAGO_NETCDF_C_LIBRARY NAMES netcdf REQUIRED)
+get_filename_component(_tiago_netcdf_prefix "${TIAGO_NETCDF_C_LIBRARY}" DIRECTORY)
+find_path(TIAGO_NETCDF_C_INCLUDE_DIR NAMES netcdf.h
+    HINTS "${_tiago_netcdf_prefix}/../include" REQUIRED)
 find_package(CURL 7.66 REQUIRED)
 find_package(Threads REQUIRED)
 set(JSONFORTRAN_ENABLE_TESTS OFF CACHE BOOL "" FORCE)
@@ -757,6 +760,8 @@ target_link_libraries(benchmark_recorded PRIVATE tiago_inference)
 add_executable(test_signal_sources tests/test_signal_sources.f90
     tests/grouped_signal_fixture.c)
 target_link_libraries(test_signal_sources PRIVATE tiago_signals)
+target_include_directories(test_signal_sources PRIVATE
+    $<$<COMPILE_LANGUAGE:C>:${TIAGO_NETCDF_C_INCLUDE_DIR}>)
 add_test(NAME tiago_signal_sources COMMAND $<TARGET_FILE:test_signal_sources>)
 add_executable(test_recorded_diagnostic tests/test_recorded_diagnostic.f90)
 target_link_libraries(test_recorded_diagnostic PRIVATE tiago_inference)
