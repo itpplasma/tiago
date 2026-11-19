@@ -1,0 +1,204 @@
+# Axisymmetric free-boundary equilibria and magnetic diagnostics
+
+Status: design, 2026-11-19. Nothing below is implemented unless a section
+names its module.
+
+Magnetic pickup coils, flux loops and measured coil currents constrain the
+plasma current distribution of a tokamak, in particular the edge current
+density, which the profile diagnostics of the
+[joint fit](recorded-joint-inference.md) barely constrain. This note fixes how
+TIAGO predicts these signals from an axisymmetric free-boundary equilibrium,
+which existing Grad–Shafranov (GS) codes supply that equilibrium, and how up-down
+asymmetric flux labels reach the profile diagnostics. TIAGO does not contain a
+GS solver of its own.
+
+## Measurement model
+
+`(R, phi, Z)` are right-handed cylindrical coordinates in m, and currents are
+positive along `+phi`. The poloidal flux per radian is `psi = R A_phi`
+[Wb/rad], so that
+
+```text
+B_R = -(1/R) dpsi/dZ,        B_Z = (1/R) dpsi/dR.                         (1)
+```
+
+A toroidal filament of current `I` [A] at `(R', Z')` gives
+
+```text
+psi(R, Z) = I G(R, Z; R', Z'),
+G = mu0 sqrt(R R') / (2 pi k) [(2 - m) K(m) - 2 E(m)],                   (2)
+m = k^2 = 4 R R' / ((R + R')^2 + (Z - Z')^2),
+```
+
+with `K(m)`, `E(m)` the complete elliptic integrals of the first and second
+kind as functions of the parameter `m` (Jackson, Classical Electrodynamics,
+3rd ed., Sec. 5.5). Coil group `g` carries the current `I_g` [A] and consists
+of filaments `c` with signed turns `N_c`. A coil of finite cross-section is a
+set of Gauss–Legendre filaments whose `N_c` are its turns times the quadrature
+weights. With the toroidal plasma current density `j_phi` [A/m^2],
+
+```text
+psi = sum_g I_g sum_{c in g} N_c G(.; R_c, Z_c) + int_P G(.; R', Z') j_phi dR' dZ',  (3)
+j_phi = R p'(psi) + F F'(psi) / (mu0 R),                                  (4)
+```
+
+where `P` is the plasma region bounded by the last closed flux surface, `p` the
+pressure [Pa] and `F = R B_phi` [T m]. The sensors are:
+
+```text
+full flux loop at (R, Z):     s = 2 pi psi(R, Z)                                [Wb]
+pickup coil:                  s = N A (1/L) int_{-L/2}^{L/2} B(x + l t) . n dl  [Wb]
+Rogowski coil, contour C:     s = I_P + sum_{c inside C} N_c I_g(c)             [A]
+coil current measurement:     s = I_g                                           [A]
+```
+
+The pickup coil has its centre at `x`, its axis along the unit vector `n` in
+the poloidal plane, its length `L` along the unit vector `t` in the same plane,
+and the effective area `N A` [m^2] from its calibration. `l` is the arc length
+along `t` and `I_P` the plasma current. The pickup voltage and digitiser
+follow from `s` through the existing [pickup](magnetic-pickup.md) and
+[digitiser](digitizer.md) stages. Given `j_phi`, every signal is linear in the
+`I_g`, so the coil part is a response matrix, as for the existing
+[stellarator sensors](magnetics.md#magnetic-probes-and-response-matrices).
+
+Equation (3) needs no field grid and holds at any sensor position, inside or
+outside the computational box of the GS code. Two independent checks fix its
+accuracy:
+
+1. Filaments against TIAGO's straight-segment Biot–Savart kernel on a polygon
+   of the same circle.
+2. For a Solov'ev equilibrium (Solov'ev, Sov. Phys. JETP 26, 400 (1968)) with
+   `psi = 0` on its boundary, the plasma term of (3) outside `P` equals the
+   flux of the toroidal sheet current `K_phi = (n x B)_phi / mu0` on the
+   boundary, with `n` its outward unit normal (the axisymmetric virtual
+   casing). The total current equals `(1/mu0)` times the circulation of the
+   poloidal field around the boundary.
+
+## Equilibrium providers
+
+| code | boundary | output read by TIAGO | role |
+|---|---|---|---|
+| [FreeGS](https://github.com/freegs-plasma/freegs) (or its successor FreeGSNKE) | free, filament and polygonal coils | G-EQDSK | first provider and published test machine |
+| MILCA `nested_equilibrium`, our nested-map MHD equilibrium code, axisymmetric case | free, in the field of an mgrid | `psi(R, Z)` or boundary and profiles, export still to be added in MILCA | second provider, with a Newton tangent in the coil currents |
+| [CHEASE](https://gitlab.epfl.ch/spc/chease) | fixed | EQDSK | interior on the boundary of another provider |
+| VMEC++ (present in TIAGO) | free, mgrid | VMEC `wout` file | 3D equilibria with coils on (ripple, perturbation coils), not the axisymmetric fit |
+
+G-EQDSK is the EFIT equilibrium file: `psi` on an `(R, Z)` grid, `p`, `F`,
+`p'`, `F F'` and `q` on `psi_N`, the last closed surface and the limiter. An
+mgrid is the MAKEGRID file of the field of each coil group on a cylindrical
+grid, read by VMEC. FreeGS is Python and stays an external process. No
+provider becomes a library dependency of TIAGO.
+
+### Provider contract
+
+The provider seam of [DESIGN.md](../DESIGN.md#forward-provider-seam) is
+realised as a process with a file contract:
+
+- Request: coil-group currents `I_g` [A], plasma current `I_P` [A], the shape
+  parameters of `p'` and `F F'` as piecewise cubic Hermite knots in `psi_N`,
+  a boundary guess and the solver tolerances. `I_P` fixes the common scale of
+  `p'` and `F F'`. Each backend converts the knots into its own profile
+  representation.
+- Response: G-EQDSK with its COCOS index, the tokamak coordinate convention
+  of Sauter and Medvedev (Comput. Phys. Commun. 184, 293 (2013)), the
+  convergence status, the solver residual and the provider name, version and
+  command line.
+
+TIAGO reads the G-EQDSK with libneo's reader, converts it from its COCOS to the
+convention of (1), takes `p'`, `F F'`, the last closed surface and the axis
+from it, and evaluates (3) and (4) itself. The integral in (3) runs over the
+G-EQDSK grid cells inside the last closed surface, with the cells cut by it
+split along the bicubic contour `psi_N = 1`. The provider's own `psi` is
+compared with (3) at the grid points outside `P`. The difference is recorded
+with each solve and is not used to correct the signals. Different coils, a
+COCOS or `2 pi` mismatch and provider resolution each produce such a difference.
+
+### Derivatives
+
+The coil part is exact and linear. Derivatives with respect to the
+equilibrium parameters (`I_g`, `I_P`, profile knots) are re-solved central
+differences with a cold start per side, as in the VMEC++ free-boundary path
+([reconstruction](reconstruction.md#free-boundary-provider)), two solves per
+parameter. A provider tangent, such as MILCA's derivative of the free-boundary
+state with respect to the plasma current, replaces these differences parameter
+by parameter after a check against them.
+
+The edge current enters through the knot values of `p'` and `F F'` near
+`psi_N = 1`. The pickup coils near the boundary constrain them, and a
+bootstrap-current prior (Sauter, Angioni and Lin-Liu, Phys. Plasmas 6, 2834
+(1999)) supplies their prior.
+
+## Up-down asymmetric flux labels
+
+The G-EQDSK flux `psi(R, Z)` carries no up-down symmetry. The profile labels
+are
+
+```text
+psi_N(R, Z) = (psi(R, Z) - psi_axis) / (psi_b - psi_axis),               (5)
+Phi(psi_N) = int_{P(psi_N)} F(psi) / R dR dZ,   rho_tor = sqrt(Phi(psi_N) / Phi(1)),  (6)
+```
+
+with bicubic interpolation of `psi`, `psi_b` the flux of the last closed
+surface and `P(psi_N)` the region inside the closed surface with that label.
+`Phi` [Wb] is the toroidal flux. It stays finite at the separatrix of a diverted
+plasma, where `q` diverges. Profile diagnostics take `psi_N` or `rho_tor` at
+their sample points instead of the VMEC label `s`. The derivative of a label at
+a fixed point with respect to a parameter includes the shifts of `psi_axis`
+and `psi_b`.
+
+`psi_b` is the flux of the X-point for a diverted plasma and of the limiter
+contact point for a limited one, both reported by the provider. Points outside
+`P` carry only `psi_N`: those with `psi_N > 1` lie in the scrape-off layer,
+and those with `psi_N < 1` below the X-point in the private flux region. VMEC
+labels cannot describe either region. Up-down asymmetric VMEC++ states for the
+3D path (`lasym = true` in TIAGO's VMEC++ state and the joint model) are a
+separate item.
+
+## Files shared with MILCA
+
+TIAGO and MILCA read one machine description and never copy it:
+
+- Coil filaments: one coil file, ordered by group, with signed turns per
+  filament and the current per unit `EXTCUR`, VMEC's coil-group current.
+- Field basis: the mgrid with `mgrid_mode = 'S'` (field of group `k` per unit
+  `EXTCUR_k`), produced once from that coil file by Biot–Savart. MILCA and
+  VMEC++ read this file. Coil file and mgrid agree in group order, sign and
+  current unit.
+- Equilibria: G-EQDSK, MILCA's NetCDF output and VMEC `wout` files stay in the
+  study directory of the private device repository that owns the discharge.
+  TIAGO records path, SHA-256 and producer in its provenance.
+
+MILCA requires a positive toroidal flux. For a machine with negative toroidal
+field the adapter passes all coil-group currents and the plasma current
+negated and negates the returned `psi`, so that TIAGO's signals keep their
+physical signs.
+
+## Test cases
+
+Tests use synthetic or published machines only.
+
+- FreeGS `TestTokamakSensor` at a pinned FreeGS revision: four coils, a wall,
+  a Rogowski coil, pickup coils and flux loops. A G-EQDSK and FreeGS's own
+  sensor values, generated once and checked in with their generator, test
+  (3) and (4) against an independent code.
+- MILCA's synthetic free-boundary tokamak
+  (`examples/nested-equilibrium/free-boundary-tokamak.nml` with its analytic
+  mgrid) and its converged VMEC++ reference.
+- A machine of circular filaments only, solved by FreeGS and by MILCA from the
+  same coil file and mgrid, with the FreeGS boundary re-solved by CHEASE,
+  compares axis, volume, internal inductance and the sensor signals across
+  codes.
+
+Device coils, probes and discharges stay in the private device repositories.
+
+## Delivery
+
+| layer | content | agent-days |
+|---|---|---|
+| 1 | this note | 0.5 |
+| 2 | axisymmetric sensors (2)–(3) with coil response matrices, checks 1 and 2 | 2 |
+| 3 | G-EQDSK plasma source (4), labels (5)–(6), FreeGS fixture check | 1.5 |
+| 4 | process provider with the FreeGS backend, recovery of coil currents, `I_P` and profile knots on `TestTokamakSensor` | 3 |
+| 5 | MILCA backend (after a `psi` export in MILCA), CHEASE interior, cross-code comparison | 3 |
+| 6 | joint fit of magnetics and profile diagnostics on `psi_N` labels with the edge-current prior | 2–3 |
+| 7 | ASDEX Upgrade discharge 37513 in its private repository | 2 |

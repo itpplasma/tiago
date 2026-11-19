@@ -62,7 +62,9 @@ Add synthetic pull/coverage tests for each new uncertainty mechanism.
 
 After native Grad--Shafranov, extend the provider contract only as needed for:
 
-1. free-boundary axisymmetric MHD with explicit coil/vacuum data;
+1. free-boundary axisymmetric MHD with explicit coil/vacuum data, from
+   existing Grad--Shafranov codes
+   ([design](docs/axisymmetric-free-boundary.md));
 2. imported EQDSK checked/re-solved by KIN6D;
 3. general 3-D MHD stationary states;
 4. nested-surface VMEC/DESC/GVEC states as retained comparators;
