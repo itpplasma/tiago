@@ -308,7 +308,8 @@ add_library(tiago_inference STATIC
     src/inference/local_mixture.f90
     src/generated/field_line_rhs.f90
     src/generated/grid_field_cartesian.f90
-    src/inference/field_line_label.f90)
+    src/inference/field_line_label.f90
+    src/inference/axisym_free_boundary.f90)
 set_target_properties(tiago_inference PROPERTIES
     Fortran_STANDARD 2018
     Fortran_STANDARD_REQUIRED YES)
@@ -641,6 +642,20 @@ add_test(NAME tiago_geqdsk_plasma COMMAND $<TARGET_FILE:test_geqdsk_plasma>
     ${TIAGO_SOURCE_DIR}/tests/data/freegs/test_tokamak.geqdsk
     ${TIAGO_SOURCE_DIR}/tests/data/freegs/test_tokamak.machine
     ${TIAGO_SOURCE_DIR}/tests/data/freegs/test_tokamak_freegs.csv)
+
+# Free-boundary recovery through the FreeGSNKE provider, with a Python that
+# imports freegsnke (pip install freegsnke).
+set(TIAGO_FREEGSNKE_PYTHON "" CACHE FILEPATH "Python with FreeGSNKE for the provider test")
+add_executable(test_axisym_free_boundary tests/test_axisym_free_boundary.f90)
+target_link_libraries(test_axisym_free_boundary PRIVATE tiago_inference)
+if(TIAGO_FREEGSNKE_PYTHON)
+    add_test(NAME tiago_axisym_free_boundary COMMAND $<TARGET_FILE:test_axisym_free_boundary>
+        ${TIAGO_SOURCE_DIR}/tests/data/freegs/test_tokamak.machine
+        "${TIAGO_FREEGSNKE_PYTHON} -I ${TIAGO_SOURCE_DIR}/tools/freegsnke_provider.py"
+        ${TIAGO_BINARY_DIR}/tests/axisym_free_boundary)
+    set_tests_properties(tiago_axisym_free_boundary PROPERTIES
+        LABELS "free-boundary;slow" TIMEOUT 1500 ENVIRONMENT MPLBACKEND=Agg)
+endif()
 
 add_executable(test_sensor_set tests/test_sensor_set.f90)
 target_link_libraries(test_sensor_set PRIVATE tiago_solver)

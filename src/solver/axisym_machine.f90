@@ -4,6 +4,7 @@ module tiago_axisym_machine
     !!     flux <label> <R> <Z>
     !!     pickup <label> <R> <Z> <angle> <length> <area>
     !!     rogowski <label> <R1> <Z1> <R2> <Z2> ...
+    !!     limiter <label> <R1> <Z1> <R2> <Z2> ...           (for the provider)
     !! in m, degrees and m^2. The pickup axis is (cos angle, sin angle) in the
     !! (R, Z) plane and its length runs along the axis. Lines starting with #
     !! are comments.
@@ -107,6 +108,7 @@ contains
                 rogowski%r = buffer(1:n:2)
                 rogowski%z = buffer(2:n:2)
                 machine%sensors%rogowski = [machine%sensors%rogowski, rogowski]
+            case ('limiter')
             case default
                 call fail()
             end select

@@ -88,6 +88,8 @@ for s in tokamak.sensors:
         # FreeGS measures psi per radian, TIAGO the linked flux 2 pi psi.
         value = 2 * np.pi * (tokamak.psi(s.R, s.Z) + plasma(Greens, s.R, s.Z))
         rows.append(f"flux,{s.name},{s.R},{s.Z},{value:.17e}")
+wall = " ".join(f"{r:.6f} {z:.6f}" for r, z in zip(tokamak.wall.R, tokamak.wall.Z))
+lines.append(f"limiter wall {wall}")
 rng = np.random.default_rng(20261119)
 for k in range(24):
     r, z = rng.uniform(0.85, 1.45), rng.uniform(-0.55, 0.65)
