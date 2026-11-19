@@ -331,3 +331,21 @@ git diff --exit-code -- src/generated/sxr_*.f90
 
 `tiago_soft_xray` checks the kernels against Simpson sums over photon energy,
 a step filter in closed form and central differences.
+
+# Regenerate the beam atomic kernels
+
+`gen_beam_atomic` emits `src/generated/beam_stopping_suzuki.f90` (Suzuki beam
+stopping cross-section and its partial derivatives in ne, Te and Zeff) and
+`src/generated/hydrogen_1s_cross_sections.f90` (Janev, Reiter and Samm 2003
+fits for H(1s)). It was generated with FortSym
+`257ea66f6071f516a02f5400eeb32e6abac6e9d4`:
+
+```sh
+cmake -S gen -B build-codegen -G Ninja -DFORTSYM_BUILD=/path/to/fortsym/build
+cmake --build build-codegen --target gen_beam_atomic
+build-codegen/gen_beam_atomic
+git diff --exit-code -- src/generated
+```
+
+`tiago_beam_neutrals` checks the stopping kernel against ASCOT5's
+implementation and central differences.

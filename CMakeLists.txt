@@ -274,6 +274,9 @@ add_library(tiago_inference STATIC
     src/generated/sxr_filter_tail.f90
     src/inference/soft_xray.f90
     src/inference/cxrs.f90
+    src/generated/beam_stopping_suzuki.f90
+    src/generated/hydrogen_1s_cross_sections.f90
+    src/inference/beam_neutrals.f90
     src/generated/dispersion_phase.f90
     src/generated/dispersion_column.f90
     src/generated/dispersion_iq.f90
@@ -615,6 +618,10 @@ add_test(NAME tiago_sensor_set_plasma COMMAND $<TARGET_FILE:test_sensor_set>
 set_tests_properties(tiago_sensor_set tiago_sensor_set_plasma PROPERTIES
     ENVIRONMENT TIAGO_TEST_SENSOR_GEOMETRY=${TIAGO_TEST_SENSOR_GEOMETRY} RESOURCE_LOCK sensor_geometry)
 set_tests_properties(tiago_sensor_set_plasma PROPERTIES FIXTURES_REQUIRED wout_li383)
+
+add_executable(test_beam_neutrals tests/test_beam_neutrals.f90)
+target_link_libraries(test_beam_neutrals PRIVATE tiago_inference)
+add_test(NAME tiago_beam_neutrals COMMAND $<TARGET_FILE:test_beam_neutrals>)
 
 add_executable(test_profile_instruments tests/test_profile_instruments.f90)
 target_link_libraries(test_profile_instruments PRIVATE tiago_inference tiago_solver)
