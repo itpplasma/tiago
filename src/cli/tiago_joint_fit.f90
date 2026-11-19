@@ -424,7 +424,7 @@ contains
                     call rec%eq%write_wout(out//'/draws/wout_'//trim(tag)//'.nc')
                 end if
             end if
-            write(v, '(I0,",",I0,*(",",ES16.8))') k, merge(1, 0, ok), th
+            write(v, '(I0,",",I0,*(:,",",ES16.8))') k, merge(1, 0, ok), th
         end do
         close(v)
         open(newunit=u, file=out//'/profiles.csv', status='replace')
@@ -433,7 +433,7 @@ contains
         do c = 1, 4
             do j = 1, ns_out
                 q = quantiles(f(c, j, 2:), [0.025_dp, 0.16_dp, 0.5_dp, 0.84_dp, 0.975_dp])
-                write(u, '(A,*(",",ES16.8))') trim(qn(c)), s_out(j), f(c, j, 1), q
+                write(u, '(A,*(:,",",ES16.8))') trim(qn(c)), s_out(j), f(c, j, 1), q
             end do
         end do
         close(u)
@@ -441,7 +441,7 @@ contains
         write(u, '(A)') 'draw,s,ne,Te,Ti,p'
         do k = 2, laplace_draws
             do j = 1, ns_out
-                write(u, '(I0,*(",",ES16.8))') k, s_out(j), f(:, j, k)
+                write(u, '(I0,*(:,",",ES16.8))') k, s_out(j), f(:, j, k)
             end do
         end do
         close(u)
