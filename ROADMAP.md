@@ -109,7 +109,8 @@ Planned, in this order (plan of 2026-11-16, not started unless noted):
    loss-detector (FILD) response from orbit-code loss events and collective
    Thomson scattering.
 6. Later, on demand: bolometry, correlation ECE, polarimetry and Faraday
-   rotation, visible bremsstrahlung, edge beams and probes.
+   rotation, visible bremsstrahlung, edge beams and probes (lithium beam
+   done: [lithium-beam emission](docs/lithium-beam.md)).
 
 Device geometry and calibrations of these instruments belong in the private
 device companions, not here.

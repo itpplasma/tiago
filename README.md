@@ -31,6 +31,8 @@ Status: research code under active development; interfaces may change.
 - Doppler reflectometry along cold O- and X-mode rays to the turning point,
   with derivatives that follow the moving turning point, and O-mode profile
   reflectometry: phase, group delay and group-delay inversion.
+- Lithium-beam emission from a collisional-radiative beam model, with
+  derivatives in the electron density and temperature along the beam.
 - Soft X-ray pinhole cameras: line-integrated emissivity as a profile in the
   flux label or as filtered bremsstrahlung, with per-camera gain calibration
   ([soft X-ray](docs/soft-xray.md)).
@@ -97,6 +99,7 @@ Recorded signals and inference:
   [dispersion interferometer](docs/dispersion-interferometer.md),
   [Doppler reflectometry](docs/doppler-reflectometry.md),
   [profile reflectometry](docs/profile-reflectometry.md),
+  [lithium-beam emission](docs/lithium-beam.md),
   [soft X-ray cameras](docs/soft-xray.md),
   [neutrons and FIDA](docs/fast-ion-diagnostics.md)
 - ECE: [recorded ECE](docs/ece-recorded.md), [rays](docs/ece-rays.md),
