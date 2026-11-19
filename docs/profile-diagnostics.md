@@ -101,6 +101,8 @@ neutrals, the density and energy dependence of `sigma` and plasma rotation are
 not modelled. The temperature is the second spectral moment of the sum of
 Doppler-broadened lines, which a single-Gaussian fit approximates. Place the
 beam origin outside the plasma: the attenuation starts there.
+[Neutral beam densities](beam-neutrals.md) gives energy components,
+density-dependent stopping and the halo.
 
 Sampling the state (Newton per point) and the VJP reduction are
 OpenMP-parallel; the instruments themselves are cheap sums over the samples.

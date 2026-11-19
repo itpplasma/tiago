@@ -25,6 +25,8 @@ Status: research code under active development; interfaces may change.
 - Profile diagnostics with derivatives: XICS brightness and
   emission-weighted temperature, and charge-exchange recombination
   spectroscopy with beam attenuation ([profile diagnostics](docs/profile-diagnostics.md)).
+- Neutral heating-beam densities with energy components, Suzuki stopping and
+  thermal halo ([beam neutrals](docs/beam-neutrals.md)).
 - Soft X-ray pinhole cameras: line-integrated emissivity as a profile in the
   flux label or as filtered bremsstrahlung, with per-camera gain calibration
   ([soft X-ray](docs/soft-xray.md)).
@@ -96,6 +98,7 @@ Recorded signals and inference:
 - [Field-line labels](docs/field-line-labels.md) (`tiago_field_line_labels`:
   profile labels in fields with islands, from an mgrid and a reference chart)
 - [Profile diagnostics](docs/profile-diagnostics.md),
+  [neutral beam densities](docs/beam-neutrals.md),
   [joint inference](docs/inference.md),
   [joint inference from recorded signals](docs/recorded-joint-inference.md)
 
