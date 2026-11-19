@@ -84,6 +84,10 @@ namelist(work / "fit.nml", "fit", "prior.csv", False)
 run(work / "fit.nml")
 
 failures = []
+for name in ("fit/profiles.csv", "fit/draws/latents.csv", "fit/draws/profiles.csv"):
+    with open(work / name) as f:
+        if any(None in r for r in csv.DictReader(f)):
+            failures.append((name, "more values than header columns"))
 with open(work / "fit/profiles.csv") as f:
     for r in csv.DictReader(f):
         s = float(r["s"])
