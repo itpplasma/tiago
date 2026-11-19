@@ -380,4 +380,5 @@ git diff --exit-code -- src/generated/doppler_turning_shift.f90 src/generated/om
 ```
 
 `tiago_doppler_ray` checks the Doppler kernel against slab solutions and
-central differences.
+central differences, `tiago_profile_reflectometry` the ordinary-mode index
+against a linear layer.
