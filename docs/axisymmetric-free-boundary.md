@@ -125,10 +125,12 @@ flux as `psi = sigma psi_file / (2 pi)^e`, with `e = 0` or `1` chosen so that
 the integral of `j_phi` matches that current and `sigma` from their signs.
 This covers every COCOS of a file whose current sign follows `+phi`. The
 integral in (3) runs over the grid nodes inside the last closed surface with
-weight `dR dZ`, the quadrature FreeGS uses. The provider's own `psi` is
-compared with (3) at the grid points outside `P`. The difference is recorded
-with each solve and is not used to correct the signals. Different coils, a
-COCOS or `2 pi` mismatch and provider resolution each produce such a difference.
+weight `dR dZ`, the quadrature FreeGS uses. A provider may add its own
+`j_phi` on the grid as a sidecar file, which then replaces (4) and the
+boundary test. Planned: the provider's own `psi` is compared with (3) at the
+grid points outside `P` and the difference is recorded with each solve.
+Different coils, a COCOS or `2 pi` mismatch and provider resolution each
+produce such a difference.
 
 `tiago_geqdsk_plasma` (`src/solver/geqdsk_plasma.f90`) implements the reading,
 the conversion, `j_phi` and the labels (5) and (6). `tiago_axisym_machine`
@@ -152,6 +154,52 @@ so the generator rewrites them on the standard grid. FreeGS's grid flux of the
 plasma differs from the Green's-function sum of its own current by a nearly
 constant 2.6e-4 Wb/rad at 65 and at 129 grid points. This shifts its flux-loop
 values by about 1 % and leaves its fields unchanged.
+
+### FreeGSNKE provider
+
+FreeGS's Picard iteration does not hold an elongated plasma at fixed coil
+currents. Started from the `TestTokamakSensor` solution with its own coil
+currents, it finds no O-point after the current of coil `P2U` changes by
++1 %, and after -2 % its axis moves from `Z = 0.04 m` to `Z = 0.88 m`. The
+forward provider therefore uses the Newton–Krylov static solver of
+[FreeGSNKE](https://github.com/FusionComputingLab/freegsnke) 3.1.1 at fixed coil
+currents. `tools/freegsnke_provider.py` reads a request file of `key = value`
+lines (machine file, grid, tolerance, `plasma_current`, `pressure_axis`,
+`fvac`, `alpha_m`, `alpha_n`, `current(g)`), builds the coils from the same
+machine file (a rectangle as 4 x 4 midpoint filaments, where TIAGO uses 4 x 4
+Gauss–Legendre filaments), solves from FreeGSNKE's default initial flux and
+writes the G-EQDSK, its `j_phi` sidecar and a status file. The profiles are
+FreeGSNKE's `ConstrainPaxisIp` family. Hermite knots of `p'` and `F F'`
+follow with layer 6.
+
+`tiago_axisym_free_boundary` (`src/inference/axisym_free_boundary.f90`)
+implements the posterior contract of the inference engines with parameters
+`CURRENT(g)`, `PLASMA_CURRENT` and `PRESSURE_AXIS`, Gaussian priors from
+measured coil currents and re-solved central differences. A failed solve is
+repeated once, and a derivative falls back to one side where the other does
+not converge.
+
+The test `tiago_axisym_free_boundary` (label `slow`, enabled with
+`TIAGO_FREEGSNKE_PYTHON` set to a Python that imports `freegsnke`) plants an
+equilibrium on `TestTokamakSensor` (33 x 33 grid), predicts its six flux
+loops, six pickups and the Rogowski coil without noise
+(`sigma` = 1e-4 Wb, 1e-4 T, 50 A) and measures the coil currents to 1 %.
+From a start 0.3 % off in the coil currents, 2 % in `I_P` and 20 % in the
+axis pressure, Levenberg–Marquardt converges in 4 steps and 90 provider solves
+(4 min on one core):
+
+| parameter | planted | fitted | local standard deviation |
+|---|---|---|---|
+| `P1L` current | 153020 A | 153020 A | 59 A |
+| `P1U` current | 62716 A | 62716 A | 54 A |
+| `P2L` current | -98061 A | -98061 A | 26 A |
+| `P2U` current | -57558 A | -57558 A | 30 A |
+| `I_P` | 200000 A | 200000 A | 49 A |
+| axis pressure | 1000.0 Pa | 999.99 Pa | 23 Pa |
+
+The re-solved derivatives with relative steps `3e-3` and `1e-3` agree to
+`3e-3` in five columns and to `1.2e-2` in the `P2U` column. The test
+tolerates `2e-2`. The cause of the `P2U` difference is open.
 
 ### Derivatives
 
@@ -238,7 +286,7 @@ Device coils, probes and discharges stay in the private device repositories.
 | 1 | this note | 0.5 |
 | 2 | axisymmetric sensors (2)–(3) with coil response matrices, checks 1 and 2 | 2 |
 | 3 | G-EQDSK plasma source (4), labels (5)–(6), FreeGS fixture check | 1.5 |
-| 4 | process provider with the FreeGS backend, recovery of coil currents, `I_P` and profile knots on `TestTokamakSensor` | 3 |
+| 4 | process provider with the FreeGSNKE backend, recovery of coil currents, `I_P` and axis pressure on `TestTokamakSensor` | 3 |
 | 5 | MILCA backend (after a `psi` export in MILCA), CHEASE interior, cross-code comparison | 3 |
 | 6 | joint fit of magnetics and profile diagnostics on `psi_N` labels with the edge-current prior | 2–3 |
 | 7 | ASDEX Upgrade discharge 37513 in its private repository | 2 |

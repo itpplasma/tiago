@@ -29,6 +29,7 @@ module tiago_geqdsk_plasma
         real(dp) :: sigma = 1 !! sign of the psi conversion
         integer :: exponent = 0 !! e of the 2 pi factor
         real(dp), allocatable :: phi(:) !! toroidal flux on psi_N [Wb]
+        real(dp), allocatable :: jphi(:, :) !! provider's j_phi on the grid [A/m^2]
         type(BatchSplineData2D) :: psi_spline
         type(BatchSplineData1D) :: profile_spline !! p', F F', |q| on psi_N
     contains
@@ -87,7 +88,8 @@ contains
         ratio(0) = abs(raw / eq%current)
         ratio(1) = abs(2 * pi * raw / eq%current)
         eq%exponent = minloc(abs(log(ratio)), 1) - 1
-        if (abs(log(ratio(eq%exponent))) > 0.1_dp) then
+        call read_jphi(path//'.jphi', eq)
+        if (abs(log(ratio(eq%exponent))) > 0.1_dp .and. .not. allocated(eq%jphi)) then
             ierr = 3
             message = 'integral of j_phi does not match the current of '//trim(path)
             return
@@ -112,6 +114,24 @@ contains
         end do
         eq%phi = 2 * pi * abs(eq%psi_b - eq%psi_axis) * eq%phi
     end subroutine read_geqdsk_plasma
+
+    subroutine read_jphi(path, eq)
+        !! Optional sidecar of the provider's toroidal current density on the
+        !! G-EQDSK grid, R fastest, one value per line [A/m^2]. With it the
+        !! plasma current is the provider's own, independent of the boundary
+        !! polygon and the profile tables.
+        character(*), intent(in) :: path
+        type(geqdsk_plasma_t), intent(inout) :: eq
+        integer :: unit, ios
+        logical :: present
+        inquire(file=path, exist=present)
+        if (.not. present) return
+        allocate(eq%jphi(eq%nw, eq%nh))
+        open(newunit=unit, file=path, status='old', action='read')
+        read(unit, *, iostat=ios) eq%jphi
+        close(unit)
+        if (ios /= 0) deallocate(eq%jphi)
+    end subroutine read_jphi
 
     real(dp) function q_at(eq, x)
         type(geqdsk_plasma_t), intent(in) :: eq
@@ -168,7 +188,7 @@ contains
 
     subroutine plasma_filaments(self, rf, zf, wf)
         !! Grid nodes inside the plasma with the current j_phi dR dZ [A] of
-        !! j_phi = R p'(psi) + F F'(psi) / (mu0 R).
+        !! j_phi = R p'(psi) + F F'(psi) / (mu0 R), or of the provider's j_phi.
         class(geqdsk_plasma_t), intent(in) :: self
         real(dp), allocatable, intent(out) :: rf(:), zf(:), wf(:)
         real(dp) :: area, psin, a, b, y(3), rbuf(self%nw * self%nh), &
@@ -176,6 +196,13 @@ contains
         integer :: i, j, n
         area = (self%r(2) - self%r(1)) * (self%z(2) - self%z(1))
         n = 0
+        if (allocated(self%jphi)) then
+            n = count(self%jphi /= 0)
+            rf = pack(spread(self%r, 2, self%nh), self%jphi /= 0)
+            zf = pack(spread(self%z, 1, self%nw), self%jphi /= 0)
+            wf = pack(self%jphi * area, self%jphi /= 0)
+            return
+        end if
         do j = 1, self%nh
             do i = 1, self%nw
                 if (.not. self%inside(self%r(i), self%z(j))) cycle
