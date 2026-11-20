@@ -106,10 +106,12 @@ contains
         end do
         request = self%workdir//'/request.txt'
         output = self%workdir//'/equilibrium.geqdsk'
-        call write_request(request)
+        call write_request(request, .true.)
         ! FreeGSNKE's Newton-Krylov directions are random, so a failed solve
-        ! is repeated once before the point counts as failed.
-        do attempt = 1, 2
+        ! is repeated once, and then once more from the provider's own initial
+        ! flux, before the point counts as failed.
+        do attempt = 1, 3
+            if (attempt == 3) call write_request(request, .false.)
             call execute_command_line(self%command//' '//request//' '//output, exitstat=status)
             self%solves = self%solves + 1
             ok = status == 0
@@ -146,8 +148,9 @@ contains
         end if
         if (present(eq)) eq = solved
     contains
-        subroutine write_request(path)
+        subroutine write_request(path, use_initial)
             character(*), intent(in) :: path
+            logical, intent(in) :: use_initial
             integer :: unit, i
             open(newunit=unit, file=path, status='replace', action='write')
             write(unit, '(A)') 'machine = '//self%machine_path
@@ -163,7 +166,7 @@ contains
             write(unit, '(A,ES24.16)') 'alpha_n = ', self%alpha_n
             write(unit, '(A,ES24.16)') 'plasma_current = ', ip
             write(unit, '(A,ES24.16)') 'pressure_axis = ', paxis
-            if (allocated(self%initial)) then
+            if (allocated(self%initial) .and. use_initial) then
                 if (len(self%initial) > 0) write(unit, '(A)') 'initial = '//self%initial
             end if
             if (self%profile == 'knots') then

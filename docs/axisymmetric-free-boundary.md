@@ -261,8 +261,24 @@ bootstrap estimate.
 FreeGSNKE's Newton-Krylov solve does not converge from its default initial
 flux for every request. A solve therefore starts from a fixed plasma flux
 (`initial`, the `.npy` the provider writes next to each G-EQDSK), by default
-the one of the first converged solve of the fit. A derivative whose solve
-fails shrinks its step twice by 4, then falls back to one side.
+the one of the first converged solve of the fit. A solve that fails twice
+from it is tried once more from FreeGSNKE's default initial flux. A plasma
+without X-point, which FreeGSNKE's G-EQDSK writer cannot write, counts as a
+failed solve. A derivative whose solve fails shrinks its step twice by 4, then
+falls back to one side. The
+Newton-Krylov residual stalls at a floor that depends on the request: in the
+knot fit of `tests/axisym_fit.py` one derivative solve of `PPRIME(3)` ends at
+a relative residual of `2.2e-6` after 400 iterations, and continuing from that
+state does not lower it. The test therefore accepts `3e-6`.
+
+FreeGSNKE carries the current on grid nodes inside the boundary. Where
+`j_phi` at `psi_N = 1` is not zero, nodes entering and leaving the plasma make
+the sensor signals jump with the parameters. In the knot fit of
+`tests/axisym_fit.py` with `p' = 500 Pa/(Wb/rad)` and `F F' = 0.002 T^2 m^2/(Wb/rad)`
+at the boundary, a scan of `I_P` in steps of `5e-5` gives second differences of
+the flux-loop signals of up to `8e-4 Wb`, against `2e-5 Wb` with zero
+boundary values. Such jumps stall the fit, so knot values at `psi_N = 1`
+stay at zero.
 
 `tiago_axisym_fit input.nml` runs the whole fit from a namelist: machine file,
 provider command, measurements by sensor label plus `pressure@x` and `jphi@x`

@@ -129,12 +129,21 @@ def main(request_path, output):
                      target_relative_tolerance=tolerance / 10, max_solving_iterations=400,
                      verbose=False)
         residual = float(solver.relative_change)
-        with open(output, "w") as fh:
-            geqdsk.write(eq, fh, fileformat=write_finite_q)
+        limited = bool(profiles.flag_limiter)
+        # FreeGS4E's writer, separatrix and q need an X-point, so a plasma
+        # without one is reported as a failed solve instead of written.
+        written = True
+        try:
+            with open(output, "w") as fh:
+                geqdsk.write(eq, fh, fileformat=write_finite_q)
+        except IndexError:
+            written = False
         np.savetxt(output + ".jphi", profiles.jtor.ravel(order="F"), fmt="%.17e")
         np.save(output + ".psi.npy", eq.plasma_psi)
     with open(output + ".status", "w") as fh:
-        fh.write(f"converged {int(residual <= tolerance)}\n")
+        fh.write(f"converged {int(residual <= tolerance and written)}\n")
+        fh.write(f"limited {int(limited)}\n")
+        fh.write(f"written {int(written)}\n")
         fh.write(f"residual {residual:.6e}\n")
         fh.write(f"provider freegsnke {importlib.metadata.version('freegsnke')}\n")
 

@@ -5,7 +5,7 @@ Usage: axisym_fit.py TIAGO_AXISYM_FIT PYTHON PROVIDER MACHINE WORKDIR
 Plants p' and F F' knots, solves with the provider, predicts the sensors and
 three pressure rows with `predict_geqdsk`, then fits, starting every solve
 from the planted plasma flux, plasma current, coil
-currents (measured to 1 %) and five knot values from a perturbed start, and
+currents (measured to 1 %) and four knot values from a perturbed start, and
 draws three Laplace samples. Checks recovery within two local standard
 deviations and the edge j_phi table.
 """
@@ -20,10 +20,12 @@ work.mkdir(parents=True, exist_ok=True)
 currents = [1.53020064498019026e5, 6.27160501916148351e4, -9.80609577221965155e4,
             -5.75578364420235448e4]
 knots = [0.0, 0.5, 0.9, 1.0]
-pprime = [1.0e4, 7.0e3, 3.0e3, 5.0e2]
-ffprime = [0.02, 0.012, 0.006, 0.002]
+# Zero current at psi_N = 1: otherwise the provider's grid nodes entering and
+# leaving the plasma make the signals jump (docs/axisymmetric-free-boundary.md).
+pprime = [1.0e4, 7.0e3, 3.0e3, 0.0]
+ffprime = [0.02, 0.012, 0.006, 0.0]
 truth = {"PLASMA_CURRENT": 2.0e5, "PPRIME(2)": pprime[1], "PPRIME(3)": pprime[2],
-         "PPRIME(4)": pprime[3], "FFPRIME(2)": ffprime[1], "FFPRIME(3)": ffprime[2]}
+         "FFPRIME(2)": ffprime[1], "FFPRIME(3)": ffprime[2]}
 truth.update({f"CURRENT({g + 1})": c for g, c in enumerate(currents)})
 command = f"{python} -I {provider}"
 
@@ -40,7 +42,7 @@ def namelist(path, predict, start):
     path.write_text(f"""&axisym_fit
  machine = '{machine}', provider = '{command}', workdir = '{work / "solve"}',
  measurements = '{work / "measurements.csv"}', output = '{work / ("predict" if predict else "fit")}',
- nx = 65, ny = 65, fvac = 2.0, tolerance = 1e-6, coil_current = {lst(currents)}, plasma_current = 2e5,
+ nx = 65, ny = 65, fvac = 2.0, tolerance = 3e-6, coil_current = {lst(currents)}, plasma_current = 2e5,
  profile = 'knots', knot_psin = {lst(knots)}, pprime_knot = {lst(pprime)},
  ffprime_knot = {lst(ffprime)},
  parameters = {", ".join(repr(n) for n in names)},
