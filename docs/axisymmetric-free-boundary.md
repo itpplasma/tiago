@@ -364,6 +364,38 @@ On the analytic equilibria, `s` agrees with the contour-integral reference to
 `|B|` to `2e-10`. In a diverted plasma `s` is off by `5e-5` to `1e-4` because
 `q` diverges at the separatrix and the table holds a finite last value.
 
+## Joint fit with the kinetic profiles
+
+`tiago_axisym_joint` joins the free-boundary model and the profile posterior
+of the previous section. The latents are the free-boundary parameters and the
+profile latents (with alignments and calibrations). The residual stacks the
+free-boundary rows, the profile-diagnostic rows sampled in the solved
+equilibrium and pressure rows
+
+```text
+r_k = (p_eq(psi_N,k) - p_kin(s(psi_N,k))) / sigma_p,k,   p_kin = e (n_e T_e + n_i T_i),   (7)
+```
+
+which tie the equilibrium pressure to the profiles at chosen labels. Profile
+columns of the Jacobian are exact at the solved equilibrium (diagnostic and
+pressure VJPs). Free-boundary columns are re-solved central differences, so
+each one carries the profile diagnostics through the moving labels.
+
+`tiago_axisym_fit` runs the joint fit when the namelist names `probes_file`
+or `chords_file` in the format of [joint fit](joint-fit.md), with
+`prior_table`, `breakpoints`, the kernel settings, `align_sigma`,
+`cal_sigma`, `model_rel` per group and `pressure_psin`, `pressure_sigma` for
+(7). It adds the profile latents `LATENT(i)` to `<output>_parameters.csv`
+and writes `<output>_profile_signals.csv` and `<output>_profiles.csv`. In
+predict mode it writes the profile signals at the prior mean, for synthetic
+data.
+
+`tests/test_axisym_joint.f90` checks the residual layout, (7) and the profile
+columns against central differences (largest difference `3e-10` of the
+largest entry) with a provider stand-in that returns one G-EQDSK.
+`tests/axisym_joint_cli.py` recovers n_e and T_e within 2 % from a prior 30 %
+too high through the command line.
+
 ## Files shared with MILCA
 
 TIAGO and MILCA read one machine description and never copy it:
