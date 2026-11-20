@@ -384,6 +384,17 @@ if(TIAGO_ENABLE_RECONSTRUCTION)
     # CMake package; it is built from a pinned commit, without its Python module
     # (cmake/PatchVmecpp.cmake), and bound to Fortran by src/equilibrium.
     enable_language(CXX)
+    if(APPLE)
+        # A Clang outside Xcode does not report the SDK include directory as
+        # implicit, so the SDK's curl and zlib targets put it on -isystem
+        # ahead of libc++, whose include_next then fails.
+        execute_process(COMMAND xcrun --show-sdk-path OUTPUT_VARIABLE TIAGO_SDK_PATH
+            OUTPUT_STRIP_TRAILING_WHITESPACE ERROR_QUIET)
+        if(TIAGO_SDK_PATH)
+            list(APPEND CMAKE_C_IMPLICIT_INCLUDE_DIRECTORIES "${TIAGO_SDK_PATH}/usr/include")
+            list(APPEND CMAKE_CXX_IMPLICIT_INCLUDE_DIRECTORIES "${TIAGO_SDK_PATH}/usr/include")
+        endif()
+    endif()
     if(NOT CMAKE_CXX_COMPILER_ID MATCHES "Clang")
         message(FATAL_ERROR "tiago_reconstruct builds VMEC++ with Enzyme and needs Clang as "
             "C++ compiler, e.g. -DCMAKE_CXX_COMPILER=clang++-20 "
