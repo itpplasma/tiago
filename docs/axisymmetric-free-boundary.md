@@ -151,9 +151,9 @@ plasma field from FreeGS's Green's functions of its own current:
 FreeGS writes its G-EQDSK profiles on `psi_N = i / n` instead of
 `i / (n - 1)` ([freegs#163](https://github.com/freegs-plasma/freegs/issues/163)),
 so the generator rewrites them on the standard grid. FreeGS's grid flux of the
-plasma differs from the Green's-function sum of its own current by a nearly
-constant 2.6e-4 Wb/rad at 65 and at 129 grid points. This shifts its flux-loop
-values by about 1 % and leaves its fields unchanged.
+plasma differs from the Green's-function sum of its own current by 1e-4 to
+3e-4 Wb/rad, depending on the point and not decreasing from 65 to 129 grid
+points. This changes its flux-loop values by up to about 1 %.
 
 ### Cell quadrature for continuous currents
 
@@ -219,9 +219,9 @@ axis pressure, Levenberg–Marquardt converges in 4 steps and 90 provider solves
 | `I_P` | 200000 A | 200000 A | 49 A |
 | axis pressure | 1000.0 Pa | 999.99 Pa | 23 Pa |
 
-The re-solved derivatives with relative steps `3e-3` and `1e-3` agree to
-`3e-3` in five columns and to `1.2e-2` in the `P2U` column. The test
-tolerates `2e-2`. The cause of the `P2U` difference is open.
+Central differences with relative steps `1e-3` (the default) and `3e-4`
+differ by `2.5e-3` in the `P2U` column and by `1e-4` to `6e-4` in the others.
+The test requires `5e-3`.
 
 ### CHEASE interior
 
@@ -246,13 +246,40 @@ The test requires 5e-4 in the current, 1e-3 m at the axis, 2e-3 in `psi_N`,
 5e-3 in `rho_tor` and 2e-3 in the signals. CHEASE builds with
 `make chease CHEASE_F90=gfortran` in its `src-f90` directory.
 
+### Profile knots and the command-line fit
+
+With `profile = 'knots'` the provider takes `p'` and `F F'` as natural cubic
+splines through values at knots in `psi_N` (FreeGSNKE's
+`GeneralPprimeFFprime`) and scales both together to `I_P`. One knot value
+stays fixed to remove that common scale. The parameters `PPRIME(k)` and
+`FFPRIME(k)` are the knot values. Two kinds of data rows join the sensors:
+the pressure `p(psi_N)` [Pa] from the G-EQDSK, and `j_phi` [A/m^2] at the
+outboard point of `psi_N` on the horizontal line through the axis. The second
+serves as prior or pseudo-measurement of the edge current, for example a
+bootstrap estimate.
+
+FreeGSNKE's Newton-Krylov solve does not converge from its default initial
+flux for every request. A solve therefore starts from a fixed plasma flux
+(`initial`, the `.npy` the provider writes next to each G-EQDSK), by default
+the one of the first converged solve of the fit. A derivative whose solve
+fails shrinks its step twice by 4, then falls back to one side.
+
+`tiago_axisym_fit input.nml` runs the whole fit from a namelist: machine file,
+provider command, measurements by sensor label plus `pressure@x` and `jphi@x`
+rows, coil currents, knots, parameters with scales and Gaussian priors. It
+writes the MAP with local standard deviations, measured and predicted
+signals, the MAP G-EQDSK, G-EQDSKs of Laplace draws re-solved by the provider
+and the outboard `j_phi` at chosen `psi_N` for the MAP and every draw. With
+`predict_geqdsk` it only predicts the sensors of a given G-EQDSK.
+
 ### Derivatives
 
 The coil part is exact and linear. Derivatives with respect to the
 equilibrium parameters (`I_g`, `I_P`, profile knots) are re-solved central
-differences with a cold start per side, as in the VMEC++ free-boundary path
+differences, as in the VMEC++ free-boundary path
 ([reconstruction](reconstruction.md#free-boundary-provider)), two solves per
-parameter. A provider tangent, such as MILCA's derivative of the free-boundary
+parameter. Every solve starts from the same plasma flux, so the forward map
+does not depend on the order of the solves. A provider tangent, such as MILCA's derivative of the free-boundary
 state with respect to the plasma current, replaces these differences parameter
 by parameter after a check against them.
 
@@ -358,5 +385,5 @@ Device coils, probes and discharges stay in the private device repositories.
 | 3 | G-EQDSK plasma source (4), labels (5)–(6), FreeGS fixture check | 1.5 |
 | 4 | process provider with the FreeGSNKE backend, recovery of coil currents, `I_P` and axis pressure on `TestTokamakSensor` | 3 |
 | 5 | CHEASE interior on the FreeGS boundary, then the MILCA backend after a G-EQDSK export in MILCA | 3 |
-| 6 | joint fit of magnetics and profile diagnostics on `psi_N` labels with the edge-current prior | 2–3 |
+| 6 | profile knots, pressure and edge-current rows, `tiago_axisym_fit`; then the joint fit with the profile diagnostics on `psi_N` labels | 1 + 2 |
 | 7 | ASDEX Upgrade discharge 37513 in its private repository | 2 |

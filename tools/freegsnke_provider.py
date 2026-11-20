@@ -7,14 +7,19 @@ machine (TIAGO axisymmetric machine file), nx, ny, rmin, rmax, zmin, zmax,
 tolerance (accepted relative residual), plasma_current [A], pressure_axis [Pa], fvac [T m], alpha_m,
 alpha_n and current(k) [A] per coil group k. The equilibrium is a forward
 static solve with fixed coil currents and FreeGSNKE's ConstrainPaxisIp
-profiles, from FreeGSNKE's default initial flux. OUTPUT is the G-EQDSK and
-OUTPUT.jphi the toroidal current density on its grid, R fastest [A/m^2].
+profiles, or with `profile = knots` natural cubic splines of p' and F F'
+through `pprime_knots` and `ffprime_knots` at `psin_knots` (comma lists),
+scaled together to the plasma current. The solve starts from the plasma flux
+in the .npy file `initial` when given, otherwise from FreeGSNKE's default. OUTPUT is the G-EQDSK and
+OUTPUT.jphi the toroidal current density on its grid, R fastest [A/m^2], and
+OUTPUT.psi.npy the plasma flux on the grid, usable as `initial`.
 OUTPUT.status gets `converged`, `residual` and `provider` lines.
 """
 import contextlib
 import importlib.metadata
 import io
 import sys
+from pathlib import Path
 
 import freeqdsk.geqdsk
 import numpy as np
@@ -47,20 +52,28 @@ def read_machine(path):
 
 
 def active_coils(coils, n=4):
-    """One FreeGSNKE coil per filament set, n x n midpoint filaments for a rectangle."""
-    active = {}
+    """FreeGSNKE coils: a rectangle as n x n midpoint filaments, and the single
+    filaments of a group merged per number of turns, with the coil names
+    returned per group."""
+    active, names = {}, {}
     for group, members in sorted(coils.items()):
+        merged = {}
         for label, rc, zc, dr, dz, turns in members:
             if dr > 0 and dz > 0:
                 x = (np.arange(n) + 0.5) / n - 0.5
                 r, z = np.meshgrid(rc + dr * x, zc + dz * x, indexing="ij")
-                r, z, m, size = r.ravel(), z.ravel(), turns / n**2, (dr / n, dz / n)
+                key = f"g{group}_{label}"
+                active[key] = dict(R=list(r.ravel()), Z=list(z.ravel()), dR=dr / n, dZ=dz / n,
+                                   resistivity=1.7e-8, polarity=1, multiplier=turns / n**2)
+                names.setdefault(group, []).append(key)
             else:
-                r, z, m, size = np.array([rc]), np.array([zc]), turns, (0.01, 0.01)
-            active[f"g{group}_{label}"] = dict(
-                R=list(r), Z=list(z), dR=size[0], dZ=size[1], resistivity=1.7e-8,
-                polarity=1, multiplier=m)
-    return active
+                merged.setdefault(turns, []).append((rc, zc))
+        for k, (turns, points) in enumerate(sorted(merged.items())):
+            key = f"g{group}_t{k}"
+            active[key] = dict(R=[p[0] for p in points], Z=[p[1] for p in points], dR=0.01, dZ=0.01,
+                               resistivity=1.7e-8, polarity=1, multiplier=turns)
+            names.setdefault(group, []).append(key)
+    return active, names
 
 
 def write_finite_q(data, fh, label=None):
@@ -82,21 +95,32 @@ def main(request_path, output):
         from freegsnke import GSstaticsolver, build_machine, equilibrium_update, jtor_update
         from freegs4e import geqdsk
         lim = [dict(R=r, Z=z) for r, z in zip(*limiter)]
-        tokamak = build_machine.tokamak(active_coils_data=active_coils(coils),
+        active, names = active_coils(coils)
+        tokamak = build_machine.tokamak(active_coils_data=active,
                                         limiter_data=lim, wall_data=lim)
+        initial = request.get("initial", "")
+        psi0 = np.load(initial) if initial and Path(initial).exists() else None
         eq = equilibrium_update.Equilibrium(
             tokamak=tokamak, Rmin=float(request["rmin"]), Rmax=float(request["rmax"]),
             Zmin=float(request["zmin"]), Zmax=float(request["zmax"]),
-            nx=int(request["nx"]), ny=int(request["ny"]))
+            nx=int(request["nx"]), ny=int(request["ny"]), psi=psi0)
         for group, members in coils.items():
             current = float(request.get(f"current({group})", 0.0))
-            for label, *_ in members:
-                eq.tokamak.set_coil_current(f"g{group}_{label}", current)
-        profiles = jtor_update.ConstrainPaxisIp(
-            eq=eq, paxis=float(request["pressure_axis"]),
-            Ip=float(request["plasma_current"]), fvac=float(request["fvac"]),
-            alpha_m=float(request.get("alpha_m", 1.0)),
-            alpha_n=float(request.get("alpha_n", 2.0)))
+            for name in names[group]:
+                eq.tokamak.set_coil_current(name, current)
+        if request.get("profile", "paxis") == "knots":
+            knots = [np.array(request[k].split(","), dtype=float)
+                     for k in ("psin_knots", "pprime_knots", "ffprime_knots")]
+            profiles = jtor_update.GeneralPprimeFFprime(
+                eq=eq, Ip=float(request["plasma_current"]), fvac=float(request["fvac"]),
+                psi_n=knots[0], pprime_data=knots[1], ffprime_data=knots[2],
+                Ip_logic=True, interpolator="cubic_spline")
+        else:
+            profiles = jtor_update.ConstrainPaxisIp(
+                eq=eq, paxis=float(request["pressure_axis"]),
+                Ip=float(request["plasma_current"]), fvac=float(request["fvac"]),
+                alpha_m=float(request.get("alpha_m", 1.0)),
+                alpha_n=float(request.get("alpha_n", 2.0)))
         solver = GSstaticsolver.NKGSsolver(eq)
         tolerance = float(request.get("tolerance", 1e-8))
         # Aim below the accepted tolerance, since the last Newton steps stall
@@ -108,6 +132,7 @@ def main(request_path, output):
         with open(output, "w") as fh:
             geqdsk.write(eq, fh, fileformat=write_finite_q)
         np.savetxt(output + ".jphi", profiles.jtor.ravel(order="F"), fmt="%.17e")
+        np.save(output + ".psi.npy", eq.plasma_psi)
     with open(output + ".status", "w") as fh:
         fh.write(f"converged {int(residual <= tolerance)}\n")
         fh.write(f"residual {residual:.6e}\n")

@@ -322,6 +322,9 @@ if(TIAGO_ENABLE_OPENMP AND OpenMP_Fortran_FOUND)
     target_link_libraries(tiago_inference PUBLIC OpenMP::OpenMP_Fortran)
 endif()
 
+add_executable(tiago_axisym_fit src/cli/tiago_axisym_fit.f90)
+target_link_libraries(tiago_axisym_fit PRIVATE tiago_inference)
+
 add_executable(tiago_cli src/cli/tiago_cli.f90)
 target_link_libraries(tiago_cli PRIVATE tiago_diagnostics)
 
@@ -696,6 +699,13 @@ if(TIAGO_FREEGSNKE_PYTHON)
         ${TIAGO_BINARY_DIR}/tests/axisym_free_boundary)
     set_tests_properties(tiago_axisym_free_boundary PROPERTIES
         LABELS "free-boundary;slow" TIMEOUT 1500 ENVIRONMENT MPLBACKEND=Agg)
+    add_test(NAME tiago_axisym_fit COMMAND ${TIAGO_FREEGSNKE_PYTHON} ${TIAGO_SOURCE_DIR}/tests/axisym_fit.py
+        $<TARGET_FILE:tiago_axisym_fit> ${TIAGO_FREEGSNKE_PYTHON}
+        ${TIAGO_SOURCE_DIR}/tools/freegsnke_provider.py
+        ${TIAGO_SOURCE_DIR}/tests/data/freegs/test_tokamak.machine
+        ${TIAGO_BINARY_DIR}/tests/axisym_fit)
+    set_tests_properties(tiago_axisym_fit PROPERTIES
+        LABELS "free-boundary;slow" TIMEOUT 3000 ENVIRONMENT MPLBACKEND=Agg)
 endif()
 
 # Fixed-boundary interior from CHEASE (EPFL, Apache 2.0) on the FreeGS boundary.

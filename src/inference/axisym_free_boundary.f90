@@ -5,8 +5,12 @@ module tiago_axisym_free_boundary
     !!     <command> request.txt equilibrium.geqdsk
     !! in the work directory, reads the G-EQDSK and predicts the sensors of the
     !! machine from the coil currents and the plasma current. Parameters are
-    !! CURRENT(g) [A], PLASMA_CURRENT [A] and PRESSURE_AXIS [Pa], fitted as
-    !! value / scale. Derivatives are central differences with a cold provider
+    !! CURRENT(g) [A], PLASMA_CURRENT [A], PRESSURE_AXIS [Pa] for the
+    !! ConstrainPaxisIp profiles, or PPRIME(k) and FFPRIME(k), the values at knot
+    !! k of p' and F F' in psi_N, which the provider scales together to the
+    !! plasma current. They are fitted as value / scale. Besides the sensors,
+    !! data rows may hold the pressure [Pa] or the outboard-midplane j_phi
+    !! [A/m^2] at given psi_N. Derivatives are central differences with a cold provider
     !! solve per side, one-sided where one side does not converge.
     use, intrinsic :: iso_fortran_env, only: dp => real64, error_unit
     use fortnum_rng, only: rng_t, rng_normal
@@ -29,6 +33,18 @@ module tiago_axisym_free_boundary
         !> Values of the parameters that are not fitted.
         real(dp), allocatable :: coil_current(:)
         real(dp) :: plasma_current = 0, pressure_axis = 0
+        !> 'paxis' or 'knots', with the knots in psi_N and the shape values of
+        !> p' and F F' there.
+        character(len=:), allocatable :: profile
+        real(dp), allocatable :: knot_psin(:), pprime_knot(:), ffprime_knot(:)
+        !> Profile data rows after the sensors: row_kind 1 pressure, 2 j_phi
+        !> at the outboard midplane, at the labels row_psin.
+        integer, allocatable :: row_kind(:)
+        real(dp), allocatable :: row_psin(:)
+        !> Plasma flux the provider starts from (.npy). Without one, the first
+        !> converged solve provides it, so that every later solve starts from
+        !> the same state.
+        character(len=:), allocatable :: initial
         character(len=32), allocatable :: names(:)
         real(dp), allocatable :: scale(:), prior_mean(:), prior_sigma(:)
         real(dp), allocatable :: data(:), sigma(:)
@@ -54,23 +70,39 @@ contains
         logical, intent(out) :: ok
         type(geqdsk_plasma_t), intent(out), optional :: eq
         type(geqdsk_plasma_t) :: solved
-        real(dp), allocatable :: current(:), rp(:), zp(:), wp(:)
-        real(dp) :: ip, paxis
+        real(dp), allocatable :: current(:), rp(:), zp(:), wp(:), pk(:), fk(:), rows(:)
+        real(dp) :: ip, paxis, rmid
         character(len=:), allocatable :: message, request, output
         integer :: k, g, status, ierr, attempt
         current = self%coil_current
         ip = self%plasma_current
         paxis = self%pressure_axis
+        if (.not. allocated(self%profile)) self%profile = 'paxis'
+        if (allocated(self%pprime_knot)) then
+            pk = self%pprime_knot
+            fk = self%ffprime_knot
+        else
+            allocate(pk(0), fk(0))
+        end if
         do k = 1, size(self%names)
-            select case (self%names(k)(1:min(len_trim(self%names(k)), 8)))
-            case ('PLASMA_C')
-                ip = theta(k) * self%scale(k)
-            case ('PRESSURE')
-                paxis = theta(k) * self%scale(k)
-            case ('CURRENT(')
-                read(self%names(k)(9:index(self%names(k), ')') - 1), *) g
-                current(g) = theta(k) * self%scale(k)
-            end select
+            associate (name => self%names(k))
+                if (name == 'PLASMA_CURRENT') then
+                    ip = theta(k) * self%scale(k)
+                else if (name == 'PRESSURE_AXIS') then
+                    paxis = theta(k) * self%scale(k)
+                else if (index(name, 'CURRENT(') == 1) then
+                    read(name(9:index(name, ')') - 1), *) g
+                    current(g) = theta(k) * self%scale(k)
+                else if (index(name, 'PPRIME(') == 1) then
+                    read(name(8:index(name, ')') - 1), *) g
+                    pk(g) = theta(k) * self%scale(k)
+                else if (index(name, 'FFPRIME(') == 1) then
+                    read(name(9:index(name, ')') - 1), *) g
+                    fk(g) = theta(k) * self%scale(k)
+                else
+                    error stop 'axisym free boundary: unknown parameter '//trim(name)
+                end if
+            end associate
         end do
         request = self%workdir//'/request.txt'
         output = self%workdir//'/equilibrium.geqdsk'
@@ -93,9 +125,25 @@ contains
             if (ok) exit
         end do
         if (.not. ok) return
+        if (.not. allocated(self%initial)) self%initial = ''
+        if (len(self%initial) == 0) then
+            self%initial = self%workdir//'/initial.psi.npy'
+            call execute_command_line('cp '//output//'.psi.npy '//self%initial)
+        end if
         call solved%filaments(rp, zp, wp)
         s = self%machine%sensors%signals([self%machine%r, rp], [self%machine%z, zp], &
             [self%machine%turns * current(self%machine%group), wp])
+        if (allocated(self%row_kind)) then
+            allocate(rows(size(self%row_kind)))
+            do k = 1, size(rows)
+                if (self%row_kind(k) == 1) then
+                    rows(k) = solved%pressure(self%row_psin(k))
+                else
+                    call solved%midplane_jphi(self%row_psin(k), rows(k), rmid)
+                end if
+            end do
+            s = [s, rows]
+        end if
         if (present(eq)) eq = solved
     contains
         subroutine write_request(path)
@@ -115,6 +163,15 @@ contains
             write(unit, '(A,ES24.16)') 'alpha_n = ', self%alpha_n
             write(unit, '(A,ES24.16)') 'plasma_current = ', ip
             write(unit, '(A,ES24.16)') 'pressure_axis = ', paxis
+            if (allocated(self%initial)) then
+                if (len(self%initial) > 0) write(unit, '(A)') 'initial = '//self%initial
+            end if
+            if (self%profile == 'knots') then
+                write(unit, '(A)') 'profile = knots'
+                write(unit, '(A,*(ES24.16,:,","))') 'psin_knots = ', self%knot_psin
+                write(unit, '(A,*(ES24.16,:,","))') 'pprime_knots = ', pk
+                write(unit, '(A,*(ES24.16,:,","))') 'ffprime_knots = ', fk
+            end if
             do i = 1, size(current)
                 write(unit, '(A,I0,A,ES24.16)') 'current(', i, ') = ', current(i)
             end do
@@ -160,21 +217,26 @@ contains
         real(dp), allocatable :: rp(:), rm(:), t(:), r0(:)
         real(dp) :: h
         logical :: okp, okm, ok0
-        integer :: k
+        integer :: k, attempt
         allocate(jac(self%n_residuals(), size(theta)), rp(self%n_residuals()), &
             rm(self%n_residuals()))
         do k = 1, size(theta)
             h = self%fd_relative * max(abs(theta(k)), 1.0_dp)
-            t = theta
-            t(k) = theta(k) + h
-            call self%residual(t, rp, okp)
-            t(k) = theta(k) - h
-            call self%residual(t, rm, okm)
+            ! Where a side does not converge, shrink the step twice by 4, then
+            ! fall back to one side.
+            do attempt = 1, 3
+                t = theta
+                t(k) = theta(k) + h
+                call self%residual(t, rp, okp)
+                t(k) = theta(k) - h
+                call self%residual(t, rm, okm)
+                if (okp .and. okm) exit
+                h = h / 4
+            end do
             if (okp .and. okm) then
                 jac(:, k) = (rp - rm) / (2 * h)
                 cycle
             end if
-            ! One side failed to converge: one-sided difference from theta.
             if (.not. allocated(r0)) then
                 allocate(r0(self%n_residuals()))
                 call self%residual(theta, r0, ok0)
@@ -185,6 +247,8 @@ contains
             else if (okm) then
                 jac(:, k) = (r0 - rm) / h
             else
+                write(error_unit, '(A)') 'axisym free boundary: no derivative for '// &
+                    trim(self%names(k))
                 error stop 'axisym free boundary: derivative solve failed'
             end if
         end do
