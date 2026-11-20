@@ -273,8 +273,11 @@ flux for every request. A solve therefore starts from a fixed plasma flux
 the one of the first converged solve of the fit. A solve that fails twice
 from it is tried once more from FreeGSNKE's default initial flux. A plasma
 without X-point, which FreeGSNKE's G-EQDSK writer cannot write, counts as a
-failed solve. A derivative whose solve fails shrinks its step twice by 4, then
-falls back to one side. The
+failed solve, and so does a solve that runs longer than the request's
+`time_limit` (default 600 s): the provider runs FreeGSNKE in a child process
+and kills it, since single Newton-Krylov solves were seen to hang for hours.
+A derivative whose solve fails shrinks its step twice by 4, then falls back to
+one side. The
 Newton-Krylov residual stalls at a floor that depends on the request: in the
 knot fit of `tests/axisym_fit.py` one derivative solve of `PPRIME(3)` ends at
 a relative residual of `2.2e-6` after 400 iterations, and continuing from that
