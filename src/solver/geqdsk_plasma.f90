@@ -30,6 +30,14 @@ module tiago_geqdsk_plasma
         integer :: exponent = 0 !! e of the 2 pi factor
         real(dp), allocatable :: phi(:) !! toroidal flux on psi_N [Wb]
         real(dp), allocatable :: jphi(:, :) !! provider's j_phi on the grid [A/m^2]
+        !> Integrate j_phi over grid cells instead of summing it at the nodes:
+        !> 2 x 2 Gauss points in each cell inside the plasma and, in each cell the
+        !> boundary cuts, one filament at the current centroid of n_sub x n_sub
+        !> sub-cells weighted with their area fraction below psi_N = 1. The node
+        !> sum reproduces a provider whose current lives on the nodes (FreeGS,
+        !> FreeGSNKE); cells approximate a continuous current (analytic, CHEASE).
+        logical :: cell_quadrature = .false.
+        integer :: n_sub = 16
         type(BatchSplineData2D) :: psi_spline
         type(BatchSplineData1D) :: profile_spline !! p', F F', |q| on psi_N
     contains
@@ -196,6 +204,10 @@ contains
         integer :: i, j, n
         area = (self%r(2) - self%r(1)) * (self%z(2) - self%z(1))
         n = 0
+        if (self%cell_quadrature .and. .not. allocated(self%jphi)) then
+            call cell_filaments(self, rf, zf, wf)
+            return
+        end if
         if (allocated(self%jphi)) then
             n = count(self%jphi /= 0)
             rf = pack(spread(self%r, 2, self%nh), self%jphi /= 0)
@@ -218,5 +230,191 @@ contains
         zf = zbuf(:n)
         wf = wbuf(:n)
     end subroutine plasma_filaments
+
+    subroutine cell_filaments(self, rf, zf, wf)
+        type(geqdsk_plasma_t), intent(in) :: self
+        real(dp), allocatable, intent(out) :: rf(:), zf(:), wf(:)
+        real(dp), parameter :: g = 0.5_dp / sqrt(3.0_dp)
+        real(dp), allocatable :: rbuf(:), zbuf(:), wbuf(:)
+        real(dp) :: dr, dz, rc, zc, r, z, j, cur, mr, mz, psin, a, b, tol, f
+        logical :: in(4)
+        integer :: i, k, ia, ib, n, nmax
+        tol = maxval(hypot(self%rb - cshift(self%rb, 1), self%zb - cshift(self%zb, 1)))
+        dr = self%r(2) - self%r(1)
+        dz = self%z(2) - self%z(1)
+        nmax = 4 * (self%nw - 1) * (self%nh - 1)
+        allocate(rbuf(nmax), zbuf(nmax), wbuf(nmax))
+        n = 0
+        do k = 1, self%nh - 1
+            do i = 1, self%nw - 1
+                in = [inside_fine(self, self%r(i), self%z(k), tol), &
+                    inside_fine(self, self%r(i + 1), self%z(k), tol), &
+                    inside_fine(self, self%r(i), self%z(k + 1), tol), &
+                    inside_fine(self, self%r(i + 1), self%z(k + 1), tol)]
+                rc = self%r(i) + dr / 2
+                zc = self%z(k) + dz / 2
+                if (all(in)) then
+                    do ib = -1, 1, 2
+                        do ia = -1, 1, 2
+                            r = rc + ia * g * dr
+                            z = zc + ib * g * dz
+                            n = n + 1
+                            rbuf(n) = r
+                            zbuf(n) = z
+                            wbuf(n) = current_density(self, r, z) * dr * dz / 4
+                        end do
+                    end do
+                    cycle
+                end if
+                if (.not. any(in)) then
+                    ! A boundary may still cross a cell with no corner inside.
+                    call self%label(rc, zc, psin, a, b)
+                    if (psin > 1 + 2 * (abs(a) * dr + abs(b) * dz)) cycle
+                end if
+                cur = 0
+                mr = 0
+                mz = 0
+                do ib = 1, self%n_sub
+                    do ia = 1, self%n_sub
+                        r = self%r(i) + (ia - 0.5_dp) * dr / self%n_sub
+                        z = self%z(k) + (ib - 0.5_dp) * dz / self%n_sub
+                        if (.not. inside_region(self, r, z, tol + (dr + dz) / self%n_sub, &
+                            (dr + dz) / self%n_sub)) cycle
+                        call self%label(r, z, psin, a, b)
+                        ! Area fraction of the sub-cell below psi_N = 1 for a
+                        ! linear psi_N, so that the cut error is of second order.
+                        f = min(max(0.5_dp + (1 - psin) / max(abs(a) * dr + abs(b) * dz, &
+                            tiny(1.0_dp)) * self%n_sub, 0.0_dp), 1.0_dp)
+                        if (f == 0 .or. psin < 0) cycle
+                        j = f * current_density(self, r, z) * dr * dz / self%n_sub**2
+                        cur = cur + j
+                        mr = mr + j * r
+                        mz = mz + j * z
+                    end do
+                end do
+                if (cur == 0) cycle
+                n = n + 1
+                rbuf(n) = mr / cur
+                zbuf(n) = mz / cur
+                wbuf(n) = cur
+            end do
+        end do
+        rf = rbuf(:n)
+        zf = zbuf(:n)
+        wf = wbuf(:n)
+    end subroutine cell_filaments
+
+    logical function inside_fine(self, r, z, tol) result(in)
+        !! Inside the plasma: psi_N < 1 within the region of inside_region.
+        type(geqdsk_plasma_t), intent(in) :: self
+        real(dp), intent(in) :: r, z, tol
+        real(dp) :: psin, a, b
+        call self%label(r, z, psin, a, b)
+        in = psin >= 0 .and. psin < 1
+        if (in) in = inside_region(self, r, z, tol, 0.0_dp)
+    end function inside_fine
+
+    logical function inside_region(self, r, z, tol, skip) result(in)
+        !! Inside the polygon of the last closed surface, or within tol of it and
+        !! connected to the axis. psi_N then decides near the boundary, so the
+        !! chords and the rounded X-point corner of a coarse polygon cut off no
+        !! plasma.
+        type(geqdsk_plasma_t), intent(in) :: self
+        real(dp), intent(in) :: r, z, tol, skip
+        real(dp) :: t, d, er, ez
+        integer :: i, j
+        in = polygon_inside(self, r, z)
+        if (in) return
+        j = size(self%rb)
+        do i = 1, size(self%rb)
+            er = self%rb(i) - self%rb(j)
+            ez = self%zb(i) - self%zb(j)
+            t = min(max(((r - self%rb(j)) * er + (z - self%zb(j)) * ez) / max(er**2 + ez**2, &
+                tiny(1.0_dp)), 0.0_dp), 1.0_dp)
+            d = hypot(r - self%rb(j) - t * er, z - self%zb(j) - t * ez)
+            if (d < tol) then
+                in = connected_to_axis(self, r, z, skip)
+                return
+            end if
+            j = i
+        end do
+    end function inside_region
+
+    logical function connected_to_axis(self, r, z, skip) result(in)
+        !! The straight path to the magnetic axis stays below psi_N = 1. A point
+        !! of the private flux region below an X-point crosses the separatrix
+        !! on its way to the axis, possibly close to the X-point, where psi_N
+        !! exceeds 1 only on a short piece. The largest sample is therefore
+        !! refined by golden-section search. The first skip [m] of the path is
+        !! not tested, so that points just outside the boundary keep their
+        !! sub-cell area fraction.
+        type(geqdsk_plasma_t), intent(in) :: self
+        real(dp), intent(in) :: r, z, skip
+        integer, parameter :: n = 64
+        real(dp), parameter :: c = (sqrt(5.0_dp) - 1) / 2
+        real(dp) :: f(n - 1), lo, hi, t1, t2, f1, f2, t0
+        integer :: k, km, it
+        t0 = min(skip / max(hypot(self%r_axis - r, self%z_axis - z), tiny(1.0_dp)), 0.5_dp)
+        do k = 1, n - 1
+            f(k) = path_label(t0 + (1 - t0) * real(k, dp) / n)
+        end do
+        in = .false.
+        if (maxval(f) >= 1) return
+        km = maxloc(f, 1)
+        lo = t0 + (1 - t0) * real(km - 1, dp) / n
+        hi = t0 + (1 - t0) * real(km + 1, dp) / n
+        t1 = hi - c * (hi - lo)
+        t2 = lo + c * (hi - lo)
+        f1 = path_label(t1)
+        f2 = path_label(t2)
+        do it = 1, 40
+            if (max(f1, f2) >= 1) return
+            if (f1 > f2) then
+                hi = t2
+                t2 = t1
+                f2 = f1
+                t1 = hi - c * (hi - lo)
+                f1 = path_label(t1)
+            else
+                lo = t1
+                t1 = t2
+                f1 = f2
+                t2 = lo + c * (hi - lo)
+                f2 = path_label(t2)
+            end if
+        end do
+        in = .true.
+    contains
+        real(dp) function path_label(t)
+            real(dp), intent(in) :: t
+            real(dp) :: a, b
+            call self%label(r + t * (self%r_axis - r), z + t * (self%z_axis - z), path_label, a, b)
+        end function path_label
+    end function connected_to_axis
+
+    logical function polygon_inside(self, r, z) result(in)
+        type(geqdsk_plasma_t), intent(in) :: self
+        real(dp), intent(in) :: r, z
+        integer :: i, j
+        in = .false.
+        j = size(self%rb)
+        do i = 1, size(self%rb)
+            if ((self%zb(i) > z) .neqv. (self%zb(j) > z)) then
+                if (r < self%rb(i) + (z - self%zb(i)) * (self%rb(j) - self%rb(i)) &
+                    / (self%zb(j) - self%zb(i))) in = .not. in
+            end if
+            j = i
+        end do
+    end function polygon_inside
+
+    real(dp) function current_density(self, r, z) result(j)
+        !! j_phi = R p'(psi) + F F'(psi) / (mu0 R) [A/m^2].
+        type(geqdsk_plasma_t), intent(in) :: self
+        real(dp), intent(in) :: r, z
+        real(dp) :: psin, a, b, y(3)
+        call self%label(r, z, psin, a, b)
+        call evaluate_batch_splines_1d(self%profile_spline, min(max(psin, 0.0_dp), 1.0_dp), y)
+        j = r * y(1) + y(2) / (mu0 * r)
+    end function current_density
 
 end module tiago_geqdsk_plasma

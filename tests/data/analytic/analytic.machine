@@ -1,0 +1,9 @@
+# sensors of tiago_geqdsk_cells, tests/analytic/generate.py
+flux FL1 2.39 0.0
+flux FL2 1.65 1.24
+flux FL3 0.91 0.0
+flux FL4 1.65 -1.24
+pickup BP1 2.31 0.0 90.0 0 1
+pickup BP2 1.65 1.14 0.0 0 1
+pickup BP3 0.99 0.0 90.0 0 1
+pickup BP4 1.65 -1.14 0.0 0 1

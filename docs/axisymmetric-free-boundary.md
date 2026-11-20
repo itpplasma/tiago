@@ -155,6 +155,28 @@ plasma differs from the Green's-function sum of its own current by a nearly
 constant 2.6e-4 Wb/rad at 65 and at 129 grid points. This shifts its flux-loop
 values by about 1 % and leaves its fields unchanged.
 
+### Cell quadrature for continuous currents
+
+The integral in (3) over grid nodes is exact for a provider whose current lives
+on the nodes, as in FreeGS and FreeGSNKE. For a continuous current (an analytic
+equilibrium, CHEASE) its error is of the order of the cells the boundary cuts:
+on the generic tokamak of the `tests/analytic` fixtures the plasma part of flux
+loops and pickups is off by `1e-3` at 65 x 65 to 129 x 129 points. With
+`cell_quadrature = .true.` TIAGO instead integrates `j_phi` with 2 x 2 Gauss
+points in each cell inside the plasma, and in each cell the boundary cuts with
+`n_sub x n_sub` sub-cells (default 16), each weighted with its area fraction
+below `psi_N = 1` for a linear `psi_N`. Near the boundary `psi_N` decides
+whether a point is plasma, and the last closed surface polygon only excludes
+the private flux region: a point within one polygon segment of it counts as
+plasma when its straight path to the magnetic axis stays below `psi_N = 1`.
+
+The tests `tiago_geqdsk_cells_limited` and `tiago_geqdsk_cells_xpoint` compare
+the plasma current and eight sensors with Gauss quadrature of the exact current
+density of Cerfon–Freidberg equilibria (Phys. Plasmas 17, 032502 (2010);
+`tests/analytic/generate.py`): a limited case at 65 x 65 to `1e-5` and a single
+null at 129 x 129 to `5e-5` of the largest signal. The error falls to `1e-7`
+at 257 x 257 points in both topologies.
+
 ### FreeGSNKE provider
 
 FreeGS's Picard iteration does not hold an elongated plasma at fixed coil

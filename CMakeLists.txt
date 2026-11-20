@@ -666,6 +666,17 @@ add_test(NAME tiago_geqdsk_plasma COMMAND $<TARGET_FILE:test_geqdsk_plasma>
     ${TIAGO_SOURCE_DIR}/tests/data/freegs/test_tokamak.machine
     ${TIAGO_SOURCE_DIR}/tests/data/freegs/test_tokamak_freegs.csv)
 
+add_executable(test_geqdsk_cells tests/test_geqdsk_cells.f90)
+target_link_libraries(test_geqdsk_cells PRIVATE tiago_solver)
+add_test(NAME tiago_geqdsk_cells_limited COMMAND $<TARGET_FILE:test_geqdsk_cells>
+    ${TIAGO_SOURCE_DIR}/tests/data/analytic/e2.geqdsk
+    ${TIAGO_SOURCE_DIR}/tests/data/analytic/analytic.machine
+    ${TIAGO_SOURCE_DIR}/tests/data/analytic/e2_reference.csv 1e-5)
+add_test(NAME tiago_geqdsk_cells_xpoint COMMAND $<TARGET_FILE:test_geqdsk_cells>
+    ${TIAGO_SOURCE_DIR}/tests/data/analytic/e3.geqdsk
+    ${TIAGO_SOURCE_DIR}/tests/data/analytic/analytic.machine
+    ${TIAGO_SOURCE_DIR}/tests/data/analytic/e3_reference.csv 5e-5)
+
 # Free-boundary recovery through the FreeGSNKE provider, with a Python that
 # imports freegsnke (pip install freegsnke).
 set(TIAGO_FREEGSNKE_PYTHON "" CACHE FILEPATH "Python with FreeGSNKE for the provider test")
