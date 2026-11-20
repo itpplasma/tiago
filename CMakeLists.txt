@@ -309,6 +309,7 @@ add_library(tiago_inference STATIC
     src/generated/field_line_rhs.f90
     src/generated/grid_field_cartesian.f90
     src/inference/field_line_label.f90
+    src/inference/source_line_field.f90
     src/inference/axisym_free_boundary.f90)
 set_target_properties(tiago_inference PROPERTIES
     Fortran_STANDARD 2018
@@ -340,6 +341,10 @@ target_link_libraries(tiago_synthetic PUBLIC tiago_inference tiago_solver
 add_executable(tiago_synth src/cli/tiago_synth.f90)
 target_link_libraries(tiago_synth PRIVATE tiago_synthetic)
 add_executable(tiago_field_line_labels src/cli/tiago_field_line_labels.f90)
+set_source_files_properties(src/cli/tiago_field_line_labels.f90 PROPERTIES Fortran_PREPROCESS ON)
+if(TIAGO_ENABLE_SPECTRE)
+    target_compile_definitions(tiago_field_line_labels PRIVATE TIAGO_ENABLE_SPECTRE)
+endif()
 target_link_libraries(tiago_field_line_labels PRIVATE tiago_synthetic)
 add_executable(tiago_profile_points src/cli/tiago_profile_points.f90)
 target_link_libraries(tiago_profile_points PRIVATE tiago_synthetic)
@@ -578,6 +583,13 @@ if(TIAGO_ENABLE_SPECTRE)
         ${TIAGO_SOURCE_DIR}/tests/data/spectre/qa_vmec_cartesian.dat)
     set_tests_properties(tiago_mse_field_cli PROPERTIES
         FIXTURES_REQUIRED qa_nested TIMEOUT 120)
+    add_test(NAME tiago_field_line_labels_spectre COMMAND ${Python3_EXECUTABLE}
+        ${TIAGO_SOURCE_DIR}/tests/check_field_line_labels_spectre.py
+        $<TARGET_FILE:tiago_field_line_labels> ${nested_wout}
+        ${TIAGO_SOURCE_DIR}/tests/data/spectre/qa_nested.h5
+        ${TIAGO_SOURCE_DIR}/tests/data/spectre/qa_vmec_cartesian.dat)
+    set_tests_properties(tiago_field_line_labels_spectre PROPERTIES
+        FIXTURES_REQUIRED qa_nested TIMEOUT 300)
 else()
     add_test(NAME tiago_cli_spectre_disabled COMMAND $<TARGET_FILE:tiago_vacuum_cli>
         --plasma-spectre absent.h5 --bprobes absent.diagno)

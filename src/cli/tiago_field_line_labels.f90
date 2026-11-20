@@ -5,7 +5,8 @@ program tiago_field_line_labels
     !! Usage: tiago_field_line_labels input.nml
     !!
     !! &field_line_labels
-    !!   mgrid = 'mgrid.nc'          ! makegrid file
+    !!   mgrid = 'mgrid.nc'          ! makegrid file, or instead
+    !!   spectre = 'spectre.h5'      ! interior total field of a SPECTRE state
     !!   currents = 1.0, 1.0, ...    ! one current per coil group
     !!   scan_group = 0              ! group whose current is replaced by each
     !!   scan_currents = 0.0, 1000.0 !   scan value; 0: a single case
@@ -18,6 +19,10 @@ program tiago_field_line_labels
     use, intrinsic :: iso_fortran_env, only: dp => real64, error_unit, output_unit
     use, intrinsic :: ieee_arithmetic, only: ieee_is_finite
     use tiago_field_line_label, only: grid_field_t, line_labels_t, compute_labels => field_line_labels
+    use tiago_source_line_field, only: source_line_field_t
+#ifdef TIAGO_ENABLE_SPECTRE
+    use tiago_spectre_source, only: spectre_source_t
+#endif
     use tiago_vmec_state, only: vmec_state_t
     use tiago_sha256, only: sha256_file
     use tiago_revision, only: tiago_source_revision
@@ -25,11 +30,11 @@ program tiago_field_line_labels
 
     integer, parameter :: max_groups = 128
     real(dp), parameter :: unset = -huge(1.0_dp), pi = acos(-1.0_dp)
-    character(len=1024) :: mgrid = '', wout = '', radii = '', output = 'labels.json', nml
+    character(len=1024) :: mgrid = '', spectre = '', wout = '', radii = '', output = 'labels.json', nml
     real(dp) :: currents(max_groups) = unset, scan_currents(max_groups) = unset
     real(dp) :: phi_deg = 0.0_dp
     integer :: scan_group = 0, turns = 200, steps = 720
-    namelist /field_line_labels/ mgrid, currents, scan_group, scan_currents, wout, radii, &
+    namelist /field_line_labels/ mgrid, spectre, currents, scan_group, scan_currents, wout, radii, &
         phi_deg, turns, steps, output
 
     type(vmec_state_t) :: chart
@@ -62,6 +67,9 @@ program tiago_field_line_labels
         scan = scan_currents(1:nscan)
     end if
     if (turns < 1 .or. steps < 4) call fail('turns >= 1 and steps >= 4 required')
+    if ((len_trim(mgrid) > 0) .eqv. (len_trim(spectre) > 0)) &
+        call fail('give exactly one of mgrid and spectre')
+    if (len_trim(spectre) > 0 .and. scan_group > 0) call fail('spectre has no coil scan')
 
     call chart%load(trim(wout), ierr, message)
     if (ierr /= 0) call fail(message)
@@ -70,6 +78,12 @@ program tiago_field_line_labels
     z = 0.0_dp
 
     allocate(cases(size(scan)))
+    if (len_trim(spectre) > 0) then
+        call spectre_labels(cases(1))
+        call system_clock(t1)
+        call write_json(trim(output), real(t1 - t0, dp) / real(rate, dp))
+        stop
+    end if
     do k = 1, size(scan)
         if (scan_group > 0) group(scan_group) = scan(k)
         allocate(field)
@@ -87,6 +101,22 @@ program tiago_field_line_labels
     call write_json(trim(output), real(t1 - t0, dp) / real(rate, dp))
 
 contains
+
+    subroutine spectre_labels(out)
+        type(line_labels_t), intent(out) :: out
+#ifdef TIAGO_ENABLE_SPECTRE
+        type(spectre_source_t), target :: source
+        type(source_line_field_t) :: line_field
+
+        ! The casing grid is only used for exterior fields; keep it small.
+        call source%init(trim(spectre), 8, 8)
+        line_field%source => source
+        call compute_labels(line_field, chart, r, z, phi_deg * pi / 180.0_dp, turns, steps, out)
+#else
+        out%lost = [logical ::]
+        call fail('spectre requires a build with TIAGO_ENABLE_SPECTRE=ON')
+#endif
+    end subroutine spectre_labels
 
     subroutine fail(text)
         character(len=*), intent(in) :: text
@@ -200,7 +230,8 @@ contains
             if (k < size(scan)) write(u, '(A)') ','
         end do
         write(u, '(A)') '],'
-        write(u, '(A)') '"inputs_sha256": {"'//trim(mgrid)//'": "'//sha256_file(trim(mgrid))// &
+        write(u, '(A)') '"inputs_sha256": {"'//trim(mgrid)//trim(spectre)//'": "'// &
+            sha256_file(trim(mgrid)//trim(spectre))// &
             '", "'//trim(wout)//'": "'//sha256_file(trim(wout))//'", "'//trim(radii)// &
             '": "'//sha256_file(trim(radii))//'"},'
         write(u, '(A)') '"wall_seconds": '//num(seconds)

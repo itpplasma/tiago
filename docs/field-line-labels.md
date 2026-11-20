@@ -31,6 +31,9 @@ transport.
   a makegrid file through the netCDF C library and sums the coil groups
   with the given currents (in raw mode divided by `raw_coil_cur`). Lines
   closer than `margin` (default 2 cm) to the R or Z edge of the grid are lost.
+- `source_line_field_t` (`tiago_source_line_field`): the interior total
+  field of a `plasma_field_source_t`, for example a SPECTRE state; a line is
+  lost where the source cannot locate the point.
 - `trace_returns`: classical fourth-order Runge-Kutta in phi, with the
   generated direction dR/dphi = R B_R / B_phi, dZ/dphi = R B_Z / B_phi
   (`gen/gen_field_line.f90`).
@@ -66,6 +69,10 @@ tiago_field_line_labels input.nml
 /
 ```
 
+With `spectre = 'state.h5'` instead of `mgrid`, the lines are traced in the
+interior field of a SPECTRE state (build with `TIAGO_ENABLE_SPECTRE=ON`);
+there is no coil scan, so `currents` and `scan_group` are not used.
+
 The JSON output holds `R_m`, `s_own` (s of the start points), one entry per
 scan current in `cases` (`current_A`, `label`, `label_spread`, `returns`,
 `lost`; `null` where undefined), the TIAGO revision and the SHA-256 of the
@@ -90,3 +97,7 @@ iota = 1/2. The chart is the circular state, s = r^2 / a^2.
   to 1.3e-6 relative to B_phi and its labels to 6e-8.
 - An mgrid with two coil groups, read with currents (2, -0.5), reproduces
   the weighted sum at the grid nodes, also three field periods away.
+- On the nested SPECTRE state `qa_nested.h5`, whose interfaces are surfaces of
+  the VMEC chart, 16 lines from s = 0.04 to 0.96 stay inside and keep their
+  label within 5e-4 of s at their start (20 turns); with B_phi of the wrong
+  sign every line is lost (`tests/check_field_line_labels_spectre.py`).
