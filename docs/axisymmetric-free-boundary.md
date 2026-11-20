@@ -256,7 +256,15 @@ stays fixed to remove that common scale. The parameters `PPRIME(k)` and
 the pressure `p(psi_N)` [Pa] from the G-EQDSK, and `j_phi` [A/m^2] at the
 outboard point of `psi_N` on the horizontal line through the axis. The second
 serves as prior or pseudo-measurement of the edge current, for example a
-bootstrap estimate.
+bootstrap estimate. MSE pi-polarization angles ([MSE](mse.md)) follow as
+further rows, with the field of the G-EQDSK
+
+```text
+B_R = -(1/R) dpsi/dZ,   B_Z = (1/R) dpsi/dR,   B_phi = h |F(psi_N)| / R,   h = sign(F I_P),   (4a)
+```
+
+with `F` of the boundary outside the plasma. The helicity `h` is read from the
+file, where `F` and `I_P` share the toroidal direction in every COCOS.
 
 FreeGSNKE's Newton-Krylov solve does not converge from its default initial
 flux for every request. A solve therefore starts from a fixed plasma flux
@@ -282,7 +290,7 @@ stay at zero.
 
 `tiago_axisym_fit input.nml` runs the whole fit from a namelist: machine file,
 provider command, measurements by sensor label plus `pressure@x` and `jphi@x`
-rows, coil currents, knots, parameters with scales and Gaussian priors. It
+rows, MSE channels, coil currents, knots, parameters with scales and Gaussian priors. It
 writes the MAP with local standard deviations, measured and predicted
 signals, the MAP G-EQDSK, G-EQDSKs of Laplace draws re-solved by the provider
 and the outboard `j_phi` at chosen `psi_N` for the MAP and every draw. With

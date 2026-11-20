@@ -28,6 +28,9 @@ module tiago_geqdsk_plasma
         real(dp) :: r_axis = 0, z_axis = 0, current = 0 !! [m], file current [A]
         real(dp) :: sigma = 1 !! sign of the psi conversion
         integer :: exponent = 0 !! e of the 2 pi factor
+        !> sign(F I_P) of the file, which no COCOS changes: B_phi = helicity |F| / R
+        !> with the current along +phi.
+        real(dp) :: helicity = 1
         real(dp), allocatable :: phi(:) !! toroidal flux on psi_N [Wb]
         real(dp), allocatable :: jphi(:, :) !! provider's j_phi on the grid [A/m^2]
         !> Integrate j_phi over grid cells instead of summing it at the nodes:
@@ -47,6 +50,7 @@ module tiago_geqdsk_plasma
         procedure :: filaments => plasma_filaments
         procedure :: toroidal_flux => plasma_toroidal_flux
         procedure :: modb => plasma_modb
+        procedure :: field => plasma_field
         procedure :: pressure => plasma_pressure
         procedure :: midplane_jphi => plasma_midplane_jphi
     end type geqdsk_plasma_t
@@ -109,6 +113,7 @@ contains
             return
         end if
         eq%sigma = sign(1.0_dp, raw * eq%current)
+        eq%helicity = sign(1.0_dp, g%fpol(g%nw) * eq%current)
         eq%psi = eq%sigma * eq%psi / (2 * pi)**eq%exponent
         eq%psi_axis = eq%sigma * eq%psi_axis / (2 * pi)**eq%exponent
         eq%psi_b = eq%sigma * eq%psi_b / (2 * pi)**eq%exponent
@@ -240,6 +245,19 @@ contains
         dpsi = self%psi_b - self%psi_axis
         b = sqrt((a**2 + c**2) * dpsi**2 + y(4)**2) / r
     end function plasma_modb
+
+    subroutine plasma_field(self, r, z, b)
+        !! B = (B_R, B_phi, B_Z) [T] with B_R = -dpsi/dZ / R, B_Z = dpsi/dR / R,
+        !! B_phi = F / R, F of the boundary outside the plasma.
+        class(geqdsk_plasma_t), intent(in) :: self
+        real(dp), intent(in) :: r, z
+        real(dp), intent(out) :: b(3)
+        real(dp) :: psin, a, c, y(5), dpsi
+        call self%label(r, z, psin, a, c)
+        call evaluate_batch_splines_1d(self%profile_spline, min(max(psin, 0.0_dp), 1.0_dp), y)
+        dpsi = self%psi_b - self%psi_axis
+        b = [-c * dpsi, self%helicity * y(4), a * dpsi] / r
+    end subroutine plasma_field
 
     real(dp) function plasma_rho_tor(self, psin) result(rho)
         !! sqrt(Phi(psi_N) / Phi(1)) of plasma_toroidal_flux, psi_N in [0, 1].
