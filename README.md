@@ -50,7 +50,7 @@ Status: research code under active development; interfaces may change.
 Requirements: CMake 3.24 or newer, Fortran and C compilers, netCDF-C,
 libcurl, and Python 3 for the test suite. The linear Gaussian inference
 reference test additionally requires NumPy; the learned-signal correlation test
-also requires SciPy. libneo, fortnum and json-fortran are
+also requires SciPy. libneo, fortnum, fortinfer, fortgp and json-fortran are
 fetched at pinned commits.
 
 ```bash

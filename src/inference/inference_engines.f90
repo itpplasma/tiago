@@ -6,7 +6,7 @@ module tiago_inference_engines
     !!   laplace         local covariance and normalized Laplace evidence;
     !!                   observed curvature for hierarchical AR(1) profiles,
     !!                   Gauss-Newton curvature otherwise;
-    !!   sample_nuts     fortnum NUTS with the Laplace covariance as metric and
+    !!   sample_nuts     fortinfer NUTS with the Laplace covariance as metric and
     !!                   gradients -J^T r from the implicit-adjoint chain;
     !!   psis_validate   importance sampling from the Laplace Gaussian with
     !!                   Pareto smoothing (k-hat) and the importance-weighted
@@ -15,8 +15,8 @@ module tiago_inference_engines
     use, intrinsic :: ieee_arithmetic, only: ieee_is_finite
     use fortnum_status, only: fortnum_status_t, status_set, FORTNUM_OK, FORTNUM_DOMAIN_ERROR
     use fortnum_rng, only: rng_t, rng_seed, rng_normal
-    use fortnum_nuts, only: nuts_options_t, nuts_result_t, nuts_sample
-    use fortnum_psis, only: psis_smooth
+    use fortinfer_nuts, only: nuts_options_t, nuts_result_t, nuts_sample
+    use fortinfer_psis, only: psis_smooth
     use tiago_local_posterior, only: local_posterior_t
     implicit none
     private
@@ -232,7 +232,7 @@ contains
     end subroutine
 
     subroutine log_posterior(n, x, f, g, context, status)
-        !! fortnum NUTS callback: f = -|r|^2 / 2, g = -J^T r.
+        !! fortinfer NUTS callback: f = -|r|^2 / 2, g = -J^T r.
         integer, intent(in) :: n
         real(dp), intent(in) :: x(n)
         real(dp), intent(out) :: f, g(n)

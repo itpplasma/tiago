@@ -54,7 +54,7 @@ module tiago_joint_model
     use tiago_calibrated_tape, only: calibrated_tape_t
     use tiago_ece_state_medium, only: state_medium_t
     use fortnum_status, only: fortnum_status_t
-    use fortnum_multifidelity, only: autoregressive_gp_t
+    use fortgp_multifidelity, only: autoregressive_gp_t
     use tiago_calibration_campaign, only: constrain_discrepancy
     use tiago_calibration, only: calibration_prior_t
     use tiago_integrator_signal, only: integrator_signal

@@ -155,7 +155,7 @@ surfaces, so the solver's pressure cotangents apply directly.
 
 `tiago_inference_engines` provides the MAP (Levenberg-Marquardt; VMEC++
 hot-restarts from the previous equilibrium), the Laplace covariance and log
-evidence, NUTS from fortnum with the Laplace covariance as dense metric, and
+evidence, NUTS from fortinfer with the Laplace covariance as dense metric, and
 Pareto-smoothed importance sampling from the Laplace Gaussian (k-hat).
 `tiago_infer` runs the synthetic study (truth drawn from the prior, synthetic
 noise, MAP, Laplace, PSIS, NUTS) and writes CSV files for

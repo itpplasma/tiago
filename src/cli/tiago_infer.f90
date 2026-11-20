@@ -27,7 +27,7 @@ program tiago_infer
     use tiago_local_mixture, only: mode_start_t, mixture_options_t, local_mixture_t, multi_start_map
     use fortnum_rng, only: rng_t, rng_seed, rng_normal, rng_split
     use fortnum_status, only: fortnum_status_t, FORTNUM_OK
-    use fortnum_nuts, only: nuts_options_t, nuts_result_t
+    use fortinfer_nuts, only: nuts_options_t, nuts_result_t
     implicit none
 
     integer, parameter :: maxk = 32, ns_out = 41, surface_draws = 40
