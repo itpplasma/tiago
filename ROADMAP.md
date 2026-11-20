@@ -156,9 +156,8 @@ Order, by access to raw data and diagnostic geometry:
 Built-in consistency checks: diamagnetic energy against the kinetic energy
 from the electron and ion density and temperature profiles; interferometer against the Thomson density scale; an
 independently calibrated Thomson density held out from the fit; calibration
-posteriors compared across campaigns to detect drift. Cross-check against the
-published integrated-data-analysis frameworks Minerva (W7-X) and IDA (ASDEX
-Upgrade).
+posteriors compared across campaigns to detect drift. Cross-check against
+published integrated-data-analysis results.
 
 ## T6 — advanced posterior methods only on evidence
 

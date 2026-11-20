@@ -6,7 +6,7 @@ program test_kinetic_profiles
     use, intrinsic :: iso_fortran_env, only: dp => real64, error_unit
     use, intrinsic :: ieee_arithmetic, only: ieee_is_finite
     use tiago_kinetic_profiles, only: kinetic_profiles_t, P_NE, P_TE, P_TI, P_ZEFF, P_FAST, &
-        N_PROFILES, elementary_charge, KERNEL_MINERVA
+        N_PROFILES, elementary_charge, KERNEL_GIBBS
     use tiago_kinetic_pressure, only: kinetic_pressure
     implicit none
     type(kinetic_profiles_t) :: kp
@@ -99,7 +99,7 @@ program test_kinetic_profiles
     ! (kernel scales 0.3 core / 0.15 edge, sigma_f = 1): its prior cost |z|^2
     ! lies below the 99.9 % chi^2 quantile for 8 degrees of freedom (26.1).
     ! An exp-gradient prior would give this profile zero density. Sharp-cornered
-    ! The squared-exponential (Minerva) kernel puts it far outside (|z|^2 ~ 130).
+    ! The squared-exponential Gibbs kernel puts it far outside (|z|^2 ~ 130).
     call kp%set_profile(P_TE, [(te_ramp(kp%greville(i), .false.), i = 1, kp%ncoef)], &
         .true., 1.0_dp, 0.3_dp, 0.15_dp, 0.6_dp, 0.2_dp)
     z = 0.0_dp
@@ -108,7 +108,7 @@ program test_kinetic_profiles
     call expect(kp%ncoef == 8, 'eight coefficients for six breakpoints')
     call expect(lhs < 26.1_dp, 'flattened profile inside the Matern-5/2 prior bulk')
     call kp%set_profile(P_TE, [(te_ramp(kp%greville(i), .false.), i = 1, kp%ncoef)], &
-        .true., 1.0_dp, 0.3_dp, 0.15_dp, 0.6_dp, 0.2_dp, KERNEL_MINERVA)
+        .true., 1.0_dp, 0.3_dp, 0.15_dp, 0.6_dp, 0.2_dp, KERNEL_GIBBS)
     z = 0.0_dp
     call kp%fit_latent(P_TE, kp%greville, [(te_ramp(kp%greville(i), .true.), i = 1, kp%ncoef)], z)
     rhs = sum(z(kp%p(P_TE)%offset + 1:kp%p(P_TE)%offset + kp%ncoef)**2)

@@ -13,12 +13,12 @@ module tiago_kinetic_profiles
     !! profiles) or Zeff = 1 + (z_imp - 1) / (1 + exp(-u)). The coefficients
     !! have a Gaussian-process prior evaluated at the Greville abscissae,
     !! c = m + L z with z ~ N(0, I) the latent variables and L L^T the kernel
-    !! matrix of the Minerva/surroBIER non-stationary Gibbs kernel
+    !! matrix of the non-stationary Gibbs kernel (Gibbs 1997)
     !!
     !!     k(s, s') = sigma_f^2 sqrt(2 l l' / (l^2 + l'^2)) exp(-(s - s')^2 / (l^2 + l'^2)),
     !!     l(s) = (l_core + l_edge) / 2 - (l_core - l_edge) / 2 tanh((s - s0) / sw).
     !!
-    !! (kernel = KERNEL_MINERVA), or its Matern-nu analogue (Paciorek and
+    !! (kernel = KERNEL_GIBBS), or its Matern-nu analogue (Paciorek and
     !! Schervish 2004) with the same prefactor and length scale and
     !! r = |s - s'| / sqrt((l^2 + l'^2) / 2):
     !!     nu = 3/2: (1 + sqrt(3) r) exp(-sqrt(3) r),
@@ -31,9 +31,8 @@ module tiago_kinetic_profiles
     !! f(1) exp(-(s - 1) / sol_decay) and Zeff as Zeff(1), so predictions stay
     !! continuous and differentiable when a point crosses the boundary.
     !!
-    !! The prior acts on the log value, not on the log gradient as in
-    !! surroBIER's PCA prior, so flat regions (plateaus from islands) have
-    !! non-zero prior density. A profile that is not latent keeps fixed
+    !! The prior acts on the log value, not on the log gradient, so flat
+    !! regions (plateaus from islands) have non-zero prior density. A profile that is not latent keeps fixed
     !! coefficients c = m. The optional AR(1) Te prior instead acts on
     !! physical coefficients; see docs/multifidelity-profile.md.
     use, intrinsic :: iso_fortran_env, only: dp => real64
@@ -50,7 +49,7 @@ module tiago_kinetic_profiles
 
     integer, parameter, public :: P_NE = 1, P_TE = 2, P_TI = 3, P_ZEFF = 4, P_FAST = 5
     integer, parameter, public :: N_PROFILES = 5
-    integer, parameter, public :: KERNEL_MINERVA = 0, KERNEL_MATERN32 = 1, KERNEL_MATERN52 = 2
+    integer, parameter, public :: KERNEL_GIBBS = 0, KERNEL_MATERN32 = 1, KERNEL_MATERN52 = 2
     real(dp), parameter, public :: elementary_charge = 1.602176634e-19_dp
     character(len=5), parameter, public :: profile_names(N_PROFILES) = &
         ['ne   ', 'Te   ', 'Ti   ', 'Zeff ', 'pfast']
@@ -222,7 +221,7 @@ contains
         k = sigma_f**2 * sqrt(2.0_dp * la * lb / (la**2 + lb**2))
         r = abs(a - b) / sqrt(0.5_dp * (la**2 + lb**2))
         select case (kind)
-        case (KERNEL_MINERVA)
+        case (KERNEL_GIBBS)
             k = k * exp(-0.5_dp * r**2)
         case (KERNEL_MATERN32)
             k = k * (1.0_dp + sqrt(3.0_dp) * r) * exp(-sqrt(3.0_dp) * r)
