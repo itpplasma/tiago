@@ -229,6 +229,8 @@ add_library(tiago_inference STATIC
     src/generated/medium_pullback.f90
     src/generated/density_label_jet.f90
     src/inference/state_sampler.f90
+    src/inference/geqdsk_state.f90
+    src/inference/profile_posterior.f90
     src/generated/vmec_product_pair.f90
     src/inference/vmecpp_state.f90
     src/inference/thomson_scattering.f90
@@ -665,6 +667,11 @@ add_test(NAME tiago_geqdsk_plasma COMMAND $<TARGET_FILE:test_geqdsk_plasma>
     ${TIAGO_SOURCE_DIR}/tests/data/freegs/test_tokamak.geqdsk
     ${TIAGO_SOURCE_DIR}/tests/data/freegs/test_tokamak.machine
     ${TIAGO_SOURCE_DIR}/tests/data/freegs/test_tokamak_freegs.csv)
+
+add_executable(test_profile_posterior tests/test_profile_posterior.f90)
+target_link_libraries(test_profile_posterior PRIVATE tiago_inference)
+add_test(NAME tiago_profile_posterior COMMAND $<TARGET_FILE:test_profile_posterior>
+    ${TIAGO_SOURCE_DIR}/tests/data/analytic/e2.geqdsk)
 
 add_executable(test_geqdsk_cells tests/test_geqdsk_cells.f90)
 target_link_libraries(test_geqdsk_cells PRIVATE tiago_solver)

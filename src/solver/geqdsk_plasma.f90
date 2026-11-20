@@ -39,12 +39,14 @@ module tiago_geqdsk_plasma
         logical :: cell_quadrature = .false.
         integer :: n_sub = 16
         type(BatchSplineData2D) :: psi_spline
-        type(BatchSplineData1D) :: profile_spline !! p', F F', |q| on psi_N
+        type(BatchSplineData1D) :: profile_spline !! p', F F', |q|, |F| on psi_N
     contains
         procedure :: label => plasma_label
         procedure :: rho_tor => plasma_rho_tor
         procedure :: inside => plasma_inside
         procedure :: filaments => plasma_filaments
+        procedure :: toroidal_flux => plasma_toroidal_flux
+        procedure :: modb => plasma_modb
     end type geqdsk_plasma_t
 
     public :: read_geqdsk_plasma
@@ -78,10 +80,11 @@ contains
         eq%current = g%current / (0.1_dp * 2.99792458e10_dp)
         eq%rb = g%rbbbs * cm
         eq%zb = g%zbbbs * cm
-        allocate(prof(g%nw, 3))
+        allocate(prof(g%nw, 4))
         prof(:, 1) = g%pprime * barye / maxwell
         prof(:, 2) = g%ffprim * gauss
         prof(:, 3) = abs(g%qpsi)
+        prof(:, 4) = abs(g%fpol) * gauss * cm
         call construct_batch_splines_1d(0.0_dp, 1.0_dp, prof, 3, .false., eq%profile_spline)
         call construct_batch_splines_2d([eq%r(1), eq%z(1)], [eq%r(eq%nw), eq%z(eq%nh)], &
             reshape(eq%psi, [eq%nw, eq%nh, 1]), [3, 3], [.false., .false.], eq%psi_spline)
@@ -144,7 +147,7 @@ contains
     real(dp) function q_at(eq, x)
         type(geqdsk_plasma_t), intent(in) :: eq
         real(dp), intent(in) :: x
-        real(dp) :: y(3)
+        real(dp) :: y(4)
         call evaluate_batch_splines_1d(eq%profile_spline, x, y)
         q_at = y(3)
     end function q_at
@@ -162,16 +165,54 @@ contains
         dpsin_dz = dy(2, 1) * scale
     end subroutine plasma_label
 
-    real(dp) function plasma_rho_tor(self, psin) result(rho)
-        !! sqrt(Phi(psi_N) / Phi(1)), linear in the tabulated Phi.
+    subroutine plasma_toroidal_flux(self, psin, s, ds_dpsin)
+        !! Normalized toroidal flux s = Phi(psi_N) / Phi(1): cubic Hermite
+        !! interpolation of the tabulated Phi with the slopes
+        !! dPhi/dpsi_N = 2 pi |psi_b - psi_axis| |q|, so that s and ds/dpsi_N
+        !! are consistent. Beyond psi_N = 1 s continues linearly with the slope
+        !! at the boundary, so that s > 1 outside the plasma.
         class(geqdsk_plasma_t), intent(in) :: self
         real(dp), intent(in) :: psin
-        real(dp) :: t, f
+        real(dp), intent(out) :: s, ds_dpsin
+        real(dp) :: t, h, x0, m0, m1, c, h00, h10, h01, h11
         integer :: i
-        t = min(max(psin, 0.0_dp), 1.0_dp) * (nflux - 1)
-        i = min(int(t) + 1, nflux - 1)
-        f = self%phi(i) + (t - (i - 1)) * (self%phi(i + 1) - self%phi(i))
-        rho = sqrt(f / self%phi(nflux))
+        c = 2 * pi * abs(self%psi_b - self%psi_axis)
+        h = 1.0_dp / (nflux - 1)
+        x0 = min(max(psin, 0.0_dp), 1.0_dp)
+        i = min(int(x0 / h) + 1, nflux - 1)
+        t = (x0 - (i - 1) * h) / h
+        m0 = c * q_at(self, (i - 1) * h) * h
+        m1 = c * q_at(self, i * h) * h
+        h00 = (1 + 2 * t) * (1 - t)**2
+        h10 = t * (1 - t)**2
+        h01 = t**2 * (3 - 2 * t)
+        h11 = t**2 * (t - 1)
+        s = (h00 * self%phi(i) + h10 * m0 + h01 * self%phi(i + 1) + h11 * m1) / self%phi(nflux)
+        ds_dpsin = (6 * t * (t - 1) * (self%phi(i) - self%phi(i + 1)) &
+            + (1 - 4 * t + 3 * t**2) * m0 + (3 * t**2 - 2 * t) * m1) / (h * self%phi(nflux))
+        if (psin > 1) s = 1 + (psin - 1) * ds_dpsin
+        if (psin < 0) s = psin * ds_dpsin
+    end subroutine plasma_toroidal_flux
+
+    real(dp) function plasma_modb(self, r, z) result(b)
+        !! |B| = sqrt(|grad psi|^2 + F^2) / R [T], with F of the boundary outside
+        !! the plasma.
+        class(geqdsk_plasma_t), intent(in) :: self
+        real(dp), intent(in) :: r, z
+        real(dp) :: psin, a, c, y(4), dpsi
+        call self%label(r, z, psin, a, c)
+        call evaluate_batch_splines_1d(self%profile_spline, min(max(psin, 0.0_dp), 1.0_dp), y)
+        dpsi = self%psi_b - self%psi_axis
+        b = sqrt((a**2 + c**2) * dpsi**2 + y(4)**2) / r
+    end function plasma_modb
+
+    real(dp) function plasma_rho_tor(self, psin) result(rho)
+        !! sqrt(Phi(psi_N) / Phi(1)) of plasma_toroidal_flux, psi_N in [0, 1].
+        class(geqdsk_plasma_t), intent(in) :: self
+        real(dp), intent(in) :: psin
+        real(dp) :: s, ds
+        call self%toroidal_flux(min(max(psin, 0.0_dp), 1.0_dp), s, ds)
+        rho = sqrt(max(s, 0.0_dp))
     end function plasma_rho_tor
 
     logical function plasma_inside(self, r, z) result(in)
@@ -199,7 +240,7 @@ contains
         !! j_phi = R p'(psi) + F F'(psi) / (mu0 R), or of the provider's j_phi.
         class(geqdsk_plasma_t), intent(in) :: self
         real(dp), allocatable, intent(out) :: rf(:), zf(:), wf(:)
-        real(dp) :: area, psin, a, b, y(3), rbuf(self%nw * self%nh), &
+        real(dp) :: area, psin, a, b, y(4), rbuf(self%nw * self%nh), &
             zbuf(self%nw * self%nh), wbuf(self%nw * self%nh)
         integer :: i, j, n
         area = (self%r(2) - self%r(1)) * (self%z(2) - self%z(1))
@@ -411,7 +452,7 @@ contains
         !! j_phi = R p'(psi) + F F'(psi) / (mu0 R) [A/m^2].
         type(geqdsk_plasma_t), intent(in) :: self
         real(dp), intent(in) :: r, z
-        real(dp) :: psin, a, b, y(3)
+        real(dp) :: psin, a, b, y(4)
         call self%label(r, z, psin, a, b)
         call evaluate_batch_splines_1d(self%profile_spline, min(max(psin, 0.0_dp), 1.0_dp), y)
         j = r * y(1) + y(2) / (mu0 * r)
