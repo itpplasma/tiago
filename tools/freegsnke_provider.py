@@ -13,11 +13,16 @@ scaled together to the plasma current. The solve starts from the plasma flux
 in the .npy file `initial` when given, otherwise from FreeGSNKE's default. OUTPUT is the G-EQDSK and
 OUTPUT.jphi the toroidal current density on its grid, R fastest [A/m^2], and
 OUTPUT.psi.npy the plasma flux on the grid, usable as `initial`.
-OUTPUT.status gets `converged`, `residual` and `provider` lines.
+OUTPUT.status gets `converged`, `residual` and `provider` lines. The solve
+runs in a child process; one that runs longer than `time_limit` seconds
+(default 600) is killed and reported with `converged 0` and `timed_out 1`,
+without a G-EQDSK.
 """
 import contextlib
 import importlib.metadata
 import io
+import os
+import subprocess
 import sys
 from pathlib import Path
 
@@ -148,5 +153,23 @@ def main(request_path, output):
         fh.write(f"provider freegsnke {importlib.metadata.version('freegsnke')}\n")
 
 
+def supervise(request_path, output):
+    # a Newton-Krylov solve can hang for hours without progress (sCluster),
+    # and a signal does not interrupt FreeGSNKE's long NumPy calls
+    limit = float(read_request(request_path).get("time_limit", 600))
+    try:
+        subprocess.run([sys.executable, "-I", __file__, request_path, output],
+                       env=dict(os.environ, TIAGO_PROVIDER_CHILD="1"), check=True, timeout=limit)
+    except subprocess.TimeoutExpired:
+        for suffix in ("", ".jphi", ".psi.npy"):
+            Path(output + suffix).unlink(missing_ok=True)
+        with open(output + ".status", "w") as fh:
+            fh.write("converged 0\ntimed_out 1\n")
+            fh.write(f"provider freegsnke {importlib.metadata.version('freegsnke')}\n")
+
+
 if __name__ == "__main__":
-    main(*sys.argv[1:3])
+    if os.environ.get("TIAGO_PROVIDER_CHILD"):
+        main(*sys.argv[1:3])
+    else:
+        supervise(*sys.argv[1:3])
