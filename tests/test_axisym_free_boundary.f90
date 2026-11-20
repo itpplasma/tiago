@@ -54,16 +54,19 @@ program test_axisym_free_boundary
     model%sigma(nflux + 1:nflux + npick) = 1.0e-4_dp
     model%sigma(nflux + npick + 1:) = 50.0_dp
 
-    model%fd_relative = 3.0e-3_dp
-    call model%jacobian(theta, j1)
+    model%tolerance = 1.0e-8_dp
     model%fd_relative = 1.0e-3_dp
+    call model%jacobian(theta, j1)
+    model%fd_relative = 3.0e-4_dp
     call model%jacobian(theta, j2)
+    model%fd_relative = 1.0e-3_dp
+    model%tolerance = 1.0e-6_dp
     do k = 1, size(theta)
         print '(A,I0,ES10.3)', 'column ', k, maxval(abs(j1(:, k) - j2(:, k))) / maxval(abs(j1(:, k)))
     end do
     err = maxval(abs(j1 - j2)) / maxval(abs(j1))
-    print '(A,ES10.3)', 'derivative step change (3e-3 against 1e-3): ', err
-    call check(err < 2.0e-2_dp, 're-solved derivatives depend on the step')
+    print '(A,ES10.3)', 'derivative step change (1e-3 against 3e-4): ', err
+    call check(err < 5.0e-3_dp, 're-solved derivatives depend on the step')
 
     theta = [1.003_dp * truth(1:4), 0.98_dp * truth(5), 1.2_dp * truth(6)] / model%scale
     call map_fit(model, theta, 30, steps, message, conv)

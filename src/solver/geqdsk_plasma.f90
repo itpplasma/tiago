@@ -39,7 +39,7 @@ module tiago_geqdsk_plasma
         logical :: cell_quadrature = .false.
         integer :: n_sub = 16
         type(BatchSplineData2D) :: psi_spline
-        type(BatchSplineData1D) :: profile_spline !! p', F F', |q|, |F| on psi_N
+        type(BatchSplineData1D) :: profile_spline !! p', F F', |q|, |F|, p on psi_N
     contains
         procedure :: label => plasma_label
         procedure :: rho_tor => plasma_rho_tor
@@ -47,6 +47,8 @@ module tiago_geqdsk_plasma
         procedure :: filaments => plasma_filaments
         procedure :: toroidal_flux => plasma_toroidal_flux
         procedure :: modb => plasma_modb
+        procedure :: pressure => plasma_pressure
+        procedure :: midplane_jphi => plasma_midplane_jphi
     end type geqdsk_plasma_t
 
     public :: read_geqdsk_plasma
@@ -80,11 +82,12 @@ contains
         eq%current = g%current / (0.1_dp * 2.99792458e10_dp)
         eq%rb = g%rbbbs * cm
         eq%zb = g%zbbbs * cm
-        allocate(prof(g%nw, 4))
+        allocate(prof(g%nw, 5))
         prof(:, 1) = g%pprime * barye / maxwell
         prof(:, 2) = g%ffprim * gauss
         prof(:, 3) = abs(g%qpsi)
         prof(:, 4) = abs(g%fpol) * gauss * cm
+        prof(:, 5) = g%pres * barye
         call construct_batch_splines_1d(0.0_dp, 1.0_dp, prof, 3, .false., eq%profile_spline)
         call construct_batch_splines_2d([eq%r(1), eq%z(1)], [eq%r(eq%nw), eq%z(eq%nh)], &
             reshape(eq%psi, [eq%nw, eq%nh, 1]), [3, 3], [.false., .false.], eq%psi_spline)
@@ -147,10 +150,42 @@ contains
     real(dp) function q_at(eq, x)
         type(geqdsk_plasma_t), intent(in) :: eq
         real(dp), intent(in) :: x
-        real(dp) :: y(4)
+        real(dp) :: y(5)
         call evaluate_batch_splines_1d(eq%profile_spline, x, y)
         q_at = y(3)
     end function q_at
+
+    real(dp) function plasma_pressure(self, psin) result(p)
+        !! Pressure [Pa] at psi_N from the file's table.
+        class(geqdsk_plasma_t), intent(in) :: self
+        real(dp), intent(in) :: psin
+        real(dp) :: y(5)
+        call evaluate_batch_splines_1d(self%profile_spline, min(max(psin, 0.0_dp), 1.0_dp), y)
+        p = y(5)
+    end function plasma_pressure
+
+    subroutine plasma_midplane_jphi(self, psin, j, r)
+        !! j_phi = R p' + F F' / (mu0 R) [A/m^2] at the outboard point r [m] of
+        !! label psi_N on the horizontal line through the magnetic axis.
+        class(geqdsk_plasma_t), intent(in) :: self
+        real(dp), intent(in) :: psin
+        real(dp), intent(out) :: j, r
+        real(dp) :: lo, hi, x, a, b, y(5)
+        integer :: it
+        lo = self%r_axis
+        hi = self%r(self%nw)
+        do it = 1, 60
+            r = (lo + hi) / 2
+            call self%label(r, self%z_axis, x, a, b)
+            if (x < psin) then
+                lo = r
+            else
+                hi = r
+            end if
+        end do
+        call evaluate_batch_splines_1d(self%profile_spline, psin, y)
+        j = r * y(1) + y(2) / (mu0 * r)
+    end subroutine plasma_midplane_jphi
 
     subroutine plasma_label(self, r, z, psin, dpsin_dr, dpsin_dz)
         !! psi_N = (psi - psi_axis) / (psi_b - psi_axis) and its gradient [1/m].
@@ -199,7 +234,7 @@ contains
         !! the plasma.
         class(geqdsk_plasma_t), intent(in) :: self
         real(dp), intent(in) :: r, z
-        real(dp) :: psin, a, c, y(4), dpsi
+        real(dp) :: psin, a, c, y(5), dpsi
         call self%label(r, z, psin, a, c)
         call evaluate_batch_splines_1d(self%profile_spline, min(max(psin, 0.0_dp), 1.0_dp), y)
         dpsi = self%psi_b - self%psi_axis
@@ -240,7 +275,7 @@ contains
         !! j_phi = R p'(psi) + F F'(psi) / (mu0 R), or of the provider's j_phi.
         class(geqdsk_plasma_t), intent(in) :: self
         real(dp), allocatable, intent(out) :: rf(:), zf(:), wf(:)
-        real(dp) :: area, psin, a, b, y(4), rbuf(self%nw * self%nh), &
+        real(dp) :: area, psin, a, b, y(5), rbuf(self%nw * self%nh), &
             zbuf(self%nw * self%nh), wbuf(self%nw * self%nh)
         integer :: i, j, n
         area = (self%r(2) - self%r(1)) * (self%z(2) - self%z(1))
@@ -452,7 +487,7 @@ contains
         !! j_phi = R p'(psi) + F F'(psi) / (mu0 R) [A/m^2].
         type(geqdsk_plasma_t), intent(in) :: self
         real(dp), intent(in) :: r, z
-        real(dp) :: psin, a, b, y(4)
+        real(dp) :: psin, a, b, y(5)
         call self%label(r, z, psin, a, b)
         call evaluate_batch_splines_1d(self%profile_spline, min(max(psin, 0.0_dp), 1.0_dp), y)
         j = r * y(1) + y(2) / (mu0 * r)
