@@ -20,13 +20,22 @@ program tiago_axisym_fit
     !!   output                           prefix of the result files
     !!   predict_geqdsk                   only predict the sensors of this G-EQDSK
     !!   initial                          plasma flux (.npy) every provider solve starts from
+    !!   probes_file, chords_file         profile diagnostics in the format of docs/joint-fit.md;
+    !!                                    either one makes the fit joint with the kinetic profiles
+    !!   prior_table, breakpoints(k), z_imp, sigma_f(3), l_core, l_edge, s0, sw
+    !!   align_sigma(g), cal_sigma(g), model_rel(g), chord_cal_sigma, chord_model_rel
+    !!   pressure_psin(j), pressure_sigma(j)  labels and sd [Pa] of the rows p_eq - p_kin
     !! /
     !!
     !! Writes <output>_parameters.csv (MAP, local standard deviation, start),
     !! <output>_signals.csv (measured, predicted, sigma), <output>_map.geqdsk and,
     !! with draws > 0, <output>_draw_NNNN.geqdsk of Laplace draws re-solved by the
     !! provider and <output>_edge.csv with j_phi at edge_psin for the MAP and
-    !! every draw.
+    !! every draw. A joint fit also writes the profile latents LATENT(i) into
+    !! <output>_parameters.csv, <output>_profile_signals.csv (slot, measured,
+    !! predicted with calibration, sigma) and <output>_profiles.csv (n_e, T_e,
+    !! T_i, p and their Laplace sd on 101 values of s); its predict mode writes
+    !! the profile signals at the prior mean.
     use, intrinsic :: iso_fortran_env, only: dp => real64, int64, error_unit
     use fortnum_status, only: fortnum_status_t
     use fortnum_rng, only: rng_t, rng_seed, rng_normal
@@ -35,11 +44,15 @@ program tiago_axisym_fit
     use tiago_geqdsk_plasma, only: geqdsk_plasma_t, read_geqdsk_plasma
     use tiago_inference_engines, only: map_fit, laplace, laplace_t
     use tiago_mse, only: read_mse_file
+    use tiago_axisym_joint, only: axisym_joint_t
+    use tiago_profile_inputs, only: set_profile_priors, read_probe_slots, read_chord_slot
+    use tiago_kinetic_profiles, only: P_NE, P_TE, P_TI, N_PROFILES
+    use tiago_profile_diagnostic, only: plasma_sample_t
     implicit none
 
-    integer, parameter :: mp = 64, mk = 32
+    integer, parameter :: mp = 64, mk = 32, mg = 16
     character(len=1024) :: machine, provider, workdir, measurements, output, nml, predict_geqdsk, initial, &
-        mse_channels
+        mse_channels, probes_file, chords_file, prior_table
     character(len=16) :: profile
     character(len=32) :: parameters(mp)
     integer :: nx, ny, max_iterations, draws, seed, nknots
@@ -47,13 +60,21 @@ program tiago_axisym_fit
     real(dp) :: coil_current(mp), plasma_current, pressure_axis, fd_relative
     real(dp) :: knot_psin(mk), pprime_knot(mk), ffprime_knot(mk), edge_psin(16)
     real(dp) :: start_values(mp), parameter_scale(mp), prior_values(mp), prior_sigma(mp)
+    real(dp) :: breakpoints(mk), z_imp, sigma_f(3), l_core, l_edge, s0, sw, align_sigma(mg), &
+        cal_sigma(mg), model_rel(mg), chord_cal_sigma, chord_model_rel, pressure_psin(mk), &
+        pressure_sigma(mk)
     namelist /axisym_fit/ machine, provider, workdir, measurements, output, nx, ny, &
         rmin, rmax, zmin, zmax, tolerance, fvac, alpha_m, alpha_n, coil_current, &
         plasma_current, pressure_axis, profile, knot_psin, pprime_knot, ffprime_knot, &
         parameters, start_values, parameter_scale, prior_values, prior_sigma, &
-        max_iterations, fd_relative, draws, seed, edge_psin, predict_geqdsk, initial, mse_channels
+        max_iterations, fd_relative, draws, seed, edge_psin, predict_geqdsk, initial, mse_channels, &
+        probes_file, chords_file, prior_table, breakpoints, z_imp, sigma_f, l_core, l_edge, s0, sw, &
+        align_sigma, cal_sigma, model_rel, chord_cal_sigma, chord_model_rel, pressure_psin, &
+        pressure_sigma
 
-    type(axisym_free_boundary_t) :: model
+    type(axisym_free_boundary_t), target :: model
+    type(axisym_joint_t), target :: joint
+    type(axisym_free_boundary_t), pointer :: fb
     type(laplace_t) :: lap
     type(geqdsk_plasma_t) :: eq
     type(rng_t) :: rng
@@ -62,7 +83,7 @@ program tiago_axisym_fit
     character(len=32) :: suffix
     real(dp), allocatable :: theta(:), start(:), s(:), z(:), td(:)
     integer :: unit, ierr, n, ng, ne, k, d, steps
-    logical :: ok, conv
+    logical :: ok, conv, joint_mode
 
     machine = ''
     provider = ''
@@ -99,6 +120,23 @@ program tiago_axisym_fit
     predict_geqdsk = ''
     initial = ''
     mse_channels = ''
+    probes_file = ''
+    chords_file = ''
+    prior_table = ''
+    breakpoints = -1
+    z_imp = 5.0_dp
+    sigma_f = 1.0_dp
+    l_core = 0.3_dp
+    l_edge = 0.05_dp
+    s0 = 0.85_dp
+    sw = 0.05_dp
+    align_sigma = 0
+    cal_sigma = 0
+    model_rel = 0
+    chord_cal_sigma = 0
+    chord_model_rel = 0
+    pressure_psin = -1
+    pressure_sigma = 0
     call get_command_argument(1, nml)
     if (len_trim(nml) == 0) error stop 'usage: tiago_axisym_fit input.nml'
     open(newunit=unit, file=trim(nml), status='old', action='read')
@@ -142,6 +180,12 @@ program tiago_axisym_fit
         if (ierr /= 0) error stop message
     end if
     call read_measurements(trim(measurements))
+    joint_mode = len_trim(probes_file) > 0 .or. len_trim(chords_file) > 0
+    fb => model
+    if (joint_mode) then
+        call setup_joint()
+        fb => joint%fb
+    end if
     if (len_trim(predict_geqdsk) > 0) then
         call predict(trim(predict_geqdsk))
         stop
@@ -155,26 +199,46 @@ program tiago_axisym_fit
             theta(k) = start_values(k) / model%scale(k)
         end if
     end do
-    start = theta
-    call map_fit(model, theta, max_iterations, steps, message, conv)
-    write(*, '(A,I0,A,I0,A,L1)') 'fit: ', steps, ' steps, ', model%solves, &
+    if (joint_mode) then
+        ! profile latents start at their prior mean
+        theta = [theta, [(0.0_dp, k = 1, joint%pp%n)]]
+        start = theta
+        call map_fit(joint, theta, max_iterations, steps, message, conv)
+    else
+        start = theta
+        call map_fit(model, theta, max_iterations, steps, message, conv)
+    end if
+    write(*, '(A,I0,A,I0,A,L1)') 'fit: ', steps, ' steps, ', fb%solves, &
         ' provider solves, converged ', conv
     if (.not. conv) write(error_unit, '(A)') 'fit: '//message
-    call laplace(model, theta, lap)
+    if (joint_mode) then
+        call laplace(joint, theta, lap)
+    else
+        call laplace(model, theta, lap)
+    end if
     if (lap%info /= 0) error stop 'Laplace covariance failed'
 
     open(newunit=unit, file=trim(output)//'_parameters.csv', status='replace')
     write(unit, '(A)') 'name,value,sd,start'
     do k = 1, n
-        write(unit, '(A,3(",",ES24.16))') trim(model%names(k)), theta(k) * model%scale(k), &
-            sqrt(lap%cov(k, k)) * model%scale(k), start(k) * model%scale(k)
+        write(unit, '(A,3(",",ES24.16))') trim(fb%names(k)), theta(k) * fb%scale(k), &
+            sqrt(lap%cov(k, k)) * fb%scale(k), start(k) * fb%scale(k)
+    end do
+    do k = n + 1, size(theta)
+        write(suffix, '(A,I0,A)') 'LATENT(', k - n, ')'
+        write(unit, '(A,3(",",ES24.16))') trim(suffix), theta(k), sqrt(lap%cov(k, k)), start(k)
     end do
     close(unit)
 
-    call model%signals(theta, s, ok, eq)
+    call fb%signals(theta(:n), s, ok, eq)
     if (.not. ok) error stop 'no equilibrium at the MAP'
-    call execute_command_line('cp '//model%workdir//'/equilibrium.geqdsk '//trim(output) &
+    call execute_command_line('cp '//fb%workdir//'/equilibrium.geqdsk '//trim(output) &
         //'_map.geqdsk')
+    if (joint_mode) then
+        joint%pp%eq = eq
+        call write_profile_signals(theta(n + 1:))
+        call write_profiles()
+    end if
     open(newunit=unit, file=trim(output)//'_signals.csv', status='replace')
     write(unit, '(A)') 'label,measured,predicted,sigma'
     do k = 1, size(s)
@@ -188,19 +252,19 @@ program tiago_axisym_fit
         write(unit, '(A)') 'sample,psin,r,jphi'
         call write_edge(unit, 0, eq)
         call rng_seed(rng, int(seed, int64), status)
-        allocate(z(n))
+        allocate(z(size(theta)))
         do d = 1, draws
-            do k = 1, n
+            do k = 1, size(theta)
                 call rng_normal(rng, z(k))
             end do
             td = theta + matmul(lap%chol, z)
-            call model%signals(td, s, ok, eq)
+            call fb%signals(td(:n), s, ok, eq)
             if (.not. ok) then
                 write(error_unit, '(A,I0,A)') 'draw ', d, ' did not converge, skipped'
                 cycle
             end if
             write(suffix, '(A,I4.4,A)') '_draw_', d, '.geqdsk'
-            call execute_command_line('cp '//model%workdir//'/equilibrium.geqdsk '//trim(output) &
+            call execute_command_line('cp '//fb%workdir//'/equilibrium.geqdsk '//trim(output) &
                 //trim(suffix))
             call write_edge(unit, d, eq)
         end do
@@ -208,6 +272,79 @@ program tiago_axisym_fit
     end if
 
 contains
+
+    subroutine setup_joint()
+        !! Joint model of the configured free-boundary model and the profile
+        !! diagnostics, profile prior and pressure rows of the namelist.
+        joint%fb = model
+        call joint%pp%prof%init(pack(breakpoints, breakpoints >= 0), z_imp)
+        if (len_trim(prior_table) == 0) error stop 'a joint fit needs prior_table'
+        call set_profile_priors(joint%pp%prof, trim(prior_table), sigma_f, l_core, l_edge, s0, sw)
+        if (len_trim(probes_file) > 0) &
+            call read_probe_slots(trim(probes_file), align_sigma, cal_sigma, model_rel, joint%pp%slots)
+        if (len_trim(chords_file) > 0) &
+            call read_chord_slot(trim(chords_file), chord_cal_sigma, chord_model_rel, joint%pp%slots)
+        call joint%pp%setup()
+        joint%p_psin = pack(pressure_psin, pressure_psin >= 0)
+        joint%p_sigma = pressure_sigma(:size(joint%p_psin))
+        if (any(joint%p_sigma <= 0)) error stop 'pressure_sigma must be positive'
+    end subroutine setup_joint
+
+    subroutine write_profile_signals(zp)
+        !! Calibrated predictions of every profile slot at the latents zp in
+        !! the equilibrium joint%pp%eq.
+        real(dp), intent(in) :: zp(:)
+        real(dp), allocatable :: y(:), eta(:), dx(:, :, :), sd(:)
+        type(plasma_sample_t) :: sample
+        real(dp) :: c
+        integer :: u, j, i
+        open(newunit=u, file=trim(output)//'_profile_signals.csv', status='replace')
+        write(u, '(A)') 'slot,index,measured,predicted,sigma'
+        do j = 1, size(joint%pp%slots)
+            call joint%pp%predict(zp, j, y, sample, eta, dx, c)
+            sd = joint%pp%sigma_of(j)
+            do i = 1, size(y)
+                write(u, '(I0,",",I0,3(",",ES24.16))') j, i, joint%pp%slots(j)%data(i), c * y(i), sd(i)
+            end do
+        end do
+        close(u)
+    end subroutine write_profile_signals
+
+    subroutine write_profiles()
+        !! MAP profiles and pressure on 101 values of s with the sd of 2000
+        !! Laplace draws of the latents (the profiles do not depend on the
+        !! equilibrium parameters).
+        integer, parameter :: ns = 101, nd = 2000
+        real(dp) :: sg(ns), f(N_PROFILES, ns), df(N_PROFILES, ns), p(ns), m(4, ns), m2(4, ns), &
+            fm(4, ns), w(size(theta))
+        integer :: u, i, j, np
+        np = joint%pp%n_prof
+        sg = [((i - 1) / real(ns - 1, dp), i = 1, ns)]
+        call joint%pp%prof%evaluate(theta(n + 1:n + np), sg, f, df)
+        call joint%pp%prof%pressure(theta(n + 1:n + np), sg, p)
+        fm = transpose(reshape([f(P_NE, :), f(P_TE, :), f(P_TI, :), p], [ns, 4]))
+        m = 0
+        m2 = 0
+        call rng_seed(rng, int(seed, int64) + 7, status)
+        do j = 1, nd
+            do i = 1, size(w)
+                call rng_normal(rng, w(i))
+            end do
+            w = theta + matmul(lap%chol, w)
+            call joint%pp%prof%evaluate(w(n + 1:n + np), sg, f, df)
+            call joint%pp%prof%pressure(w(n + 1:n + np), sg, p)
+            m = m + transpose(reshape([f(P_NE, :), f(P_TE, :), f(P_TI, :), p], [ns, 4]))
+            m2 = m2 + transpose(reshape([f(P_NE, :), f(P_TE, :), f(P_TI, :), p], [ns, 4]))**2
+        end do
+        m = m / nd
+        m2 = sqrt(max(m2 / nd - m**2, 0.0_dp))
+        open(newunit=u, file=trim(output)//'_profiles.csv', status='replace')
+        write(u, '(A)') 's,ne,ne_sd,te,te_sd,ti,ti_sd,p,p_sd'
+        do i = 1, ns
+            write(u, '(F0.4,8(",",ES24.16))') sg(i), (fm(j, i), m2(j, i), j = 1, 4)
+        end do
+        close(u)
+    end subroutine write_profiles
 
     subroutine predict(path)
         !! Signals of a given G-EQDSK and the coil currents of the input,
@@ -220,6 +357,10 @@ contains
         if (ierr /= 0) error stop message
         call given%filaments(rp, zp, wp)
         sig = model%predict(given, model%coil_current)
+        if (joint_mode) then
+            joint%pp%eq = given
+            call write_profile_signals([(0.0_dp, k = 1, joint%pp%n)])
+        end if
         write(*, '(A,ES14.6,A)') 'plasma current of the G-EQDSK: ', sum(wp), ' A'
         open(newunit=unit, file=trim(output)//'_signals.csv', status='replace')
         write(unit, '(A)') 'label,measured,predicted,sigma'

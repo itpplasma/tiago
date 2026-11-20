@@ -66,6 +66,7 @@ module tiago_axisym_free_boundary
         procedure :: draw_prior => fb_draw_prior
         procedure :: signals => fb_signals
         procedure :: predict => fb_predict
+        procedure :: rows => fb_rows
     end type axisym_free_boundary_t
 
 contains
@@ -239,9 +240,16 @@ contains
         real(dp), intent(out) :: r(:)
         logical, intent(out) :: ok
         real(dp), allocatable :: s(:)
-        integer :: n, k, j
         call self%signals(theta, s, ok)
-        if (.not. ok) return
+        if (ok) call self%rows(theta, s, r)
+    end subroutine fb_residual
+
+    subroutine fb_rows(self, theta, s, r)
+        !! Whitened data rows of the signals s, then the Gaussian prior rows.
+        class(axisym_free_boundary_t), intent(in) :: self
+        real(dp), intent(in) :: theta(:), s(:)
+        real(dp), intent(out) :: r(:)
+        integer :: n, k, j
         n = size(self%data)
         r(:n) = (s - self%data) / self%sigma
         j = n
@@ -250,7 +258,7 @@ contains
             j = j + 1
             r(j) = (theta(k) * self%scale(k) - self%prior_mean(k)) / self%prior_sigma(k)
         end do
-    end subroutine fb_residual
+    end subroutine fb_rows
 
     subroutine fb_jacobian(self, theta, jac)
         class(axisym_free_boundary_t), intent(inout) :: self

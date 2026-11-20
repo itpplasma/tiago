@@ -314,7 +314,9 @@ add_library(tiago_inference STATIC
     src/generated/grid_field_cartesian.f90
     src/inference/field_line_label.f90
     src/inference/source_line_field.f90
-    src/inference/axisym_free_boundary.f90)
+    src/inference/axisym_free_boundary.f90
+    src/inference/axisym_joint.f90
+    src/inference/profile_inputs.f90)
 set_target_properties(tiago_inference PROPERTIES
     Fortran_STANDARD 2018
     Fortran_STANDARD_REQUIRED YES)
@@ -691,6 +693,21 @@ add_test(NAME tiago_bootstrap_reference COMMAND ${Python3_EXECUTABLE}
     ${TIAGO_SOURCE_DIR}/tests/data/freegs/test_tokamak_bootstrap.csv
     $<TARGET_FILE:tiago_axisym_fit> ${TIAGO_SOURCE_DIR}/tests/data/freegs/test_tokamak.machine
     ${TIAGO_BINARY_DIR}/tests/bootstrap_reference)
+
+add_executable(test_axisym_joint tests/test_axisym_joint.f90)
+target_link_libraries(test_axisym_joint PRIVATE tiago_inference)
+add_test(NAME tiago_axisym_joint COMMAND $<TARGET_FILE:test_axisym_joint>
+    ${TIAGO_SOURCE_DIR}/tests/data/freegs/test_tokamak.geqdsk
+    ${TIAGO_SOURCE_DIR}/tests/data/freegs/test_tokamak.machine
+    ${TIAGO_SOURCE_DIR}/tests/geqdsk_stub_provider.sh
+    ${TIAGO_BINARY_DIR}/tests/axisym_joint)
+
+add_test(NAME tiago_axisym_joint_cli COMMAND ${Python3_EXECUTABLE}
+    ${TIAGO_SOURCE_DIR}/tests/axisym_joint_cli.py $<TARGET_FILE:tiago_axisym_fit>
+    ${TIAGO_SOURCE_DIR}/tests/data/freegs/test_tokamak.geqdsk
+    ${TIAGO_SOURCE_DIR}/tests/data/freegs/test_tokamak.machine
+    ${TIAGO_SOURCE_DIR}/tests/geqdsk_stub_provider.sh
+    ${TIAGO_BINARY_DIR}/tests/axisym_joint_cli)
 
 add_executable(test_profile_posterior tests/test_profile_posterior.f90)
 target_link_libraries(test_profile_posterior PRIVATE tiago_inference)
