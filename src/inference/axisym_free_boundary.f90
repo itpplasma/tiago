@@ -10,7 +10,7 @@ module tiago_axisym_free_boundary
     !! k of p' and F F' in psi_N, which the provider scales together to the
     !! plasma current. They are fitted as value / scale. Besides the sensors,
     !! data rows may hold the pressure [Pa] or the outboard-midplane j_phi
-    !! [A/m^2] at given psi_N, followed by MSE pi-polarization angles [rad]
+    !! [A/m^2] or <j.B> [A T/m^2] at given psi_N, followed by MSE pi-polarization angles [rad]
     !! (docs/mse.md) from the G-EQDSK field. Derivatives are central differences with a cold provider
     !! solve per side, one-sided where one side does not converge.
     use, intrinsic :: iso_fortran_env, only: dp => real64, i32 => int32, error_unit
@@ -18,6 +18,7 @@ module tiago_axisym_free_boundary
     use tiago_local_posterior, only: local_posterior_t
     use tiago_axisym_machine, only: axisym_machine_t
     use tiago_geqdsk_plasma, only: geqdsk_plasma_t, read_geqdsk_plasma
+    use tiago_geqdsk_surfaces, only: flux_surface_t, flux_surface, surface_jdotb
     use tiago_diagnostic_types, only: mse_channel_t
     use tiago_mse, only: mse_geometry, mse_angles
     implicit none
@@ -41,7 +42,8 @@ module tiago_axisym_free_boundary
         character(len=:), allocatable :: profile
         real(dp), allocatable :: knot_psin(:), pprime_knot(:), ffprime_knot(:)
         !> Profile data rows after the sensors: row_kind 1 pressure, 2 j_phi
-        !> at the outboard midplane, at the labels row_psin.
+        !> at the outboard midplane, 3 <j.B> (docs/bootstrap.md), at the
+        !> labels row_psin.
         integer, allocatable :: row_kind(:)
         real(dp), allocatable :: row_psin(:)
         !> MSE channels, data rows after the profile rows.
@@ -183,6 +185,7 @@ contains
         real(dp), allocatable :: s(:)
         real(dp), allocatable :: rp(:), zp(:), wp(:), rows(:), b(:, :), angles(:)
         real(dp) :: rmid, point(3), coefficients(6), bc(3), phi
+        type(flux_surface_t) :: surf
         integer(i32) :: ierr
         character(len=:), allocatable :: message
         integer :: k
@@ -192,11 +195,15 @@ contains
         if (allocated(self%row_kind)) then
             allocate(rows(size(self%row_kind)))
             do k = 1, size(rows)
-                if (self%row_kind(k) == 1) then
+                select case (self%row_kind(k))
+                case (1)
                     rows(k) = eq%pressure(self%row_psin(k))
-                else
+                case (2)
                     call eq%midplane_jphi(self%row_psin(k), rows(k), rmid)
-                end if
+                case default
+                    call flux_surface(eq, self%row_psin(k), surf)
+                    rows(k) = surface_jdotb(eq, surf)
+                end select
             end do
             s = [s, rows]
         end if

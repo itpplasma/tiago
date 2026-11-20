@@ -7,7 +7,8 @@ program tiago_axisym_fit
     !!   machine, provider, workdir      machine file, provider command, scratch directory
     !!   measurements                     CSV label,value,sigma: every sensor label of
     !!                                    the machine, and rows pressure@<psi_N> [Pa]
-    !!                                    or jphi@<psi_N> [A/m^2], and every MSE channel
+    !!                                    jphi@<psi_N> [A/m^2] or jdotb@<psi_N> [A T/m^2]
+    !!                                    (docs/bootstrap.md), and every MSE channel
     !!                                    label [rad]
     !!   mse_channels                     MSE channel file (docs/mse.md), optional
     !!   nx, ny, rmin, rmax, zmin, zmax, tolerance, fvac, alpha_m, alpha_n
@@ -280,11 +281,14 @@ contains
             label = model%machine%sensors%rogowski(k - nf - np)%label
         else
             write(buf, '(F0.4)') model%row_psin(k - nf - np - nr)
-            if (model%row_kind(k - nf - np - nr) == 1) then
+            select case (model%row_kind(k - nf - np - nr))
+            case (1)
                 label = 'pressure@'//trim(buf)
-            else
+            case (2)
                 label = 'jphi@'//trim(buf)
-            end if
+            case default
+                label = 'jdotb@'//trim(buf)
+            end select
         end if
     end function row_label
 
@@ -317,9 +321,16 @@ contains
             read(line, *) label, value, sigma
             at = index(label, '@')
             if (at > 0) then
-                rk = [rk, merge(1, 2, label(:at - 1) == 'pressure')]
-                if (label(:at - 1) /= 'pressure' .and. label(:at - 1) /= 'jphi') &
+                select case (label(:at - 1))
+                case ('pressure')
+                    rk = [rk, 1]
+                case ('jphi')
+                    rk = [rk, 2]
+                case ('jdotb')
+                    rk = [rk, 3]
+                case default
                     error stop 'unknown profile row '//trim(label)
+                end select
                 read(label(at + 1:), *) value
                 rp = [rp, value]
                 read(line, *) label, value, sigma
