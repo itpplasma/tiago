@@ -20,7 +20,7 @@ quantity. Do not add a second temperature-scale or slot gain nuisance.
 The covariance model follows [Kennedy and O'Hagan
 (2000)](https://doi.org/10.1093/biomet/87.1.1). Generic conditioning, normalized
 log marginal likelihood and its gradients are in
-[fortnum](https://github.com/lazy-fortran/fortnum/blob/main/docs/multifidelity.md).
+[fortgp](https://github.com/lazy-fortran/fortgp/blob/main/docs/multifidelity.md).
 Its Schur-complement recursion retains uncertainty at the low level for noisy,
 non-nested observations. The independent-level simplification of
 [Le Gratiet and Garnier (2014)](https://doi.org/10.1615/Int.J.UncertaintyQuantification.2014006914)

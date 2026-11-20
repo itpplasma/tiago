@@ -2,9 +2,9 @@ module tiago_multifidelity_profile
     !! Physical-temperature AR(1) coefficients in standard-normal coordinates.
     use, intrinsic :: iso_fortran_env, only: dp => real64
     use, intrinsic :: ieee_arithmetic, only: ieee_is_finite
-    use fortnum_ar1, only: rbf_covariance, covariance_factor
-    use fortnum_generated_mf_autoregressive, only: mf_autoregressive
-    use fortnum_gaussian_constraints, only: constraint_nullspace
+    use fortgp_ar1, only: rbf_covariance, covariance_factor
+    use fortgp_multifidelity, only: autoregressive
+    use fortgp_gaussian_constraints, only: constraint_nullspace
     use fortnum_status, only: fortnum_status_t
     use tiago_calibration, only: calibration_prior_t
     implicit none
@@ -162,7 +162,7 @@ contains
             end do
         end if
         do i = 1, n
-            call mf_autoregressive(c, low(i), delta(i), high(i), dr, dl, dd)
+            call autoregressive(c, low(i), delta(i), high(i), dr, dl, dd)
             dj(i, :) = dl*lj(i, :) + dd*dj(i, :)
             if (.not. self%fixed_scale) dj(i, self%n_params) = &
                 dj(i, self%n_params) + dr*self%calibration%factor(1, 1)

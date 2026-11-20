@@ -1,8 +1,8 @@
 include_guard(GLOBAL)
 
 # External equilibrium providers reuse these targets without the VMEC stack.
-if(NOT TARGET fortnum)
-    message(FATAL_ERROR "TiagoInferenceCore requires the fortnum target")
+if(NOT TARGET fortnum OR NOT TARGET fortinfer)
+    message(FATAL_ERROR "TiagoInferenceCore requires the fortnum and fortinfer targets")
 endif()
 find_package(LAPACK REQUIRED)
 set(_tiago_core_source "${CMAKE_CURRENT_LIST_DIR}/../src")
@@ -12,7 +12,7 @@ add_library(tiago_inference_core STATIC
     "${_tiago_core_source}/inference/linear_posterior.f90"
     "${_tiago_core_source}/inference/signal_correlation.f90"
     "${_tiago_core_source}/inference/inference_engines.f90")
-target_link_libraries(tiago_inference_core PUBLIC fortnum ${LAPACK_LIBRARIES})
+target_link_libraries(tiago_inference_core PUBLIC fortinfer fortnum ${LAPACK_LIBRARIES})
 
 add_library(tiago_point_diagnostics STATIC
     "${_tiago_core_source}/diagnostics/diagnostic_types.f90"

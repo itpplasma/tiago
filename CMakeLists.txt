@@ -47,14 +47,30 @@ set(LIBNEO_BUILD_NUMERICS ${TIAGO_ENABLE_SPECTRE} CACHE BOOL "Build libneo field
 
 option(TIAGO_ENABLE_OPENMP "Enable OpenMP parallelism inside Tiago loops" ON)
 
-# fortnum: B-spline profile bases, NUTS and PSIS for the inference core. Declared
+# fortnum: B-spline profile bases and linear algebra for the inference core. Declared
 # before libneo, whose numerics reuse an existing fortnum target.
-set(TIAGO_FORTNUM_TAG "e2b01a04c823cf8fc644d9da8b1f16f69e2b08a0" CACHE STRING "fortnum commit used by Tiago")
+set(TIAGO_FORTNUM_TAG "fc91fafb6fc9df40a4fd780db777a215aaea1c70" CACHE STRING "fortnum commit used by Tiago")
 if(NOT TARGET fortnum)
     FetchContent_Declare(fortnum
         GIT_REPOSITORY https://github.com/lazy-fortran/fortnum.git
         GIT_TAG        ${TIAGO_FORTNUM_TAG})
     FetchContent_MakeAvailable(fortnum)
+endif()
+# fortinfer: NUTS and PSIS for the inference core; fortgp: the AR(1) multi-fidelity
+# GP and Gaussian constraints. Both reuse the fortnum target above.
+set(TIAGO_FORTINFER_TAG "1173d6cbcb63cf4d2d13dfe2165b4288752a2c10" CACHE STRING "fortinfer commit used by Tiago")
+if(NOT TARGET fortinfer)
+    FetchContent_Declare(fortinfer
+        GIT_REPOSITORY https://github.com/lazy-fortran/fortinfer.git
+        GIT_TAG        ${TIAGO_FORTINFER_TAG})
+    FetchContent_MakeAvailable(fortinfer)
+endif()
+set(TIAGO_FORTGP_TAG "4f0eb1f61a5b1d38cf6c0c83107b5eaf8d8fe97c" CACHE STRING "fortgp commit used by Tiago")
+if(NOT TARGET fortgp)
+    FetchContent_Declare(fortgp
+        GIT_REPOSITORY https://github.com/lazy-fortran/fortgp.git
+        GIT_TAG        ${TIAGO_FORTGP_TAG})
+    FetchContent_MakeAvailable(fortgp)
 endif()
 include(cmake/TiagoInferenceCore.cmake)
 
@@ -191,7 +207,9 @@ add_library(tiago_signals STATIC
     src/signals/netcdf_c.f90)
 set_target_properties(tiago_signals PROPERTIES
     Fortran_STANDARD 2018 Fortran_STANDARD_REQUIRED YES)
-target_link_libraries(tiago_signals PUBLIC LIBNEO::nctools fortnum
+# calibration, signal_reduction and integrated_drift call LAPACK by its standard names,
+# which fortnum no longer exports from its main target.
+target_link_libraries(tiago_signals PUBLIC LIBNEO::nctools fortnum ${LAPACK_LIBRARIES}
     PRIVATE ${TIAGO_NETCDF_C_LIBRARY} CURL::libcurl Threads::Threads jsonfortran-static)
 if(TIAGO_ENABLE_OPENMP AND OpenMP_Fortran_FOUND)
     target_link_libraries(tiago_signals PUBLIC OpenMP::OpenMP_Fortran)
@@ -321,7 +339,7 @@ set_target_properties(tiago_inference PROPERTIES
     Fortran_STANDARD 2018
     Fortran_STANDARD_REQUIRED YES)
 target_link_libraries(tiago_inference PUBLIC tiago_inference_core tiago_diagnostics tiago_signals tiago_solver
-    LIBNEO::interpolate)
+    fortgp LIBNEO::interpolate)
 if(TIAGO_ENABLE_OPENMP AND OpenMP_Fortran_FOUND)
     target_link_libraries(tiago_inference PUBLIC OpenMP::OpenMP_Fortran)
 endif()
@@ -1383,6 +1401,7 @@ if(TIAGO_IS_TOP_LEVEL)
         -DC_COMPILER=${CMAKE_C_COMPILER} -DFORTRAN_COMPILER=${CMAKE_Fortran_COMPILER}
         -DBUILD_TYPE=${CMAKE_BUILD_TYPE} -DCONFIG=$<CONFIG>
         -DFORTNUM_SOURCE=${fortnum_SOURCE_DIR} -DLIBNEO_SOURCE=${libneo_SOURCE_DIR}
+        -DFORTINFER_SOURCE=${fortinfer_SOURCE_DIR} -DFORTGP_SOURCE=${fortgp_SOURCE_DIR}
         -DFORTIO_SOURCE=${fortio_SOURCE_DIR} -DFORTGEN_SOURCE=${fortgen_runtime_SOURCE_DIR}
         -DJSONFORTRAN_SOURCE=${jsonfortran_SOURCE_DIR}
         -P ${TIAGO_SOURCE_DIR}/tests/check_subproject.cmake)

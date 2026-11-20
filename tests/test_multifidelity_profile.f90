@@ -259,7 +259,7 @@ contains
     end subroutine
 
     subroutine single_fidelity()
-        use fortnum_ar1, only: rbf_covariance, covariance_factor
+        use fortgp_ar1, only: rbf_covariance, covariance_factor
         type(ar1_profile_t) :: p
         real(dp), allocatable :: z(:), low(:), high(:), k(:, :), dk(:, :, :), l(:, :), dl(:, :, :)
         integer :: code

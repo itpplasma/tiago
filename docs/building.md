@@ -5,7 +5,7 @@
 The default build needs CMake 3.24 or newer, a Fortran and a C compiler,
 netCDF-C, libcurl 7.66 or newer and a Python 3 interpreter (used only by the
 test suite's loopback archive server). OpenMP is used when found. CMake fetches
-libneo, fortnum and json-fortran at pinned commits.
+libneo, fortnum, fortinfer (samplers), fortgp (multi-fidelity GP) and json-fortran at pinned commits.
 
 ```bash
 cmake -S . -B build
