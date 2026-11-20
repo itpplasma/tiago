@@ -3,7 +3,7 @@ program test_geqdsk_plasma
     !! machine (tests/freegs/generate_test_tokamak.py): plasma current, the
     !! flux-loop, pickup and Rogowski signals of coils plus plasma, psi_N at
     !! points above and below the midplane of the up-down asymmetric plasma,
-    !! and rho_tor.
+    !! rho_tor and the field B_R, B_phi, B_Z.
     !! Usage: test_geqdsk_plasma <geqdsk> <machine> <freegs.csv>
     use, intrinsic :: iso_fortran_env, only: dp => real64, error_unit
     use tiago_geqdsk_plasma, only: geqdsk_plasma_t, read_geqdsk_plasma
@@ -17,8 +17,8 @@ program test_geqdsk_plasma
     character(len=256) :: line
     character(len=32) :: kind, label
     real(dp), allocatable :: rp(:), zp(:), wp(:), rf(:), zf(:), wf(:), s(:), current(:)
-    real(dp) :: r, z, value, psin, a, b, scale(3)
-    integer :: ierr, unit, ios, failures, k, nflux, npick
+    real(dp) :: r, z, value, psin, a, b, scale(3), field(3)
+    integer :: ierr, unit, ios, failures, k, c, nflux, npick
     real(dp), allocatable :: ref(:)
 
     failures = 0
@@ -59,6 +59,12 @@ program test_geqdsk_plasma
         case ('psin')
             call eq%label(r, z, psin, a, b)
             call close_to(psin, value, 1.0e-6_dp, 'psi_N at '//trim(label))
+        case ('br', 'bphi', 'bz')
+            call eq%field(r, z, field)
+            c = merge(1, merge(2, 3, trim(kind) == 'bphi'), trim(kind) == 'br')
+            ! measured deviation below 1e-6 T for B_p ~ 0.1 T and B_phi ~ 2 T
+            call close_to(field(c), value, 5.0e-6_dp, &
+                trim(kind)//' at '//trim(label))
         case ('rhotor')
             call close_to(eq%rho_tor(r), value, 3.0e-4_dp, 'rho_tor at '//trim(label))
         end select

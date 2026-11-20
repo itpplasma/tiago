@@ -5,7 +5,7 @@ Usage: python generate_test_tokamak.py OUTDIR
 Needs FreeGS 0.9 at 5b41fe5565ff8077bf8139051c80c69416fc9b86. Writes
 test_tokamak.geqdsk, test_tokamak.machine (TIAGO axisymmetric machine file)
 and test_tokamak_freegs.csv (coil currents, FreeGS sensor values and
-normalised flux at probe points). The equilibrium follows FreeGS's example
+normalised flux and field (B_R, B_phi, B_Z) at probe points). The equilibrium follows FreeGS's example
 01-freeboundary.py with the sensor machine.
 """
 import io
@@ -94,6 +94,8 @@ rng = np.random.default_rng(20261119)
 for k in range(24):
     r, z = rng.uniform(0.85, 1.45), rng.uniform(-0.55, 0.65)
     rows.append(f"psin,P{k:02d},{r},{z},{float(eq.psiNRZ(r, z)):.17e}")
+    for kind, value in (("br", eq.Br(r, z)), ("bphi", eq.Btor(r, z)), ("bz", eq.Bz(r, z))):
+        rows.append(f"{kind},P{k:02d},{r},{z},{float(value):.17e}")
 # FreeGS integrates q from the first requested label, so request the axis too.
 labels = np.linspace(0.0, 1.0, 101)
 rhotor = eq.rhotor(eq.psi_axis + labels * (eq.psi_bndry - eq.psi_axis))

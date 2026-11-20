@@ -10,13 +10,16 @@ module tiago_axisym_free_boundary
     !! k of p' and F F' in psi_N, which the provider scales together to the
     !! plasma current. They are fitted as value / scale. Besides the sensors,
     !! data rows may hold the pressure [Pa] or the outboard-midplane j_phi
-    !! [A/m^2] at given psi_N. Derivatives are central differences with a cold provider
+    !! [A/m^2] at given psi_N, followed by MSE pi-polarization angles [rad]
+    !! (docs/mse.md) from the G-EQDSK field. Derivatives are central differences with a cold provider
     !! solve per side, one-sided where one side does not converge.
-    use, intrinsic :: iso_fortran_env, only: dp => real64, error_unit
+    use, intrinsic :: iso_fortran_env, only: dp => real64, i32 => int32, error_unit
     use fortnum_rng, only: rng_t, rng_normal
     use tiago_local_posterior, only: local_posterior_t
     use tiago_axisym_machine, only: axisym_machine_t
     use tiago_geqdsk_plasma, only: geqdsk_plasma_t, read_geqdsk_plasma
+    use tiago_diagnostic_types, only: mse_channel_t
+    use tiago_mse, only: mse_geometry, mse_angles
     implicit none
     private
 
@@ -41,6 +44,8 @@ module tiago_axisym_free_boundary
         !> at the outboard midplane, at the labels row_psin.
         integer, allocatable :: row_kind(:)
         real(dp), allocatable :: row_psin(:)
+        !> MSE channels, data rows after the profile rows.
+        type(mse_channel_t), allocatable :: mse(:)
         !> Plasma flux the provider starts from (.npy). Without one, the first
         !> converged solve provides it, so that every later solve starts from
         !> the same state.
@@ -58,6 +63,7 @@ module tiago_axisym_free_boundary
         procedure :: proper_prior => fb_proper_prior
         procedure :: draw_prior => fb_draw_prior
         procedure :: signals => fb_signals
+        procedure :: predict => fb_predict
     end type axisym_free_boundary_t
 
 contains
@@ -70,8 +76,8 @@ contains
         logical, intent(out) :: ok
         type(geqdsk_plasma_t), intent(out), optional :: eq
         type(geqdsk_plasma_t) :: solved
-        real(dp), allocatable :: current(:), rp(:), zp(:), wp(:), pk(:), fk(:), rows(:)
-        real(dp) :: ip, paxis, rmid
+        real(dp), allocatable :: current(:), pk(:), fk(:)
+        real(dp) :: ip, paxis
         character(len=:), allocatable :: message, request, output
         integer :: k, g, status, ierr, attempt
         current = self%coil_current
@@ -132,20 +138,7 @@ contains
             self%initial = self%workdir//'/initial.psi.npy'
             call execute_command_line('cp '//output//'.psi.npy '//self%initial)
         end if
-        call solved%filaments(rp, zp, wp)
-        s = self%machine%sensors%signals([self%machine%r, rp], [self%machine%z, zp], &
-            [self%machine%turns * current(self%machine%group), wp])
-        if (allocated(self%row_kind)) then
-            allocate(rows(size(self%row_kind)))
-            do k = 1, size(rows)
-                if (self%row_kind(k) == 1) then
-                    rows(k) = solved%pressure(self%row_psin(k))
-                else
-                    call solved%midplane_jphi(self%row_psin(k), rows(k), rmid)
-                end if
-            end do
-            s = [s, rows]
-        end if
+        s = self%predict(solved, current)
         if (present(eq)) eq = solved
     contains
         subroutine write_request(path, use_initial)
@@ -181,6 +174,45 @@ contains
             close(unit)
         end subroutine write_request
     end subroutine fb_signals
+
+    function fb_predict(self, eq, current) result(s)
+        !! Sensors at the coil currents, profile rows and MSE angles of eq.
+        class(axisym_free_boundary_t), intent(in) :: self
+        type(geqdsk_plasma_t), intent(in) :: eq
+        real(dp), intent(in) :: current(:)
+        real(dp), allocatable :: s(:)
+        real(dp), allocatable :: rp(:), zp(:), wp(:), rows(:), b(:, :), angles(:)
+        real(dp) :: rmid, point(3), coefficients(6), bc(3), phi
+        integer(i32) :: ierr
+        character(len=:), allocatable :: message
+        integer :: k
+        call eq%filaments(rp, zp, wp)
+        s = self%machine%sensors%signals([self%machine%r, rp], [self%machine%z, zp], &
+            [self%machine%turns * current(self%machine%group), wp])
+        if (allocated(self%row_kind)) then
+            allocate(rows(size(self%row_kind)))
+            do k = 1, size(rows)
+                if (self%row_kind(k) == 1) then
+                    rows(k) = eq%pressure(self%row_psin(k))
+                else
+                    call eq%midplane_jphi(self%row_psin(k), rows(k), rmid)
+                end if
+            end do
+            s = [s, rows]
+        end if
+        if (.not. allocated(self%mse)) return
+        allocate(b(3, size(self%mse)))
+        do k = 1, size(self%mse)
+            call mse_geometry(self%mse(k), point, coefficients, ierr, message)
+            if (ierr /= 0) error stop 'axisym free boundary: '//message
+            call eq%field(hypot(point(1), point(2)), point(3), bc)
+            phi = atan2(point(2), point(1))
+            b(:, k) = [bc(1) * cos(phi) - bc(2) * sin(phi), bc(1) * sin(phi) + bc(2) * cos(phi), bc(3)]
+        end do
+        call mse_angles(self%mse, b, angles, ierr, message)
+        if (ierr /= 0) error stop 'axisym free boundary: '//message
+        s = [s, angles]
+    end function fb_predict
 
     logical function converged(path)
         character(*), intent(in) :: path

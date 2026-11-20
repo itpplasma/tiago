@@ -7,7 +7,9 @@ program tiago_axisym_fit
     !!   machine, provider, workdir      machine file, provider command, scratch directory
     !!   measurements                     CSV label,value,sigma: every sensor label of
     !!                                    the machine, and rows pressure@<psi_N> [Pa]
-    !!                                    or jphi@<psi_N> [A/m^2]
+    !!                                    or jphi@<psi_N> [A/m^2], and every MSE channel
+    !!                                    label [rad]
+    !!   mse_channels                     MSE channel file (docs/mse.md), optional
     !!   nx, ny, rmin, rmax, zmin, zmax, tolerance, fvac, alpha_m, alpha_n
     !!   coil_current(g), plasma_current, pressure_axis
     !!   profile ('paxis' or 'knots'), knot_psin(k), pprime_knot(k), ffprime_knot(k)
@@ -31,10 +33,12 @@ program tiago_axisym_fit
     use tiago_axisym_machine, only: read_axisym_machine
     use tiago_geqdsk_plasma, only: geqdsk_plasma_t, read_geqdsk_plasma
     use tiago_inference_engines, only: map_fit, laplace, laplace_t
+    use tiago_mse, only: read_mse_file
     implicit none
 
     integer, parameter :: mp = 64, mk = 32
-    character(len=1024) :: machine, provider, workdir, measurements, output, nml, predict_geqdsk, initial
+    character(len=1024) :: machine, provider, workdir, measurements, output, nml, predict_geqdsk, initial, &
+        mse_channels
     character(len=16) :: profile
     character(len=32) :: parameters(mp)
     integer :: nx, ny, max_iterations, draws, seed, nknots
@@ -46,7 +50,7 @@ program tiago_axisym_fit
         rmin, rmax, zmin, zmax, tolerance, fvac, alpha_m, alpha_n, coil_current, &
         plasma_current, pressure_axis, profile, knot_psin, pprime_knot, ffprime_knot, &
         parameters, start_values, parameter_scale, prior_values, prior_sigma, &
-        max_iterations, fd_relative, draws, seed, edge_psin, predict_geqdsk, initial
+        max_iterations, fd_relative, draws, seed, edge_psin, predict_geqdsk, initial, mse_channels
 
     type(axisym_free_boundary_t) :: model
     type(laplace_t) :: lap
@@ -93,6 +97,7 @@ program tiago_axisym_fit
     edge_psin = -1
     predict_geqdsk = ''
     initial = ''
+    mse_channels = ''
     call get_command_argument(1, nml)
     if (len_trim(nml) == 0) error stop 'usage: tiago_axisym_fit input.nml'
     open(newunit=unit, file=trim(nml), status='old', action='read')
@@ -131,6 +136,10 @@ program tiago_axisym_fit
     model%scale = parameter_scale(:n)
     model%prior_mean = prior_values(:n)
     model%prior_sigma = prior_sigma(:n)
+    if (len_trim(mse_channels) > 0) then
+        call read_mse_file(trim(mse_channels), model%mse, ierr, message)
+        if (ierr /= 0) error stop message
+    end if
     call read_measurements(trim(measurements))
     if (len_trim(predict_geqdsk) > 0) then
         call predict(trim(predict_geqdsk))
@@ -205,24 +214,11 @@ contains
         character(*), intent(in) :: path
         type(geqdsk_plasma_t) :: given
         real(dp), allocatable :: rp(:), zp(:), wp(:), sig(:)
-        real(dp) :: j, r
-        integer :: unit, k, m
+        integer :: unit, k
         call read_geqdsk_plasma(path, given, ierr, message)
         if (ierr /= 0) error stop message
         call given%filaments(rp, zp, wp)
-        sig = model%machine%sensors%signals([model%machine%r, rp], [model%machine%z, zp], &
-            [model%machine%turns * model%coil_current(model%machine%group), wp])
-        m = size(sig)
-        if (allocated(model%row_kind)) then
-            do k = 1, size(model%row_kind)
-                if (model%row_kind(k) == 1) then
-                    sig = [sig, given%pressure(model%row_psin(k))]
-                else
-                    call given%midplane_jphi(model%row_psin(k), j, r)
-                    sig = [sig, j]
-                end if
-            end do
-        end if
+        sig = model%predict(given, model%coil_current)
         write(*, '(A,ES14.6,A)') 'plasma current of the G-EQDSK: ', sum(wp), ' A'
         open(newunit=unit, file=trim(output)//'_signals.csv', status='replace')
         write(unit, '(A)') 'label,measured,predicted,sigma'
@@ -267,12 +263,16 @@ contains
     function row_label(k) result(label)
         integer, intent(in) :: k
         character(len=:), allocatable :: label
-        integer :: nf, np, nr
+        integer :: nf, np, nr, nq
         character(len=32) :: buf
         nf = size(model%machine%sensors%flux)
         np = size(model%machine%sensors%pickup)
         nr = size(model%machine%sensors%rogowski)
-        if (k <= nf) then
+        nq = 0
+        if (allocated(model%row_kind)) nq = size(model%row_kind)
+        if (k > nf + np + nr + nq) then
+            label = model%mse(k - nf - np - nr - nq)%label
+        else if (k <= nf) then
             label = model%machine%sensors%flux(k)%label
         else if (k <= nf + np) then
             label = model%machine%sensors%pickup(k - nf)%label
@@ -289,17 +289,22 @@ contains
     end function row_label
 
     subroutine read_measurements(path)
-        !! Sensor rows in machine order, then the profile rows in file order.
+        !! Sensor rows in machine order, the profile rows in file order, then
+        !! the MSE rows in channel order.
         character(*), intent(in) :: path
         character(len=256) :: line, label
         real(dp) :: value, sigma
-        real(dp), allocatable :: rv(:), rs(:), rp(:)
+        real(dp), allocatable :: rv(:), rs(:), rp(:), mv(:), ms(:)
         integer, allocatable :: rk(:)
-        logical, allocatable :: seen(:)
-        integer :: unit, ios, i, nsens, at
+        logical, allocatable :: seen(:), mseen(:)
+        integer :: unit, ios, i, nsens, at, nm
         nsens = model%machine%sensors%count()
-        allocate(model%data(nsens), model%sigma(nsens), seen(nsens), rv(0), rs(0), rp(0), rk(0))
+        nm = 0
+        if (allocated(model%mse)) nm = size(model%mse)
+        allocate(model%data(nsens), model%sigma(nsens), seen(nsens), rv(0), rs(0), rp(0), rk(0), &
+            mv(nm), ms(nm), mseen(nm))
         seen = .false.
+        mseen = .false.
         open(newunit=unit, file=path, status='old', action='read')
         read(unit, '(A)') line
         do
@@ -322,6 +327,15 @@ contains
                 rs = [rs, sigma]
                 cycle
             end if
+            do i = 1, nm
+                if (model%mse(i)%label == trim(label)) exit
+            end do
+            if (i <= nm) then
+                mv(i) = value
+                ms(i) = sigma
+                mseen(i) = .true.
+                cycle
+            end if
             i = sensor_index(trim(label))
             if (i == 0) error stop 'measurement of an unknown sensor: '//trim(label)
             model%data(i) = value
@@ -336,6 +350,9 @@ contains
             model%data = [model%data, rv]
             model%sigma = [model%sigma, rs]
         end if
+        if (.not. all(mseen)) error stop 'every MSE channel needs a measurement'
+        model%data = [model%data, mv]
+        model%sigma = [model%sigma, ms]
     end subroutine read_measurements
 
     integer function sensor_index(label) result(i)
