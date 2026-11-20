@@ -287,6 +287,31 @@ labels cannot describe either region. Up-down asymmetric VMEC++ states for the
 3D path (`lasym = true` in TIAGO's VMEC++ state and the joint model) are a
 separate item.
 
+## Profile diagnostics on G-EQDSK labels
+
+`tiago_geqdsk_state` fills the provider rows of the profile-diagnostic contract
+([inference](inference.md#profile-diagnostic-interface)) from a G-EQDSK: the
+normalized toroidal flux `s = Phi(psi_N) / Phi(1)` of (6), with `Phi` between
+the table points a cubic Hermite interpolant whose slopes are
+`2 pi |psi_b - psi_axis| |q|`, so that `s` and `ds/dpsi_N` are consistent,
+continued linearly beyond `psi_N = 1`; and `|B| = sqrt(|grad psi|^2 + F^2) / R`,
+with the `F` of the boundary outside the plasma. Every existing profile
+diagnostic (point probes, line integrals, Thomson, ...) then works on an
+up-down asymmetric equilibrium without a VMEC state.
+
+`tiago_profile_posterior` is the posterior of the kinetic profiles in such a
+fixed equilibrium, with an alignment and a log-scale calibration per
+diagnostic and the exact Jacobian through the diagnostic VJPs. The test
+`tiago_profile_posterior` checks that Jacobian against central differences and
+recovers planted profile, alignment and calibration latents from Thomson-like
+and charge-exchange-like points with 3 % noise on the analytic limited
+equilibrium of `tests/analytic`.
+
+On the analytic equilibria, `s` agrees with the contour-integral reference to
+`2e-8` and its gradient to `2e-8` at 129 x 129 points for a limited plasma, and
+`|B|` to `2e-10`. In a diverted plasma `s` is off by `5e-5` to `1e-4` because
+`q` diverges at the separatrix and the table holds a finite last value.
+
 ## Files shared with MILCA
 
 TIAGO and MILCA read one machine description and never copy it:
