@@ -255,8 +255,9 @@ stays fixed to remove that common scale. The parameters `PPRIME(k)` and
 `FFPRIME(k)` are the knot values. Two kinds of data rows join the sensors:
 the pressure `p(psi_N)` [Pa] from the G-EQDSK, and `j_phi` [A/m^2] at the
 outboard point of `psi_N` on the horizontal line through the axis. The second
-serves as prior or pseudo-measurement of the edge current, for example a
-bootstrap estimate. MSE pi-polarization angles ([MSE](mse.md)) follow as
+serves as prior or pseudo-measurement of the edge current. Rows `jdotb@x`
+[A T/m^2] hold `<j.B>` on the surface, for example the bootstrap current of
+`tiago_bootstrap` ([bootstrap](bootstrap.md)). MSE pi-polarization angles ([MSE](mse.md)) follow as
 further rows, with the field of the G-EQDSK
 
 ```text
@@ -289,8 +290,8 @@ boundary values. Such jumps stall the fit, so knot values at `psi_N = 1`
 stay at zero.
 
 `tiago_axisym_fit input.nml` runs the whole fit from a namelist: machine file,
-provider command, measurements by sensor label plus `pressure@x` and `jphi@x`
-rows, MSE channels, coil currents, knots, parameters with scales and Gaussian priors. It
+provider command, measurements by sensor label plus `pressure@x`, `jphi@x`
+and `jdotb@x` rows, MSE channels, coil currents, knots, parameters with scales and Gaussian priors. It
 writes the MAP with local standard deviations, measured and predicted
 signals, the MAP G-EQDSK, G-EQDSKs of Laplace draws re-solved by the provider
 and the outboard `j_phi` at chosen `psi_N` for the MAP and every draw. With

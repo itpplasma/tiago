@@ -86,6 +86,8 @@ add_library(tiago_solver STATIC
     src/solver/axisym_magnetics.f90
     src/solver/axisym_machine.f90
     src/solver/geqdsk_plasma.f90
+    src/solver/geqdsk_surfaces.f90
+    src/solver/sauter_bootstrap.f90
     src/generated/axisym_green_modulus.f90
     src/generated/axisym_green.f90
     src/solver/vacuum_forward.f90
@@ -324,6 +326,9 @@ endif()
 
 add_executable(tiago_axisym_fit src/cli/tiago_axisym_fit.f90)
 target_link_libraries(tiago_axisym_fit PRIVATE tiago_inference)
+
+add_executable(tiago_bootstrap src/cli/tiago_bootstrap.f90)
+target_link_libraries(tiago_bootstrap PRIVATE tiago_solver)
 
 add_executable(tiago_cli src/cli/tiago_cli.f90)
 target_link_libraries(tiago_cli PRIVATE tiago_diagnostics)
@@ -678,6 +683,14 @@ add_test(NAME tiago_axisym_mse_predict COMMAND ${Python3_EXECUTABLE}
     ${TIAGO_SOURCE_DIR}/tests/data/freegs/test_tokamak.machine
     ${TIAGO_SOURCE_DIR}/tests/data/freegs/test_tokamak_freegs.csv
     ${TIAGO_BINARY_DIR}/tests/axisym_mse_predict)
+
+add_test(NAME tiago_bootstrap_reference COMMAND ${Python3_EXECUTABLE}
+    ${TIAGO_SOURCE_DIR}/tests/bootstrap_reference.py $<TARGET_FILE:tiago_bootstrap>
+    ${TIAGO_SOURCE_DIR}/tests/data/freegs/test_tokamak.geqdsk
+    ${TIAGO_SOURCE_DIR}/tests/data/freegs/test_tokamak_kinetic.csv
+    ${TIAGO_SOURCE_DIR}/tests/data/freegs/test_tokamak_bootstrap.csv
+    $<TARGET_FILE:tiago_axisym_fit> ${TIAGO_SOURCE_DIR}/tests/data/freegs/test_tokamak.machine
+    ${TIAGO_BINARY_DIR}/tests/bootstrap_reference)
 
 add_executable(test_profile_posterior tests/test_profile_posterior.f90)
 target_link_libraries(test_profile_posterior PRIVATE tiago_inference)
